@@ -1,12 +1,16 @@
+use clap::Parser;
+
 use crate::grammar::OPBGenerator;
 
 mod fuzzer;
+mod fuzzer_args;
 mod grammar;
 
 fn main() {
-    let grammar = OPBGenerator::new(42, 3, 10);
+    let args = fuzzer_args::FuzzerArgs::parse();
+    let grammar = OPBGenerator::new(args.seed, args.amount_vars, args.amount_constraints);
     let mut fuzzer = fuzzer::Fuzzer::new(grammar);
-    let output_path = "out/test.opb";
+    let output_path = &args.output_path;
     fuzzer
         .write_to_file(output_path)
         .expect(format!("Content could not be written to {}", output_path).as_str());
