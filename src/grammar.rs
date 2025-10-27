@@ -7,7 +7,7 @@ pub trait Grammar {
     fn produce(&mut self) -> String;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Atom {
     var_name: String,
     coeff: i32,
@@ -80,8 +80,8 @@ impl Display for OPBGrammar {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let amount_constraint = self.constraints.len();
         let amount_vars = self.constraints.iter()
-            .flat_map(|c| c.atoms.clone())
-            .map(|a| a.var_name)
+            .flat_map(|c| c.atoms.iter())
+            .map(|a| &a.var_name)
             .unique()
             .count();
         let header = format!("* #variable= {} #constraints= {}", amount_vars, amount_constraint);
@@ -91,24 +91,23 @@ impl Display for OPBGrammar {
 }
 
 #[derive(Debug)]
-pub struct OPBGenerator {
+pub struct PBSGenerator {
     max_vars: u32,
-    max_constraints: u32,
+    amount_constraints: u32,
     rand: StdRng,
 }
 
-impl OPBGenerator {
-    pub fn new(seed: u64, max_vars: u32, max_constraints: u32) -> Self {
+impl PBSGenerator {
+    pub fn new(seed: u64, max_vars: u32, amount_constraints: u32) -> Self {
         Self {
             max_vars,
-            max_constraints,
+            amount_constraints,
             rand: StdRng::seed_from_u64(seed),
         }
     }
 
     fn random_grammar(&mut self) -> OPBGrammar {
-        let max_constraints = self.rand.random_range(1..=self.max_constraints);
-        let constraints = (0..max_constraints)
+        let constraints = (0..self.amount_constraints)
             .map(|_| self.random_constraint())
             .collect();
         OPBGrammar {
@@ -145,7 +144,7 @@ impl OPBGenerator {
     }
 }
 
-impl Grammar for OPBGenerator {
+impl Grammar for PBSGenerator {
     fn produce(&mut self) -> String {
         let grammar = self.random_grammar();
         grammar.to_string()
