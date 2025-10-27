@@ -50,11 +50,11 @@ impl Display for Comparison {
 struct Constraint {
     atoms: Vec<Atom>,
     comparison: Comparison,
-    result_val: i32,
+    result_val: i64,
 }
 
 impl Constraint {
-    fn new(atoms: Vec<Atom>, comparison: Comparison, result_val: i32) -> Self {
+    fn new(atoms: Vec<Atom>, comparison: Comparison, result_val: i64) -> Self {
         Self {
             atoms,
             comparison,
@@ -79,12 +79,17 @@ struct OPBGrammar {
 impl Display for OPBGrammar {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let amount_constraint = self.constraints.len();
-        let amount_vars = self.constraints.iter()
+        let amount_vars = self
+            .constraints
+            .iter()
             .flat_map(|c| c.atoms.iter())
             .map(|a| &a.var_name)
             .unique()
             .count();
-        let header = format!("* #variable= {} #constraints= {}", amount_vars, amount_constraint);
+        let header = format!(
+            "* #variable= {} #constraints= {}",
+            amount_vars, amount_constraint
+        );
         let repr = self.constraints.iter().join("\n");
         write!(f, "{header}\n{repr}")
     }
@@ -107,9 +112,17 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> OPBGrammar {
-        let constraints = (0..self.amount_constraints)
+        let constraints: Vec<Constraint> = (0..self.amount_constraints)
             .map(|_| self.random_constraint())
             .collect();
+        assert!(
+            constraints.len()
+                == self
+                    .amount_constraints
+                    .try_into()
+                    .expect("Should be able to convert amount constraints into usize"),
+            "Generated amount constraints must be the same like specified amount of constraitns"
+        );
         OPBGrammar {
             constraints: constraints,
         }
@@ -131,11 +144,15 @@ impl PBSGenerator {
 
         let min_coeff = atoms
             .iter()
-            .map(|atom| atom.coeff)
-            .min()
-            .expect("There should always be at least one atom in a constraint");
+            .filter(|atom| atom.coeff < 0)
+            .map(|atom| atom.coeff as i64)
+            .sum();
 
-        let max_coeff = atoms.iter().map(|atom| atom.coeff).sum();
+        let max_coeff: i64 = atoms
+            .iter()
+            .filter(|atom| atom.coeff > 0)
+            .map(|atom| atom.coeff as i64)
+            .sum();
         Constraint::new(
             atoms,
             comparison,
