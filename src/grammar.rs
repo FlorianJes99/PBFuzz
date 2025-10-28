@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::fmt::Display;
 
-use rand::{rngs::StdRng, seq::index, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
 
 pub trait Grammar {
     fn produce(&mut self) -> String;
@@ -32,7 +32,7 @@ impl Display for Atom {
 
 #[derive(Debug)]
 enum Comparison {
-    // Equal,
+    //TODO:  Equal,
     GrEqual,
 }
 
@@ -55,6 +55,10 @@ struct Constraint {
 
 impl Constraint {
     fn new(atoms: Vec<Atom>, comparison: Comparison, result_val: i64) -> Self {
+        assert!(
+            !atoms.is_empty(),
+            "Constraint needs at least one atom to be valid"
+        );
         Self {
             atoms,
             comparison,
@@ -115,13 +119,10 @@ impl PBSGenerator {
         let constraints: Vec<Constraint> = (0..self.amount_constraints)
             .map(|_| self.random_constraint())
             .collect();
-        assert!(
-            constraints.len()
-                == self
-                    .amount_constraints
-                    .try_into()
-                    .expect("Should be able to convert amount constraints into usize"),
-            "Generated amount constraints must be the same like specified amount of constraitns"
+        assert_eq!(
+            constraints.len(),
+            self.amount_constraints as usize,
+            "Generated amount constraints must be the same like specified amount of constraints"
         );
         OPBGrammar {
             constraints: constraints,
@@ -132,9 +133,14 @@ impl PBSGenerator {
         // there should be at max k-1 atoms for k vars
         let amount_atoms = self.rand.random_range(1..=self.max_vars - 1);
         // at least one atom should be in a constraint
-        let sample = index::sample(&mut self.rand, self.max_vars as usize, amount_atoms as usize);
-        let atoms: Vec<Atom> = sample.iter()
-            .map(|n| n+1) // add indices + 1, because sample method samples from range (0..length)
+        let sample = index::sample(
+            &mut self.rand,
+            self.max_vars as usize,
+            amount_atoms as usize,
+        );
+        let atoms: Vec<Atom> = sample
+            .iter()
+            .map(|n| n + 1) // add indices + 1, because sample method samples from range (0..length)
             .map(|n| Atom::new(format!("x{}", n), self.rand.random()))
             .sorted_by(|a, b| a.var_name.cmp(&b.var_name))
             .collect();
