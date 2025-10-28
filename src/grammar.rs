@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::fmt::Display;
 
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, seq::index, Rng, SeedableRng};
 
 pub trait Grammar {
     fn produce(&mut self) -> String;
@@ -32,14 +32,14 @@ impl Display for Atom {
 
 #[derive(Debug)]
 enum Comparison {
-    Equal,
+    // Equal,
     GrEqual,
 }
 
 impl Display for Comparison {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Comparison::Equal => "=",
+            // Comparison::Equal => "=",
             Comparison::GrEqual => ">=",
         };
         write!(f, "{s}")
@@ -132,16 +132,14 @@ impl PBSGenerator {
         // there should be at max k-1 atoms for k vars
         let amount_atoms = self.rand.random_range(1..=self.max_vars - 1);
         // at least one atom should be in a constraint
-        let atoms: Vec<Atom> = (1..=amount_atoms)
-            .map(|i| Atom::new(format!("x{}", i), self.rand.random()))
+        let sample = index::sample(&mut self.rand, self.max_vars as usize, amount_atoms as usize);
+        let atoms: Vec<Atom> = sample.iter()
+            .map(|n| n+1) // add indices + 1, because sample method samples from range (0..length)
+            .map(|n| Atom::new(format!("x{}", n), self.rand.random()))
+            .sorted_by(|a, b| a.var_name.cmp(&b.var_name))
             .collect();
 
-        let comparison = if self.rand.random_bool(0.5) {
-            Comparison::Equal
-        } else {
-            Comparison::GrEqual
-        };
-
+        let comparison = Comparison::GrEqual;
         let min_coeff = atoms
             .iter()
             .filter(|atom| atom.coeff < 0)
@@ -183,10 +181,10 @@ fn display_constraint() {
         .map(|i| Atom::new(format!("x{i}"), i * 10))
         .collect();
 
-    let comp = Comparison::Equal;
+    let comp = Comparison::GrEqual;
     let res = 15;
 
     let constr = Constraint::new(atoms, comp, res);
 
-    assert_eq!(constr.to_string(), "+10 x1 +20 x2 +30 x3 = 15")
+    assert_eq!(constr.to_string(), "+10 x1 +20 x2 +30 x3 >= 15;")
 }
