@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# Replace these with your actual programs or commands
+PROGRAM1="./target/release/fuzzer_pseudo_bool"
+PROGRAM2="../bin_roundingsat/roundingsat"
+
+file_ext=".opb"
+file="out/test${file_ext}"
+amount_vars=100
+amount_constraints=50
+
+counter=1
+max_iters=10000
+
+threshold_ms=500
+
+long_running_instances=0
+sat_instances=0
+unsat_instances=0
+
+# clean up dir
+echo "Cleaning up output directory..."
+rm out/*
+
+echo "Building release executable..."
+cargo build --release
+while true; do
+    # 30 bit large seeds
+    seed=$(( (RANDOM << 15) | RANDOM ))
+    echo "========================================"
+    echo "Iteration $counter"
+    echo "========================================"
+    echo ""
+    echo "Running Fuzzer with seed $seed..."
+    $PROGRAM1 --seed $seed --output-path  $file --amount-vars $amount_vars --amount-constraints $amount_constraints
+
+    echo "Running PB Solver..."
+
+    start_time=$(date +%s%3N)          # milliseconds since epoch
+    output=$($PROGRAM2 $file)
+    end_time=$(date +%s%3N)            # milliseconds since epoch
+    runtime_ms=$((end_time - start_time))
+
+    if ((runtime_ms > threshold_ms)); then
+        echo "PB Solver needed more than $threshold_ms ms to solve formula!"
+        echo "Saving generated file..."
+        mv $file "out/long_running_${seed}${file_ext}"
+    elif echo "$output" | grep -q "UNSATISFIABLE"; then
+        echo "Program 2 says UNSATISFIABLE! Deleting generated file."
+        rm $file
+        ((unsat_instances++))
+
+    elif echo "$output" | grep -q "SATISFIABLE"; then
+        echo "PB Solver says SATISFIABLE! Saving file with specified seed."
+        mv $file "out/${seed}_${counter}${file_ext}"
+        ((sat_instances++))
+        
+    else
+        echo "Output is neither SATISFIABLE nor UNSATISFIABLE. Exiting loop."
+        break
+    fi
+    if ((counter >= max_iters)); then
+      echo "Max iterations ($counter) reached"
+      break
+    fi
+
+    ((counter++))
+done
+
+echo "===============Statistics==============="
+echo "Total amount of instances: $counter"
+echo "Gerated instances that took longer than $threshold_ms ms: $long_running_instances"
+echo "Generated amount of SAT instances: $sat_instances"
+echo "Generated amount of UNSAT instances: $unsat_instances"
+echo "========================================"
