@@ -181,7 +181,7 @@ impl PBSGenerator {
             .collect();
 
         let comparison = Comparison::GrEqual;
-        let min_coeff = atoms
+        let min_coeff: i64 = atoms
             .iter()
             .filter(|atom| atom.coeff < 0)
             .map(|atom| atom.coeff as i64)
@@ -192,10 +192,18 @@ impl PBSGenerator {
             .filter(|atom| atom.coeff > 0)
             .map(|atom| atom.coeff as i64)
             .sum();
+        let distance = (max_coeff - min_coeff).abs();
+        let shrink = distance / 4;
+        let range_start = min_coeff + shrink;
+        let range_end = max_coeff - shrink;
+        assert!(
+            range_start <= range_end,
+            "Range start should be smaller than / equal to range end"
+        );
         let constraint = Constraint::new(
             atoms,
             comparison,
-            self.rand.random_range(min_coeff..=max_coeff),
+            self.rand.random_range(range_start..=range_end),
         );
         assert!(
             constraint.is_solvable(),
