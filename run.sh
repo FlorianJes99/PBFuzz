@@ -6,11 +6,11 @@ PROGRAM2="../bin_roundingsat/roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
-amount_vars=100
+amount_vars=150
 amount_constraints=50
 
 counter=1
-max_iters=10000
+max_iters=1000
 
 threshold_ms=500
 
@@ -44,7 +44,8 @@ while true; do
     if ((runtime_ms > threshold_ms)); then
         echo "PB Solver needed more than $threshold_ms ms to solve formula!"
         echo "Saving generated file..."
-        mv $file "out/long_running_${seed}${file_ext}"
+        mv $file "out/long_running_${runtime_ms}ms_${seed}${file_ext}"
+        ((long_running_instances++))
     elif echo "$output" | grep -q "UNSATISFIABLE"; then
         echo "Program 2 says UNSATISFIABLE! Deleting generated file."
         rm $file
@@ -56,8 +57,9 @@ while true; do
         ((sat_instances++))
         
     else
-        echo "Output is neither SATISFIABLE nor UNSATISFIABLE. Exiting loop."
-        break
+        echo "Output is neither SATISFIABLE nor UNSATISFIABLE. Saving to file."
+        mv $file "out/crash_${seed}${file_ext}"
+      
     fi
     if ((counter >= max_iters)); then
       echo "Max iterations ($counter) reached"
@@ -65,6 +67,7 @@ while true; do
     fi
 
     ((counter++))
+    echo ""
 done
 
 echo "===============Statistics==============="
