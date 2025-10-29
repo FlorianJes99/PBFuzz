@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use log::info;
-use std::{cmp::min, fmt::Display};
+use std::{cmp::max, fmt::Display};
 
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
 
@@ -10,19 +10,19 @@ pub trait Grammar {
 
 #[derive(Debug)]
 struct Atom {
-    var_name: String,
+    var_id: u32,
     coeff: i32,
 }
 
 impl Atom {
-    fn new(var_name: String, coeff: i32) -> Self {
-        Self { var_name, coeff }
+    fn new(var_id: u32, coeff: i32) -> Self {
+        Self { var_id, coeff }
     }
 }
 
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.coeff, self.var_name)
+        write!(f, "{} x{}", self.coeff, self.var_id)
     }
 }
 
@@ -97,7 +97,7 @@ impl OPBGrammar {
         let amount_vars = constraints
             .iter()
             .flat_map(|c| c.atoms.iter())
-            .map(|a| &a.var_name)
+            .map(|a| a.var_id)
             .unique()
             .count();
         Self {
@@ -157,7 +157,7 @@ impl PBSGenerator {
         // range for coefficient of each atom
         let coeff_range = 10;
         // generate at least two atoms if possible
-        let min_atoms = min(2, self.max_vars);
+        let min_atoms = max(self.max_vars / 2, 1);
         // there should be at max k-1 atoms for k vars
         let amount_atoms = self.rand.random_range(min_atoms..=self.max_vars - 1);
         // at least one atom should be in a constraint
@@ -172,11 +172,12 @@ impl PBSGenerator {
             .map(|n| n + 1)
             .map(|n| {
                 Atom::new(
-                    format!("x{}", n),
+                    n.try_into()
+                        .expect("We should always be able to cast to u32 for atom var ids"),
                     self.rand.random_range(-coeff_range..=coeff_range),
                 )
             })
-            .sorted_by(|a, b| a.var_name.cmp(&b.var_name))
+            .sorted_by(|a, b| a.var_id.cmp(&b.var_id))
             .collect();
 
         let comparison = Comparison::GrEqual;
@@ -217,18 +218,16 @@ impl Grammar for PBSGenerator {
 
 #[test]
 fn display_atom() {
-    let atom = Atom::new("x1".to_string(), 3);
+    let atom = Atom::new(1, 3);
     assert_eq!(atom.to_string(), "3 x1".to_string());
 
-    let negative_coeff = Atom::new("x1".to_string(), -3);
+    let negative_coeff = Atom::new(1, -3);
     assert_eq!(negative_coeff.to_string(), "-3 x1".to_string());
 }
 
 #[test]
 fn display_constraint() {
-    let atoms: Vec<Atom> = (1..=3)
-        .map(|i| Atom::new(format!("x{i}"), i * 10))
-        .collect();
+    let atoms: Vec<Atom> = (1..=3).map(|i| Atom::new(i as u32, i * 10)).collect();
 
     let comp = Comparison::GrEqual;
     let res = 15;
