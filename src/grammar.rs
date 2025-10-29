@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use log::info;
 use std::fmt::Display;
 
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
@@ -78,24 +79,41 @@ impl Display for Constraint {
 #[derive(Debug)]
 struct OPBGrammar {
     constraints: Vec<Constraint>,
+    amount_vars: usize,
+    amount_constraints: usize,
 }
 
-impl Display for OPBGrammar {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let amount_constraint = self.constraints.len();
-        let amount_vars = self
-            .constraints
+impl OPBGrammar {
+    fn new(constraints: Vec<Constraint>) -> Self {
+        let amount_constraints = constraints.len();
+        let amount_vars = constraints
             .iter()
             .flat_map(|c| c.atoms.iter())
             .map(|a| &a.var_name)
             .unique()
             .count();
-        let header = format!(
+        Self {
+            constraints,
+            amount_vars,
+            amount_constraints,
+        }
+    }
+}
+
+impl Display for OPBGrammar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // write the header into the buffer
+        writeln!(
+            f,
             "* #variable= {} #constraints= {}",
-            amount_vars, amount_constraint
-        );
-        let repr = self.constraints.iter().join("\n");
-        write!(f, "{header}\n{repr}")
+            self.amount_vars, self.amount_constraints
+        )?;
+
+        // write every constraint into the buffer
+        for constraint in self.constraints.iter() {
+            writeln!(f, "{}", constraint)?;
+        }
+        Ok(())
     }
 }
 
@@ -124,9 +142,7 @@ impl PBSGenerator {
             self.amount_constraints as usize,
             "Generated amount constraints must be the same like specified amount of constraints"
         );
-        OPBGrammar {
-            constraints: constraints,
-        }
+        OPBGrammar::new(constraints)
     }
 
     fn random_constraint(&mut self) -> Constraint {
@@ -168,6 +184,10 @@ impl PBSGenerator {
 impl Grammar for PBSGenerator {
     fn produce(&mut self) -> String {
         let grammar = self.random_grammar();
+        info!(
+            "Generated random grammar PBS grammar with {} vars and {} constraints.",
+            grammar.amount_vars, grammar.amount_constraints
+        );
         grammar.to_string()
     }
 }
