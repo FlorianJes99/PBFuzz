@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use log::info;
-use std::fmt::Display;
+use std::{cmp::min, fmt::Display};
 
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
 
@@ -22,12 +22,7 @@ impl Atom {
 
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let sign = match self.coeff.cmp(&0) {
-            std::cmp::Ordering::Less => "-",
-            std::cmp::Ordering::Equal => "",
-            std::cmp::Ordering::Greater => "+",
-        };
-        write!(f, "{}{} {}", sign, self.coeff.abs(), self.var_name)
+        write!(f, "{} {}", self.coeff, self.var_name)
     }
 }
 
@@ -64,6 +59,19 @@ impl Constraint {
             atoms,
             comparison,
             result_val,
+        }
+    }
+
+    fn is_solvable(&self) -> bool {
+        match self.comparison {
+            Comparison::GrEqual => {
+                self.atoms
+                    .iter()
+                    .filter(|atom| atom.coeff > 0)
+                    .map(|atom| atom.coeff as i64)
+                    .sum::<i64>()
+                    >= self.result_val
+            }
         }
     }
 }
@@ -146,8 +154,12 @@ impl PBSGenerator {
     }
 
     fn random_constraint(&mut self) -> Constraint {
+        // range for coefficient of each atom
+        let coeff_range = 10;
+        // generate at least two atoms if possible
+        let min_atoms = min(2, self.max_vars);
         // there should be at max k-1 atoms for k vars
-        let amount_atoms = self.rand.random_range(1..=self.max_vars - 1);
+        let amount_atoms = self.rand.random_range(min_atoms..=self.max_vars - 1);
         // at least one atom should be in a constraint
         let sample = index::sample(
             &mut self.rand,
@@ -156,8 +168,14 @@ impl PBSGenerator {
         );
         let atoms: Vec<Atom> = sample
             .iter()
-            .map(|n| n + 1) // add indices + 1, because sample method samples from range (0..length)
-            .map(|n| Atom::new(format!("x{}", n), self.rand.random()))
+            // add indices + 1, because sample method samples from range (0..length)
+            .map(|n| n + 1)
+            .map(|n| {
+                Atom::new(
+                    format!("x{}", n),
+                    self.rand.random_range(-coeff_range..=coeff_range),
+                )
+            })
             .sorted_by(|a, b| a.var_name.cmp(&b.var_name))
             .collect();
 
@@ -173,11 +191,16 @@ impl PBSGenerator {
             .filter(|atom| atom.coeff > 0)
             .map(|atom| atom.coeff as i64)
             .sum();
-        Constraint::new(
+        let constraint = Constraint::new(
             atoms,
             comparison,
             self.rand.random_range(min_coeff..=max_coeff),
-        )
+        );
+        assert!(
+            constraint.is_solvable(),
+            "A constraint on each own should be solvable"
+        );
+        constraint
     }
 }
 
@@ -195,7 +218,7 @@ impl Grammar for PBSGenerator {
 #[test]
 fn display_atom() {
     let atom = Atom::new("x1".to_string(), 3);
-    assert_eq!(atom.to_string(), "+3 x1".to_string());
+    assert_eq!(atom.to_string(), "3 x1".to_string());
 
     let negative_coeff = Atom::new("x1".to_string(), -3);
     assert_eq!(negative_coeff.to_string(), "-3 x1".to_string());
@@ -212,5 +235,5 @@ fn display_constraint() {
 
     let constr = Constraint::new(atoms, comp, res);
 
-    assert_eq!(constr.to_string(), "+10 x1 +20 x2 +30 x3 >= 15;")
+    assert_eq!(constr.to_string(), "10 x1 20 x2 30 x3 >= 15;")
 }
