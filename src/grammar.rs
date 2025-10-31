@@ -1,6 +1,10 @@
 use itertools::Itertools;
 use log::info;
-use std::{cmp::max, fmt::Display, io::{self, Write}};
+use std::{
+    cmp::max,
+    fmt::Display,
+    io::{self, Write},
+};
 
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
 
@@ -85,43 +89,31 @@ impl Display for Constraint {
 }
 
 #[derive(Debug)]
-struct OPBGrammar {
+struct PBSGrammar {
     constraints: Vec<Constraint>,
-    amount_vars: usize,
-    amount_constraints: usize,
+    amount_vars: u32,
+    amount_constraints: u32,
 }
 
-impl OPBGrammar {
+impl PBSGrammar {
     fn new(constraints: Vec<Constraint>) -> Self {
-        let amount_constraints = constraints.len();
+        let amount_constraints = constraints
+            .len()
+            .try_into()
+            .expect("We should never generate more constraints than 2**32");
         let amount_vars = constraints
             .iter()
             .flat_map(|c| c.atoms.iter())
             .map(|a| a.var_id)
             .unique()
-            .count();
+            .count()
+            .try_into()
+            .expect("We should never try to create programs with more than 2**32 vars");
         Self {
             constraints,
             amount_vars,
             amount_constraints,
         }
-    }
-}
-
-impl Display for OPBGrammar {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // write the header into the buffer
-        writeln!(
-            f,
-            "* #variable= {} #constraints= {}",
-            self.amount_vars, self.amount_constraints
-        )?;
-
-        // write every constraint into the buffer
-        for constraint in self.constraints.iter() {
-            writeln!(f, "{}", constraint)?;
-        }
-        Ok(())
     }
 }
 
@@ -143,7 +135,7 @@ impl PBSGenerator {
         }
     }
 
-    fn random_grammar(&mut self) -> OPBGrammar {
+    fn random_grammar(&mut self) -> PBSGrammar {
         let constraints: Vec<Constraint> = (0..self.amount_constraints)
             .map(|_| self.random_constraint())
             .collect();
@@ -152,7 +144,7 @@ impl PBSGenerator {
             self.amount_constraints as usize,
             "Generated amount constraints must be the same like specified amount of constraints"
         );
-        OPBGrammar::new(constraints)
+        PBSGrammar::new(constraints)
     }
 
     fn random_constraint(&mut self) -> Constraint {
@@ -170,6 +162,7 @@ impl PBSGenerator {
         );
         let atoms: Vec<Atom> = sample
             .iter()
+            .sorted()
             // add indices + 1, because sample method samples from range (0..length)
             .map(|n| n + 1)
             .map(|n| {
@@ -179,7 +172,6 @@ impl PBSGenerator {
                     self.rand.random_range(-coeff_range..=coeff_range),
                 )
             })
-            .sorted_by(|a, b| a.var_id.cmp(&b.var_id))
             .collect();
 
         let comparison = Comparison::GrEqual;
@@ -207,7 +199,7 @@ impl PBSGenerator {
             comparison,
             self.rand.random_range(range_start..=range_end),
         );
-        assert!(
+        debug_assert!(
             constraint.is_solvable(),
             "A constraint on each own should be solvable"
         );
