@@ -1,11 +1,11 @@
 use itertools::Itertools;
 use log::info;
-use std::{cmp::max, fmt::Display};
+use std::{cmp::max, fmt::Display, io::{self, Write}};
 
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
 
 pub trait Grammar {
-    fn produce(&mut self) -> String;
+    fn produce<W: Write>(&mut self, writer: &mut W) -> io::Result<()>;
 }
 
 #[derive(Debug)]
@@ -127,6 +127,7 @@ impl Display for OPBGrammar {
 
 #[derive(Debug)]
 pub struct PBSGenerator {
+    seed: u64,
     max_vars: u32,
     amount_constraints: u32,
     rand: StdRng,
@@ -135,6 +136,7 @@ pub struct PBSGenerator {
 impl PBSGenerator {
     pub fn new(seed: u64, max_vars: u32, amount_constraints: u32) -> Self {
         Self {
+            seed,
             max_vars,
             amount_constraints,
             rand: StdRng::seed_from_u64(seed),
@@ -214,13 +216,24 @@ impl PBSGenerator {
 }
 
 impl Grammar for PBSGenerator {
-    fn produce(&mut self) -> String {
+    fn produce<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         let grammar = self.random_grammar();
         info!(
             "Generated random grammar PBS grammar with {} vars and {} constraints.",
             grammar.amount_vars, grammar.amount_constraints
         );
-        grammar.to_string()
+        writeln!(
+            writer,
+            "* #variable= {} #constraints= {}",
+            grammar.amount_vars, grammar.amount_constraints
+        )?;
+        writeln!(writer, "* Used seed: {}", self.seed)?;
+
+        // write every constraint into the buffer
+        for constraint in grammar.constraints.iter() {
+            writeln!(writer, "{}", constraint)?;
+        }
+        Ok(())
     }
 }
 
