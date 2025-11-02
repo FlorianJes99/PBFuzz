@@ -1,8 +1,7 @@
 #!/bin/bash
 
-# Replace these with your actual programs or commands
-PROGRAM1="./target/release/fuzzer_pseudo_bool"
-PROGRAM2="../bin_roundingsat/roundingsat"
+FUZZER="./target/release/fuzzer_pseudo_bool"
+ROUNDING_SAT="../bin_roundingsat/roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
@@ -32,12 +31,12 @@ while true; do
     echo "========================================"
     echo ""
     echo "Running Fuzzer with seed $seed..."
-    $PROGRAM1 --seed $seed --output-path  $file --amount-vars $amount_vars --amount-constraints $amount_constraints
+    $FUZZER --seed $seed --output-path  $file --amount-vars $amount_vars --amount-constraints $amount_constraints
 
     echo "Running PB Solver..."
 
     start_time=$(date +%s%3N)          # milliseconds since epoch
-    output=$($PROGRAM2 $file)
+    output=$($ROUNDING_SAT $file)
     end_time=$(date +%s%3N)            # milliseconds since epoch
     runtime_ms=$((end_time - start_time))
 
@@ -53,7 +52,7 @@ while true; do
 
     elif echo "$output" | grep -q "SATISFIABLE"; then
         echo "PB Solver says SATISFIABLE! Saving file with specified seed."
-        mv $file "out/${seed}_${counter}${file_ext}"
+        mv $file "out/sat_${seed}_${counter}${file_ext}"
         ((sat_instances++))
         
     else
@@ -71,7 +70,7 @@ while true; do
 done
 
 echo "===============Statistics==============="
-echo "Total amount of instances: $counter"
+echo "Total amount of instances generated: $counter"
 echo "Gerated instances that took longer than $threshold_ms ms: $long_running_instances"
 echo "Generated amount of SAT instances: $sat_instances"
 echo "Generated amount of UNSAT instances: $unsat_instances"
