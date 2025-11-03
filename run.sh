@@ -1,7 +1,18 @@
 #!/bin/bash
 
+# cleanup on ctrl+c
+trap handle_sigint SIGINT
+
+function handle_sigint() {
+    echo "Caught Ctrl+C! Cleaning up..."
+    mv $file "out/not_terminating_${seed}${file_ext}"
+    echo "Saved file as: out/not_terminating_${seed}${file_ext}"
+    echo "Not terminating with seed: $seed"
+    exit 1
+}
+
 FUZZER="./target/release/fuzzer_pseudo_bool"
-ROUNDING_SAT="../bin_roundingsat/roundingsat"
+ROUNDING_SAT="roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
