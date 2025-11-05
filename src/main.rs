@@ -9,6 +9,7 @@ use crate::grammar::PBSGenerator;
 
 mod fuzzer_args;
 mod grammar;
+mod domain;
 
 fn main() {
     // initialize the logger
