@@ -16,8 +16,7 @@ ROUNDING_SAT="roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
-amount_vars=150
-amount_constraints=50
+amount_vars=10
 
 counter=1
 max_iters=1000
@@ -42,7 +41,7 @@ while true; do
     echo "========================================"
     echo ""
     echo "Running Fuzzer with seed $seed..."
-    $FUZZER --seed $seed --output-path  $file --amount-vars $amount_vars --amount-constraints $amount_constraints
+    $FUZZER --seed $seed --output-path  $file --amount-vars $amount_vars
 
     echo "Running PB Solver..."
 

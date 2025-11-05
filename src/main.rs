@@ -18,10 +18,10 @@ fn main() {
     let args = fuzzer_args::FuzzerArgs::parse();
 
     info!(
-        "Running fuzzer with seed {}, {} variables and {} constraints.",
-        args.seed, args.amount_vars, args.amount_constraints
+        "Running fuzzer with seed {} and {} variables.",
+        args.seed, args.amount_vars
     );
-    let mut grammar = PBSGenerator::new(args.seed, args.amount_vars, args.amount_constraints);
+    let mut grammar = PBSGenerator::new(args.seed, args.amount_vars);
     let output_path = &args.output_path;
     let write_result = File::create(output_path).map(|mut file| grammar.produce(&mut file));
     match write_result {

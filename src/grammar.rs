@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use log::info;
 use std::{
-    cmp::max,
+    cmp::min,
     fmt::Display,
     io::{self, Write},
 };
@@ -66,6 +66,42 @@ impl Constraint {
         }
     }
 
+    fn unsat_count(&self) -> u32 {
+        let n = self.atoms.len();
+        assert_eq!(
+            n, 3,
+            "This method works only for exactly three atoms per constraint"
+        );
+
+        let [a1, a2, a3] = &self.atoms[..] else {
+            unreachable!();
+        };
+        let (a1, a2, a3) = (a1.coeff, a2.coeff, a3.coeff);
+        let assignments = vec![
+            (0, 0, 0),
+            (1, 0, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 1, 0),
+            (1, 0, 1),
+            (0, 1, 1),
+            (1, 1, 1),
+        ];
+        assignments
+            .iter()
+            .map(|(b1, b2, b3)| b1 * a1 + b2 * a2 + b3 * a3)
+            .filter(|&sum| !self.satisfied(sum))
+            .count()
+            .try_into()
+            .expect("Should be able to convert at max 8 assignments to a u32 number")
+    }
+
+    fn satisfied(&self, value: i32) -> bool {
+        match self.comparison {
+            Comparison::GrEqual => value as i64 >= self.result_val,
+        }
+    }
+
     fn is_solvable(&self) -> bool {
         match self.comparison {
             Comparison::GrEqual => {
@@ -121,39 +157,45 @@ impl PBSGrammar {
 pub struct PBSGenerator {
     seed: u64,
     max_vars: u32,
-    amount_constraints: u32,
     rand: StdRng,
 }
 
 impl PBSGenerator {
-    pub fn new(seed: u64, max_vars: u32, amount_constraints: u32) -> Self {
+    pub fn new(seed: u64, max_vars: u32) -> Self {
         Self {
             seed,
             max_vars,
-            amount_constraints,
             rand: StdRng::seed_from_u64(seed),
         }
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
-        let constraints: Vec<Constraint> = (0..self.amount_constraints)
-            .map(|_| self.random_constraint())
-            .collect();
-        assert_eq!(
-            constraints.len(),
-            self.amount_constraints as usize,
-            "Generated amount constraints must be the same like specified amount of constraints"
-        );
+        let mut unsat_assignments = 0;
+        let mut constraints = vec![];
+        let max = (2_u32.pow(self.max_vars) as f32 * 0.7).floor() as u32;
+        loop {
+            let c = self.random_constraint();
+            unsat_assignments += c.unsat_count();
+            constraints.push(c);
+            if unsat_assignments > max {
+                let n = constraints.len();
+                info!(
+                    "Reached maximum unsatisfiable assignments: {}",
+                    unsat_assignments
+                );
+                info!("Generated {} constraints!", n);
+                break;
+            }
+        }
         PBSGrammar::new(constraints)
     }
 
     fn random_constraint(&mut self) -> Constraint {
         // range for coefficient of each atom
         let coeff_range = 10;
-        // generate at least two atoms if possible
-        let min_atoms = max(self.max_vars / 2, 1);
-        // there should be at max k-1 atoms for k vars
-        let amount_atoms = self.rand.random_range(min_atoms..=self.max_vars - 1);
+        // generate always 3 atoms if possible
+        let min_atoms = min(3, self.max_vars);
+        let amount_atoms = min_atoms;
         // at least one atom should be in a constraint
         let sample = index::sample(
             &mut self.rand,
@@ -236,6 +278,17 @@ fn display_atom() {
 
     let negative_coeff = Atom::new(1, -3);
     assert_eq!(negative_coeff.to_string(), "-3 x1".to_string());
+}
+
+#[test]
+fn amount_unsat() {
+    let atoms = vec![Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
+    let c = Constraint::new(atoms, Comparison::GrEqual, 4);
+    assert_eq!(c.unsat_count(), 4);
+
+    let atoms = vec![Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
+    let c = Constraint::new(atoms, Comparison::GrEqual, 0);
+    assert_eq!(c.unsat_count(), 1)
 }
 
 #[test]
