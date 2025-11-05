@@ -133,10 +133,6 @@ impl PBSGenerator {
             comparison,
             self.rand.random_range(range_start..=range_end),
         );
-        debug_assert!(
-            constraint.is_solvable(),
-            "A constraint on each own should be solvable"
-        );
         constraint
     }
 }

@@ -1,7 +1,14 @@
+/// Basic building blocks for generating pseudo boolean constraints
+///
+/// A constraint is build up from some amount of atoms an comparison operator and a degree (RHS)
 use std::fmt::Display;
 
 use itertools::Itertools;
 
+///Atom is the most basic building block
+///
+///It consists of an Id (u32), which is used to display the variable name
+///and an coefficient (i32).
 #[derive(Debug)]
 pub struct Atom {
     pub var_id: u32,
@@ -20,6 +27,9 @@ impl Display for Atom {
     }
 }
 
+/// Comparison enum models the different (In)equalities.
+///
+/// PBS/PBO normally supports only >= and = operators.
 #[derive(Debug)]
 pub enum Comparison {
     //TODO:  Equal,
@@ -36,6 +46,10 @@ impl Display for Comparison {
     }
 }
 
+/// Constraint is a combination of atoms, comparison operator and a degree
+///
+/// The degree should always be in bound of the atmos max and min assignment.
+/// Otherwise a Constraint itself makes the problem instantly unsat.
 #[derive(Debug)]
 pub struct Constraint {
     atoms: Vec<Atom>,
@@ -44,22 +58,35 @@ pub struct Constraint {
 }
 
 impl Constraint {
+    /// Construct a new constraints object
+    /// Atoms vector needs to have at least one item, otherwise function will panic
+    /// Degree needs to be inside the min/max bounds of atoms assignment
     pub fn new(atoms: Vec<Atom>, comparison: Comparison, degree: i64) -> Self {
         assert!(
             !atoms.is_empty(),
             "Constraint needs at least one atom to be valid"
         );
-        Self {
+        let constraint = Self {
             atoms,
             comparison,
             degree,
-        }
+        };
+
+        debug_assert!(
+            constraint.is_solvable(),
+            "A constraint on each own should be solvable"
+        );
+        constraint
     }
 
+    /// Read only iterator over the contained atoms of a constraint
     pub fn atoms(&self) -> impl Iterator<Item = &Atom> {
         self.atoms.iter()
     }
 
+    /// Checks how many assignments are unsat for a constraint
+    /// !!!IMPORTANT!!! this method is only designed for constraints with 3 Methods.
+    /// Calling this method on a constraint with different amount of methods will cause a panick
     pub fn unsat_count(&self) -> u32 {
         let n = self.atoms.len();
         assert_eq!(
@@ -96,7 +123,7 @@ impl Constraint {
         }
     }
 
-    pub fn is_solvable(&self) -> bool {
+    fn is_solvable(&self) -> bool {
         match self.comparison {
             Comparison::GrEqual => {
                 self.atoms
