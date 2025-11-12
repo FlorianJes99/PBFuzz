@@ -11,19 +11,26 @@ use itertools::Itertools;
 ///and an coefficient (i32).
 #[derive(Debug)]
 pub struct Atom {
-    pub var_id: u32,
+    pub literal_id: u32,
     pub coeff: i32,
 }
 
 impl Atom {
     pub fn new(var_id: u32, coeff: i32) -> Self {
-        Self { var_id, coeff }
+        assert!(
+            coeff != 0,
+            "Zero coefficient does not make any sense for an atom"
+        );
+        Self {
+            literal_id: var_id,
+            coeff,
+        }
     }
 }
 
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} x{}", self.coeff, self.var_id)
+        write!(f, "{} x{}", self.coeff, self.literal_id)
     }
 }
 
@@ -84,10 +91,21 @@ impl Constraint {
         self.atoms.iter()
     }
 
+    const ASSIGNMENTS: [(i32, i32, i32); 8] = [
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (0, 0, 1),
+        (1, 1, 0),
+        (1, 0, 1),
+        (0, 1, 1),
+        (1, 1, 1),
+    ];
+
     /// Checks how many assignments are unsat for a constraint
     /// !!!IMPORTANT!!! this method is only designed for constraints with 3 Methods.
     /// Calling this method on a constraint with different amount of methods will cause a panick
-    pub fn unsat_count(&self) -> u32 {
+    pub fn unsat_count_three_atoms(&self) -> u32 {
         let n = self.atoms.len();
         assert_eq!(
             n, 3,
@@ -98,17 +116,7 @@ impl Constraint {
             unreachable!();
         };
         let (a1, a2, a3) = (a1.coeff, a2.coeff, a3.coeff);
-        let assignments = vec![
-            (0, 0, 0),
-            (1, 0, 0),
-            (0, 1, 0),
-            (0, 0, 1),
-            (1, 1, 0),
-            (1, 0, 1),
-            (0, 1, 1),
-            (1, 1, 1),
-        ];
-        assignments
+        Self::ASSIGNMENTS
             .iter()
             .map(|(b1, b2, b3)| b1 * a1 + b2 * a2 + b3 * a3)
             .filter(|&sum| !self.satisfied(sum))
@@ -158,11 +166,11 @@ fn display_atom() {
 fn amount_unsat() {
     let atoms = vec![Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
     let c = Constraint::new(atoms, Comparison::GrEqual, 4);
-    assert_eq!(c.unsat_count(), 4);
+    assert_eq!(c.unsat_count_three_atoms(), 4);
 
     let atoms = vec![Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
     let c = Constraint::new(atoms, Comparison::GrEqual, 0);
-    assert_eq!(c.unsat_count(), 1)
+    assert_eq!(c.unsat_count_three_atoms(), 1)
 }
 
 #[test]

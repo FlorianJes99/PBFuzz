@@ -1,9 +1,6 @@
 use itertools::Itertools;
 use log::info;
-use std::{
-    cmp::min,
-    io::{self, Write},
-};
+use std::io::{self, Write};
 
 use crate::domain::*;
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
@@ -28,7 +25,7 @@ impl PBSGrammar {
         let amount_vars = constraints
             .iter()
             .flat_map(|c| c.atoms())
-            .map(|a| a.var_id)
+            .map(|a| a.literal_id)
             .unique()
             .count()
             .try_into()
@@ -38,6 +35,13 @@ impl PBSGrammar {
             amount_vars,
             amount_constraints,
         }
+    }
+
+    fn amount_unsat_assignments(&self) -> u32 {
+        self.constraints
+            .iter()
+            .map(|c| c.unsat_count_three_atoms())
+            .sum()
     }
 }
 
@@ -58,23 +62,13 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
-        let mut unsat_assignments = 0;
-        let mut constraints = vec![];
-        let max = (2_u32.pow(self.max_vars) as f32 * 0.7).floor() as u32;
-        loop {
-            let c = self.random_constraint();
-            unsat_assignments += c.unsat_count();
-            constraints.push(c);
-            if unsat_assignments > max {
-                let n = constraints.len();
-                info!(
-                    "Reached maximum unsatisfiable assignments: {}",
-                    unsat_assignments
-                );
-                info!("Generated {} constraints!", n);
-                break;
-            }
-        }
+        let amount_constraints = (self.max_vars as f32 * 4.2).floor() as u32;
+        // let max = (2_u32.pow(self.max_vars) as f32 * 0.3).floor() as u32;
+        info!("Generating amount of constraints: {}", amount_constraints);
+        let constraints: Vec<Constraint> = (0..amount_constraints)
+            .map(|_| self.random_constraint())
+            .collect();
+        info!("Generated {} constraints!", amount_constraints);
         PBSGrammar::new(constraints)
     }
 
@@ -82,8 +76,7 @@ impl PBSGenerator {
         // range for coefficient of each atom
         let coeff_range = 10;
         // generate always 3 atoms if possible
-        let min_atoms = min(3, self.max_vars);
-        let amount_atoms = min_atoms;
+        let amount_atoms = 3;
         // at least one atom should be in a constraint
         let sample = index::sample(
             &mut self.rand,
@@ -99,7 +92,7 @@ impl PBSGenerator {
                 Atom::new(
                     n.try_into()
                         .expect("We should always be able to cast to u32 for atom var ids"),
-                    self.rand.random_range(-coeff_range..=coeff_range),
+                    self.sample_without_zero_from_range(-coeff_range, coeff_range),
                 )
             })
             .collect();
@@ -108,22 +101,30 @@ impl PBSGenerator {
         self.create_from_atoms(atoms, comparison)
     }
 
+    fn sample_without_zero_from_range(&mut self, start_val: i32, end_val: i32) -> i32 {
+        loop {
+            let rand_sample = self.rand.random_range(start_val..=end_val);
+            if rand_sample != 0 {
+                return rand_sample;
+            }
+        }
+    }
+
     fn create_from_atoms(&mut self, atoms: Vec<Atom>, comparison: Comparison) -> Constraint {
         let min_coeff: i64 = atoms
             .iter()
             .filter(|atom| atom.coeff < 0)
             .map(|atom| atom.coeff as i64)
             .sum();
-
         let max_coeff: i64 = atoms
             .iter()
             .filter(|atom| atom.coeff > 0)
             .map(|atom| atom.coeff as i64)
             .sum();
-        let distance = (max_coeff - min_coeff).abs();
-        let shrink = distance / 4;
-        let range_start = min_coeff + shrink;
-        let range_end = max_coeff - shrink;
+        let distance = (max_coeff - min_coeff).abs() as f64;
+        // place the possible RHS values inside the central 20% of possible ranges
+        let range_start = min_coeff + (0.4 * distance).floor() as i64;
+        let range_end = min_coeff + (0.6 * distance).ceil() as i64;
         assert!(
             range_start <= range_end,
             "Range start should be smaller than / equal to range end"
@@ -144,12 +145,19 @@ impl Grammar for PBSGenerator {
             "Generated random grammar PBS grammar with {} vars and {} constraints.",
             grammar.amount_vars, grammar.amount_constraints
         );
+        let amount_equal_constraints = 0; //TODO: implement this as soon as constraints can be
+        //equal with RHS
         writeln!(
             writer,
-            "* #variable= {} #constraints= {}",
-            grammar.amount_vars, grammar.amount_constraints
+            "* #variable= {} #constraint= {} #equal= {} intsize= 32",
+            grammar.amount_vars, grammar.amount_constraints, amount_equal_constraints
         )?;
         writeln!(writer, "* Used seed: {}", self.seed)?;
+        writeln!(
+            writer,
+            "* UNSAT assignments: {}",
+            grammar.amount_unsat_assignments()
+        )?;
 
         // write every constraint into the buffer
         for constraint in grammar.constraints.iter() {
