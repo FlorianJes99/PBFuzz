@@ -16,7 +16,7 @@ ROUNDING_SAT="roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
-amount_vars=10
+amount_vars=20
 
 counter=1
 max_iters=1000
@@ -56,7 +56,7 @@ while true; do
         mv $file "out/long_running_${runtime_ms}ms_${seed}${file_ext}"
         ((long_running_instances++))
     elif echo "$output" | grep -q "UNSATISFIABLE"; then
-        echo "Program 2 says UNSATISFIABLE! Deleting generated file."
+        echo "Roundingsat says UNSATISFIABLE! Deleting generated file."
         rm $file
         ((unsat_instances++))
 

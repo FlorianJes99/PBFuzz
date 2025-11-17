@@ -1,8 +1,8 @@
+use crate::grammar::domain::{Constraint, Atom, Comparison};
 use itertools::Itertools;
 use log::info;
 use std::io::{self, Write};
 
-use crate::domain::*;
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
 
 pub trait Grammar {

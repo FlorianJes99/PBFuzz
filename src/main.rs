@@ -4,13 +4,13 @@ use clap::Parser;
 use log::error;
 use log::info;
 
-use crate::grammar::Grammar;
-use crate::grammar::PBSGenerator;
+use crate::grammar::pbsgenerator::{Grammar, PBSGenerator};
 
 mod fuzzer_args;
-mod grammar;
-mod domain;
-
+mod grammar {
+    pub mod domain;
+    pub mod pbsgenerator;
+}
 fn main() {
     // initialize the logger
     env_logger::init();
