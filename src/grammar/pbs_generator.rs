@@ -1,4 +1,4 @@
-use crate::grammar::domain::{Atom, Comparison, Constraint};
+use crate::grammar::domain::{Atom, AtomId, Comparison, Constraint};
 use itertools::Itertools;
 use log::info;
 use std::{
@@ -18,12 +18,29 @@ pub struct PBSGrammar {
     constraints: Vec<Constraint>,
 }
 
+#[derive(Clone, Copy)]
+struct OccurenceWithId {
+    atom_id: AtomId,
+    count: u32,
+}
+
+impl OccurenceWithId {
+    fn new(atom_id: AtomId, count: u32) -> Self {
+        Self { atom_id, count }
+    }
+}
+impl Display for OccurenceWithId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.count, self.atom_id)
+    }
+}
 /// Container for various statistics about the generated grammar
 pub struct GrammarStatistics {
     amount_constraints: u32,
     amount_vars: u32,
-    max_occurence: u32,
-    min_occurence: u32,
+    total_var_occurences: u32,
+    max_occurence: OccurenceWithId,
+    min_occurence: OccurenceWithId,
     average_occurence: f32,
 }
 
@@ -32,9 +49,14 @@ impl Display for GrammarStatistics {
         writeln!(f, "**********Statistics**********")?;
         writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
         writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
+        writeln!(f, "* Total amount of used vars: {}", self.total_var_occurences)?;
         writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
         writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
-        writeln!(f, "* Average occurences of vars: {}", self.average_occurence)?;
+        writeln!(
+            f,
+            "* Average occurences of vars: {}",
+            self.average_occurence
+        )?;
         writeln!(f, "******************************")
     }
 }
@@ -48,7 +70,7 @@ impl PBSGrammar {
         let amount_vars = constraints
             .iter()
             .flat_map(|c| c.atoms())
-            .map(|a| a.literal_id)
+            .map(|a| a.atom_id.literal_id)
             .unique()
             .count()
             .try_into()
@@ -86,6 +108,7 @@ impl PBSGrammar {
             "* UNSAT assignments: {}",
             self.amount_unsat_assignments()
         )?;
+        writeln!(writer, "{}", self.get_statistics())?;
 
         // write every constraint into the buffer
         for constraint in self.constraints.iter() {
@@ -95,24 +118,28 @@ impl PBSGrammar {
     }
 
     pub fn get_statistics(&self) -> GrammarStatistics {
-        let mut occurences_per_var: HashMap<u32, u32> = HashMap::new();
+        let mut occurences_per_var: HashMap<AtomId, u32> = HashMap::new();
         for c in &self.constraints {
             for a in c.atoms() {
                 occurences_per_var
-                    .entry(a.literal_id)
+                    .entry(a.atom_id.clone())
                     .and_modify(|v| *v += 1)
                     .or_insert(1);
             }
         }
-        let mut max = u32::MIN;
-        let mut min = u32::MAX;
+        let mut max: Option<OccurenceWithId> = Option::None;
+        let mut min: Option<OccurenceWithId> = Option::None;
         let mut sum = 0;
-        for (_, occurences) in occurences_per_var.iter() {
-            if *occurences > max {
-                max = *occurences;
+        for (id, occurences) in occurences_per_var.iter() {
+            if max.is_none() {
+                max = Some(OccurenceWithId::new(id.clone(), *occurences));
+            } else if max.is_some_and(|f| *occurences > f.count) {
+                max = Some(OccurenceWithId::new(id.clone(), *occurences));
             }
-            if *occurences < min {
-                min = *occurences;
+            if min.is_none() {
+                min = Some(OccurenceWithId::new(id.clone(), *occurences));
+            } else if min.is_some_and(|f| *occurences < f.count) {
+                min = Some(OccurenceWithId::new(id.clone(), *occurences));
             }
             sum += occurences;
         }
@@ -120,8 +147,9 @@ impl PBSGrammar {
         GrammarStatistics {
             amount_constraints: self.amount_constraints,
             amount_vars: self.amount_vars,
-            max_occurence: max,
-            min_occurence: min,
+            total_var_occurences: sum,
+            max_occurence: max.expect("There should always a var which occurs the most"),
+            min_occurence: min.expect("There should always a var which occurs the least"),
             average_occurence: average,
         }
     }
@@ -148,7 +176,7 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
-        let amount_constraints = (self.max_vars as f32 * 4.2).floor() as u32;
+        let amount_constraints = (self.max_vars as f32 * 1.4).floor() as u32;
         // let max = (2_u32.pow(self.max_vars) as f32 * 0.3).floor() as u32;
         info!("Generating amount of constraints: {}", amount_constraints);
         let constraints: Vec<Constraint> = (0..amount_constraints)
@@ -238,7 +266,8 @@ fn test_statistics() {
     let stats = grammar.get_statistics();
     assert_eq!(stats.amount_vars, 4);
     assert_eq!(stats.amount_constraints, 3);
-    assert_eq!(stats.max_occurence, 3);
-    assert_eq!(stats.min_occurence, 2);
+    assert_eq!(stats.max_occurence.count, 3);
+    assert_eq!(stats.min_occurence.count, 2);
+    assert_eq!(stats.total_var_occurences, 9);
     assert!((stats.average_occurence - 2.25).abs() < 0.001);
 }

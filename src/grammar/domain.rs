@@ -5,13 +5,29 @@ use std::fmt::Display;
 
 use itertools::Itertools;
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct AtomId {
+    pub literal_id: u32,
+}
+
+impl AtomId {
+    fn new(var_id: u32) -> Self {
+        Self { literal_id: var_id }
+    }
+}
+
+impl Display for AtomId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "x{}", self.literal_id)
+    }
+}
 ///Atom is the most basic building block
 ///
 ///It consists of an Id (u32), which is used to display the variable name
 ///and an coefficient (i32).
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Atom {
-    pub literal_id: u32,
+    pub atom_id: AtomId,
     pub coeff: i32,
 }
 
@@ -22,7 +38,7 @@ impl Atom {
             "Zero coefficient does not make any sense for an atom"
         );
         Self {
-            literal_id: var_id,
+            atom_id: AtomId::new(var_id),
             coeff,
         }
     }
@@ -30,7 +46,7 @@ impl Atom {
 
 impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} x{}", self.coeff, self.literal_id)
+        write!(f, "{} {}", self.coeff, self.atom_id)
     }
 }
 
