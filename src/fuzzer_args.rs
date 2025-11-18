@@ -7,6 +7,7 @@ pub struct FuzzerArgs {
     pub seed: u64,
     #[arg(long)]
     pub output_path: String,
+    // Optional arguments
     #[arg(
         long,
         default_value_t = 10,
@@ -14,4 +15,6 @@ pub struct FuzzerArgs {
         help = "Number of constraints used (must be > 0)"
     )]
     pub amount_vars: u32,
+    #[arg(long, default_value_t = false)]
+    pub print_statistics: bool,
 }

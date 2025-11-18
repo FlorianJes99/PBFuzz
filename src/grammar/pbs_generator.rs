@@ -1,23 +1,44 @@
-use crate::grammar::domain::{Constraint, Atom, Comparison};
+use crate::grammar::domain::{Atom, Comparison, Constraint};
 use itertools::Itertools;
 use log::info;
-use std::io::{self, Write};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    io::{self, Write},
+};
 
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
 
-pub trait Grammar {
-    fn produce<W: Write>(&mut self, writer: &mut W) -> io::Result<()>;
-}
-
+/// Pseudo Boolean grammar
 #[derive(Debug)]
-struct PBSGrammar {
-    constraints: Vec<Constraint>,
+pub struct PBSGrammar {
+    seed: u64,
     amount_vars: u32,
     amount_constraints: u32,
+    constraints: Vec<Constraint>,
+}
+
+/// Container for various statistics about the generated grammar
+pub struct GrammarStatistics {
+    amount_constraints: u32,
+    amount_vars: u32,
+    max_occurence: u32,
+    min_occurence: u32,
+    average_occurence: f32,
+}
+
+impl Display for GrammarStatistics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Amount variables: {}", self.amount_vars)?;
+        writeln!(f, "Amount constraints: {}", self.amount_constraints)?;
+        writeln!(f, "Max occurence of a var: {}", self.max_occurence)?;
+        writeln!(f, "Min occurence of a var: {}", self.min_occurence)?;
+        writeln!(f, "Average occurences of vars: {}", self.average_occurence)
+    }
 }
 
 impl PBSGrammar {
-    fn new(constraints: Vec<Constraint>) -> Self {
+    fn new(seed: u64, constraints: Vec<Constraint>) -> Self {
         let amount_constraints = constraints
             .len()
             .try_into()
@@ -31,9 +52,10 @@ impl PBSGrammar {
             .try_into()
             .expect("We should never try to create programs with more than 2**32 vars");
         Self {
-            constraints,
+            seed,
             amount_vars,
             amount_constraints,
+            constraints,
         }
     }
 
@@ -42,6 +64,65 @@ impl PBSGrammar {
             .iter()
             .map(|c| c.unsat_count_three_atoms())
             .sum()
+    }
+
+    pub fn produce<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        info!(
+            "Generated random grammar PBS grammar with {} vars and {} constraints.",
+            self.amount_vars, self.amount_constraints
+        );
+        let amount_equal_constraints = 0; //TODO: implement this as soon as constraints can be
+        //equal with RHS
+        writeln!(
+            writer,
+            "* #variable= {} #constraint= {} #equal= {} intsize= 32",
+            self.amount_vars, self.amount_constraints, amount_equal_constraints
+        )?;
+        writeln!(writer, "* Used seed: {}", self.seed)?;
+        writeln!(
+            writer,
+            "* UNSAT assignments: {}",
+            self.amount_unsat_assignments()
+        )?;
+
+        // write every constraint into the buffer
+        for constraint in self.constraints.iter() {
+            writeln!(writer, "{}", constraint)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_statistics(&self) -> GrammarStatistics {
+        let mut occurences_per_var: HashMap<u32, u32> = HashMap::new();
+        for c in &self.constraints {
+            for a in c.atoms() {
+                occurences_per_var
+                    .entry(a.literal_id)
+                    .and_modify(|v| *v += 1)
+                    .or_insert(1);
+            }
+        }
+        let mut max = u32::MIN;
+        let mut min = u32::MAX;
+        let mut sum = 0;
+        for (_, occurences) in occurences_per_var.iter() {
+            if *occurences > max {
+                max = *occurences;
+            }
+            if *occurences < min {
+                min = *occurences;
+            }
+            sum += occurences;
+
+        }
+        let average = sum as f32 / occurences_per_var.len() as f32;
+        GrammarStatistics {
+            amount_constraints: self.amount_constraints,
+            amount_vars: self.amount_vars,
+            max_occurence: max,
+            min_occurence: min,
+            average_occurence: average,
+        }
     }
 }
 
@@ -53,13 +134,18 @@ pub struct PBSGenerator {
 }
 
 impl PBSGenerator {
-    pub fn new(seed: u64, max_vars: u32) -> Self {
+    fn new(seed: u64, max_vars: u32) -> Self {
         Self {
             seed,
             max_vars,
             rand: StdRng::seed_from_u64(seed),
         }
     }
+
+    pub fn create_grammar(seed: u64, max_vars: u32) -> PBSGrammar {
+        Self::new(seed, max_vars).random_grammar()
+    }
+
 
     fn random_grammar(&mut self) -> PBSGrammar {
         let amount_constraints = (self.max_vars as f32 * 4.2).floor() as u32;
@@ -69,7 +155,7 @@ impl PBSGenerator {
             .map(|_| self.random_constraint())
             .collect();
         info!("Generated {} constraints!", amount_constraints);
-        PBSGrammar::new(constraints)
+        PBSGrammar::new(self.seed, constraints)
     }
 
     fn random_constraint(&mut self) -> Constraint {
@@ -135,34 +221,5 @@ impl PBSGenerator {
             self.rand.random_range(range_start..=range_end),
         );
         constraint
-    }
-}
-
-impl Grammar for PBSGenerator {
-    fn produce<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        let grammar = self.random_grammar();
-        info!(
-            "Generated random grammar PBS grammar with {} vars and {} constraints.",
-            grammar.amount_vars, grammar.amount_constraints
-        );
-        let amount_equal_constraints = 0; //TODO: implement this as soon as constraints can be
-        //equal with RHS
-        writeln!(
-            writer,
-            "* #variable= {} #constraint= {} #equal= {} intsize= 32",
-            grammar.amount_vars, grammar.amount_constraints, amount_equal_constraints
-        )?;
-        writeln!(writer, "* Used seed: {}", self.seed)?;
-        writeln!(
-            writer,
-            "* UNSAT assignments: {}",
-            grammar.amount_unsat_assignments()
-        )?;
-
-        // write every constraint into the buffer
-        for constraint in grammar.constraints.iter() {
-            writeln!(writer, "{}", constraint)?;
-        }
-        Ok(())
     }
 }

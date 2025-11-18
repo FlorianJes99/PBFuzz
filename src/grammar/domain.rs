@@ -9,7 +9,7 @@ use itertools::Itertools;
 ///
 ///It consists of an Id (u32), which is used to display the variable name
 ///and an coefficient (i32).
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Atom {
     pub literal_id: u32,
     pub coeff: i32,

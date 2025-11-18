@@ -4,12 +4,12 @@ use clap::Parser;
 use log::error;
 use log::info;
 
-use crate::grammar::pbsgenerator::{Grammar, PBSGenerator};
+use crate::grammar::pbs_generator::PBSGenerator;
 
 mod fuzzer_args;
 mod grammar {
     pub mod domain;
-    pub mod pbsgenerator;
+    pub mod pbs_generator;
 }
 fn main() {
     // initialize the logger
@@ -22,11 +22,15 @@ fn main() {
         "Running fuzzer with seed {} and {} variables.",
         args.seed, args.amount_vars
     );
-    let mut grammar = PBSGenerator::new(args.seed, args.amount_vars);
+    let mut grammar = PBSGenerator::create_grammar(args.seed, args.amount_vars);
+    if args.print_statistics {
+        println!("{}", grammar.get_statistics());
+    }
     let output_path = &args.output_path;
-    let write_result = File::create(output_path).map(|mut file| grammar.produce(&mut file));
+    let write_result =
+        File::create(output_path).map(|mut file| grammar.produce(&mut file));
     match write_result {
         Ok(_) => info!("Wrote generated grammar into file: {}", output_path),
-        Err(_) => error!("Could not write into file: {}", output_path),
+        Err(e) => error!("Could not write into file: {}\n Error: {}", output_path, e),
     }
 }
