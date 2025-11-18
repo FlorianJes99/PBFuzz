@@ -115,10 +115,10 @@ impl PBSGrammar {
         writeln!(writer, "{}", self.get_statistics())?;
 
         // write every constraint into the buffer
-        for constraint in self.constraints.iter() {
+        for constraint in &self.constraints {
             writeln!(writer, "{}", constraint)?;
         }
-        Ok(())
+        writer.flush()
     }
 
     pub fn get_statistics(&self) -> GrammarStatistics {
@@ -193,10 +193,10 @@ struct GeneratorSettings {
 
 impl GeneratorSettings {
     fn new(seed: u64, max_vars: u32) -> Self {
-        let coeff_range = 1;
+        let coeff_range = 5;
         let amount_atoms_per_constraint = 3;
-        let lower_bound_degree = 0.3;
-        let upper_bound_degree = 0.6;
+        let lower_bound_degree = 0.2;
+        let upper_bound_degree = 0.4;
         let amount_constraints = (max_vars as f32 * 1.4).floor() as u32;
         Self {
             seed,

@@ -16,7 +16,7 @@ ROUNDING_SAT="roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
-amount_vars=50
+amount_vars=150
 
 counter=1
 max_iters=1000

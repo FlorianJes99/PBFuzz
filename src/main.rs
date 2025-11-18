@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::BufWriter;
 
 use clap::Parser;
 use log::error;
@@ -27,8 +28,9 @@ fn main() {
         println!("{}", grammar.get_statistics());
     }
     let output_path = &args.output_path;
-    let write_result =
-        File::create(output_path).map(|mut file| grammar.produce(&mut file));
+    let write_result = File::create(output_path)
+        .map(|file| BufWriter::new(file))
+        .map(|mut buf_writer| grammar.produce(&mut buf_writer));
     match write_result {
         Ok(_) => info!("Wrote generated grammar into file: {}", output_path),
         Err(e) => error!("Could not write into file: {}\n Error: {}", output_path, e),
