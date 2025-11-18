@@ -29,11 +29,13 @@ pub struct GrammarStatistics {
 
 impl Display for GrammarStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Amount variables: {}", self.amount_vars)?;
-        writeln!(f, "Amount constraints: {}", self.amount_constraints)?;
-        writeln!(f, "Max occurence of a var: {}", self.max_occurence)?;
-        writeln!(f, "Min occurence of a var: {}", self.min_occurence)?;
-        writeln!(f, "Average occurences of vars: {}", self.average_occurence)
+        writeln!(f, "**********Statistics**********")?;
+        writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
+        writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
+        writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
+        writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
+        writeln!(f, "* Average occurences of vars: {}", self.average_occurence)?;
+        writeln!(f, "******************************")
     }
 }
 
@@ -113,7 +115,6 @@ impl PBSGrammar {
                 min = *occurences;
             }
             sum += occurences;
-
         }
         let average = sum as f32 / occurences_per_var.len() as f32;
         GrammarStatistics {
@@ -145,7 +146,6 @@ impl PBSGenerator {
     pub fn create_grammar(seed: u64, max_vars: u32) -> PBSGrammar {
         Self::new(seed, max_vars).random_grammar()
     }
-
 
     fn random_grammar(&mut self) -> PBSGrammar {
         let amount_constraints = (self.max_vars as f32 * 4.2).floor() as u32;
@@ -222,4 +222,23 @@ impl PBSGenerator {
         );
         constraint
     }
+}
+
+#[test]
+fn test_statistics() {
+    let atoms1 = vec![Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
+    let atoms2 = vec![Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
+    let atoms3 = vec![Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
+    let constraints = vec![
+        Constraint::new(atoms1, Comparison::GrEqual, 5),
+        Constraint::new(atoms2, Comparison::GrEqual, 5),
+        Constraint::new(atoms3, Comparison::GrEqual, 5),
+    ];
+    let grammar = PBSGrammar::new(42, constraints);
+    let stats = grammar.get_statistics();
+    assert_eq!(stats.amount_vars, 4);
+    assert_eq!(stats.amount_constraints, 3);
+    assert_eq!(stats.max_occurence, 3);
+    assert_eq!(stats.min_occurence, 2);
+    assert!((stats.average_occurence - 2.25).abs() < 0.001);
 }
