@@ -49,7 +49,11 @@ impl Display for GrammarStatistics {
         writeln!(f, "**********Statistics**********")?;
         writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
         writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
-        writeln!(f, "* Total amount of used vars: {}", self.total_var_occurences)?;
+        writeln!(
+            f,
+            "* Total amount of used vars: {}",
+            self.total_var_occurences
+        )?;
         writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
         writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
         writeln!(
@@ -157,16 +161,60 @@ impl PBSGrammar {
 
 #[derive(Debug)]
 pub struct PBSGenerator {
-    seed: u64,
-    max_vars: u32,
+    settings: GeneratorSettings,
     rand: StdRng,
+}
+
+/// This struct holds all possible configuration parameters for the generation of a random grammar
+#[derive(Debug)]
+struct GeneratorSettings {
+    /// seed used for the random generator
+    seed: u64,
+    /// maximal amount of different variables used in the grammar
+    max_vars: u32,
+    /// how many constraints should be generated
+    amount_constraints: u32,
+    /// The possible values a coefficient of a atom can be
+    /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
+    coeff_range: u32,
+    /// How many atoms a single constraint should have
+    amount_atoms_per_constraint: u32,
+    /// Given the sampled atoms in a constraint, the lower bound specifies the smallest possible
+    /// fraction of the given range 
+    /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then 
+    ///       lowest possible degree (RHS) can be 3
+    lower_bound_degree: f64,
+    /// Given the sampled atoms in a constraint, the upper bound specifies the highest possible
+    /// fraction of the given range 
+    /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then 
+    ///       highest possible degree (RHS) can be 6
+    upper_bound_degree: f64,
+}
+
+impl GeneratorSettings {
+    fn new(seed: u64, max_vars: u32) -> Self {
+        let coeff_range = 1;
+        let amount_atoms_per_constraint = 3;
+        let lower_bound_degree = 0.3;
+        let upper_bound_degree = 0.6;
+        let amount_constraints = (max_vars as f32 * 1.4).floor() as u32;
+        Self {
+            seed,
+            max_vars,
+            amount_constraints,
+            coeff_range,
+            amount_atoms_per_constraint,
+            lower_bound_degree,
+            upper_bound_degree,
+        }
+    }
 }
 
 impl PBSGenerator {
     fn new(seed: u64, max_vars: u32) -> Self {
+        let settings = GeneratorSettings::new(seed, max_vars);
         Self {
-            seed,
-            max_vars,
+            settings,
             rand: StdRng::seed_from_u64(seed),
         }
     }
@@ -176,25 +224,24 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
-        let amount_constraints = (self.max_vars as f32 * 1.4).floor() as u32;
-        // let max = (2_u32.pow(self.max_vars) as f32 * 0.3).floor() as u32;
+        let amount_constraints = self.settings.amount_constraints;
         info!("Generating amount of constraints: {}", amount_constraints);
         let constraints: Vec<Constraint> = (0..amount_constraints)
             .map(|_| self.random_constraint())
             .collect();
         info!("Generated {} constraints!", amount_constraints);
-        PBSGrammar::new(self.seed, constraints)
+        PBSGrammar::new(self.settings.seed, constraints)
     }
 
     fn random_constraint(&mut self) -> Constraint {
         // range for coefficient of each atom
-        let coeff_range = 10;
+        let coeff_range = self.settings.coeff_range as i32;
         // generate always 3 atoms if possible
-        let amount_atoms = 3;
+        let amount_atoms = self.settings.amount_atoms_per_constraint;
         // at least one atom should be in a constraint
         let sample = index::sample(
             &mut self.rand,
-            self.max_vars as usize,
+            self.settings.max_vars as usize,
             amount_atoms as usize,
         );
         let atoms: Vec<Atom> = sample
@@ -237,8 +284,8 @@ impl PBSGenerator {
             .sum();
         let distance = (max_coeff - min_coeff).abs() as f64;
         // place the possible RHS values inside the central 20% of possible ranges
-        let range_start = min_coeff + (0.4 * distance).floor() as i64;
-        let range_end = min_coeff + (0.6 * distance).ceil() as i64;
+        let range_start = min_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
+        let range_end = min_coeff + (self.settings.upper_bound_degree * distance).ceil() as i64;
         assert!(
             range_start <= range_end,
             "Range start should be smaller than / equal to range end"
