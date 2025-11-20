@@ -69,18 +69,59 @@ impl Display for Comparison {
     }
 }
 
+pub trait Constraint {
+    fn atoms(&self) -> &[Atom];
+    fn comparison(&self) -> &Comparison;
+    fn degree(&self) -> i64;
+
+    fn satisfied(&self, value: i32) -> bool {
+        match self.comparison() {
+            Comparison::GrEqual => value as i64 >= self.degree(),
+        }
+    }
+
+    fn is_solvable(&self) -> bool {
+        match self.comparison() {
+            Comparison::GrEqual => {
+                self.atoms()
+                    .iter()
+                    .filter(|atom| atom.coeff > 0)
+                    .map(|atom| atom.coeff as i64)
+                    .sum::<i64>()
+                    >= self.degree()
+            }
+        }
+    }
+}
+
 /// Constraint is a combination of atoms, comparison operator and a degree
 ///
 /// The degree should always be in bound of the atmos max and min assignment.
 /// Otherwise a Constraint itself makes the problem instantly unsat.
+#[allow(dead_code)]
 #[derive(Debug)]
-pub struct Constraint {
+pub struct ArbitraryLengthConstraint {
     atoms: Vec<Atom>,
     comparison: Comparison,
     degree: i64,
 }
 
-impl Constraint {
+impl Constraint for ArbitraryLengthConstraint {
+    fn atoms(&self) -> &[Atom] {
+        &self.atoms
+    }
+
+    fn comparison(&self) -> &Comparison {
+        &self.comparison
+    }
+
+    fn degree(&self) -> i64 {
+        self.degree
+    }
+}
+
+#[allow(dead_code)]
+impl ArbitraryLengthConstraint {
     /// Construct a new constraints object
     /// Atoms vector needs to have at least one item, otherwise function will panic
     /// Degree needs to be inside the min/max bounds of atoms assignment
@@ -101,12 +142,46 @@ impl Constraint {
         );
         constraint
     }
+}
 
-    /// Read only iterator over the contained atoms of a constraint
-    pub fn atoms(&self) -> impl Iterator<Item = &Atom> {
-        self.atoms.iter()
+impl Display for ArbitraryLengthConstraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let atoms: String = self.atoms().iter().map(|x| x.to_string()).join(" ");
+
+        write!(f, "{} {} {};", atoms, self.comparison(), self.degree())
+    }
+}
+
+impl Display for ThreeAtomConstraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let atoms: String = self.atoms().iter().map(|x| x.to_string()).join(" ");
+
+        write!(f, "{} {} {};", atoms, self.comparison(), self.degree())
+    }
+}
+
+#[derive(Debug)]
+pub struct ThreeAtomConstraint {
+    atoms: [Atom; 3],
+    comparison: Comparison,
+    degree: i64,
+}
+
+impl Constraint for ThreeAtomConstraint {
+    fn atoms(&self) -> &[Atom] {
+        &self.atoms
     }
 
+    fn comparison(&self) -> &Comparison {
+        &self.comparison
+    }
+
+    fn degree(&self) -> i64 {
+        self.degree
+    }
+}
+
+impl ThreeAtomConstraint {
     const ASSIGNMENTS: [(i32, i32, i32); 8] = [
         (0, 0, 0),
         (1, 0, 0),
@@ -117,6 +192,14 @@ impl Constraint {
         (0, 1, 1),
         (1, 1, 1),
     ];
+
+    pub fn new(atoms: [Atom; 3], comparison: Comparison, degree: i64) -> Self {
+        Self {
+            atoms,
+            comparison,
+            degree,
+        }
+    }
 
     /// Checks how many assignments are unsat for a constraint
     /// !!!IMPORTANT!!! this method is only designed for constraints with 3 Methods.
@@ -140,33 +223,6 @@ impl Constraint {
             .try_into()
             .expect("Should be able to convert at max 8 assignments to a u32 number")
     }
-
-    fn satisfied(&self, value: i32) -> bool {
-        match self.comparison {
-            Comparison::GrEqual => value as i64 >= self.degree,
-        }
-    }
-
-    fn is_solvable(&self) -> bool {
-        match self.comparison {
-            Comparison::GrEqual => {
-                self.atoms
-                    .iter()
-                    .filter(|atom| atom.coeff > 0)
-                    .map(|atom| atom.coeff as i64)
-                    .sum::<i64>()
-                    >= self.degree
-            }
-        }
-    }
-}
-
-impl Display for Constraint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let atoms: String = self.atoms.iter().map(|x| x.to_string()).join(" ");
-
-        write!(f, "{} {} {};", atoms, self.comparison, self.degree)
-    }
 }
 
 #[test]
@@ -180,12 +236,12 @@ fn display_atom() {
 
 #[test]
 fn amount_unsat() {
-    let atoms = vec![Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
-    let c = Constraint::new(atoms, Comparison::GrEqual, 4);
+    let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
+    let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 4);
     assert_eq!(c.unsat_count_three_atoms(), 4);
 
-    let atoms = vec![Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
-    let c = Constraint::new(atoms, Comparison::GrEqual, 0);
+    let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
+    let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
     assert_eq!(c.unsat_count_three_atoms(), 1)
 }
 
@@ -196,7 +252,7 @@ fn display_constraint() {
     let comp = Comparison::GrEqual;
     let res = 15;
 
-    let constr = Constraint::new(atoms, comp, res);
+    let constr = ArbitraryLengthConstraint::new(atoms, comp, res);
 
     assert_eq!(constr.to_string(), "10 x1 20 x2 30 x3 >= 15;")
 }

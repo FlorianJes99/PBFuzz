@@ -16,7 +16,7 @@ ROUNDING_SAT="roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
-amount_vars=150
+amount_vars=10
 
 counter=1
 max_iters=1000
@@ -29,7 +29,9 @@ unsat_instances=0
 
 # clean up dir
 echo "Cleaning up output directory..."
-rm out/*
+rm -r out/*
+mkdir out/sat
+mkdir out/unsat
 
 echo "Building release executable..."
 cargo build --release
@@ -56,13 +58,13 @@ while true; do
         mv $file "out/long_running_${runtime_ms}ms_${seed}${file_ext}"
         ((long_running_instances++))
     elif echo "$output" | grep -q "UNSATISFIABLE"; then
-        echo "Roundingsat says UNSATISFIABLE! Deleting generated file."
-        rm $file
+        echo "PB Solver says UNSATISFIABLE! Saving file with specified seed."
+        mv $file "out/unsat/sat_${seed}_${counter}${file_ext}"
         ((unsat_instances++))
 
     elif echo "$output" | grep -q "SATISFIABLE"; then
         echo "PB Solver says SATISFIABLE! Saving file with specified seed."
-        mv $file "out/sat_${seed}_${counter}${file_ext}"
+        mv $file "out/sat/sat_${seed}_${counter}${file_ext}"
         ((sat_instances++))
         
     else

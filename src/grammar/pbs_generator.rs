@@ -1,4 +1,4 @@
-use crate::grammar::domain::{Atom, AtomId, Comparison, Constraint};
+use crate::grammar::domain::{Atom, AtomId, Comparison, Constraint, ThreeAtomConstraint};
 use itertools::Itertools;
 use log::info;
 use std::{
@@ -15,7 +15,8 @@ pub struct PBSGrammar {
     seed: u64,
     amount_vars: u32,
     amount_constraints: u32,
-    constraints: Vec<Constraint>,
+    amount_unsat_assignments: u64,
+    constraints: Vec<ThreeAtomConstraint>,
 }
 
 #[derive(Clone, Copy)]
@@ -66,7 +67,11 @@ impl Display for GrammarStatistics {
 }
 
 impl PBSGrammar {
-    fn new(seed: u64, constraints: Vec<Constraint>) -> Self {
+    fn new(
+        seed: u64,
+        amount_unsat_assignments: u64,
+        constraints: Vec<ThreeAtomConstraint>,
+    ) -> Self {
         let amount_constraints = constraints
             .len()
             .try_into()
@@ -83,15 +88,9 @@ impl PBSGrammar {
             seed,
             amount_vars,
             amount_constraints,
+            amount_unsat_assignments,
             constraints,
         }
-    }
-
-    fn amount_unsat_assignments(&self) -> u32 {
-        self.constraints
-            .iter()
-            .map(|c| c.unsat_count_three_atoms())
-            .sum()
     }
 
     pub fn produce<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
@@ -110,7 +109,7 @@ impl PBSGrammar {
         writeln!(
             writer,
             "* UNSAT assignments: {}",
-            self.amount_unsat_assignments()
+            self.amount_unsat_assignments
         )?;
         writeln!(writer, "{}", self.get_statistics())?;
 
@@ -172,21 +171,23 @@ struct GeneratorSettings {
     seed: u64,
     /// maximal amount of different variables used in the grammar
     max_vars: u32,
-    /// how many constraints should be generated
-    amount_constraints: u32,
+    max_unsat_for_single_constraint: u32,
+    /// threshold for total unsat assignments - this is an upper bound, because unsats can be
+    /// duplicates
+    max_unsat_assignments: u64,
     /// The possible values a coefficient of a atom can be
     /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
     coeff_range: u32,
     /// How many atoms a single constraint should have
     amount_atoms_per_constraint: u32,
     /// Given the sampled atoms in a constraint, the lower bound specifies the smallest possible
-    /// fraction of the given range 
-    /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then 
+    /// fraction of the given range
+    /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
     ///       lowest possible degree (RHS) can be 3
     lower_bound_degree: f64,
     /// Given the sampled atoms in a constraint, the upper bound specifies the highest possible
-    /// fraction of the given range 
-    /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then 
+    /// fraction of the given range
+    /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then
     ///       highest possible degree (RHS) can be 6
     upper_bound_degree: f64,
 }
@@ -195,13 +196,16 @@ impl GeneratorSettings {
     fn new(seed: u64, max_vars: u32) -> Self {
         let coeff_range = 5;
         let amount_atoms_per_constraint = 3;
+        let max_unsat_for_single_constraint = 4;
         let lower_bound_degree = 0.2;
         let upper_bound_degree = 0.4;
-        let amount_constraints = (max_vars as f32 * 1.4).floor() as u32;
+        let max_unsat_assignments = 2_u64.pow(max_vars - 4); // 25% percent of total possible
+        // assignment combinations
         Self {
             seed,
             max_vars,
-            amount_constraints,
+            max_unsat_for_single_constraint,
+            max_unsat_assignments,
             coeff_range,
             amount_atoms_per_constraint,
             lower_bound_degree,
@@ -224,40 +228,60 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
-        let amount_constraints = self.settings.amount_constraints;
-        info!("Generating amount of constraints: {}", amount_constraints);
-        let constraints: Vec<Constraint> = (0..amount_constraints)
-            .map(|_| self.random_constraint())
-            .collect();
-        info!("Generated {} constraints!", amount_constraints);
-        PBSGrammar::new(self.settings.seed, constraints)
+        let max_unsat_assignemnts = self.settings.max_unsat_assignments;
+        info!(
+            "Generating a maximum of {} unsat assignments",
+            max_unsat_assignemnts
+        );
+        let mut current_unsat = 0;
+        let mut constraints = vec![];
+        while current_unsat < max_unsat_assignemnts {
+            let c = self.random_constraint();
+            let unsat_for_c = c.unsat_count_three_atoms() as u32;
+            // only accept constraints, which have at max 4 unsat assignments
+            if unsat_for_c <= self.settings.max_unsat_for_single_constraint {
+                current_unsat += unsat_for_c as u64;
+                constraints.push(c);
+            }
+        }
+        info!("Generated {} constraints!", constraints.len());
+        PBSGrammar::new(self.settings.seed, current_unsat, constraints)
     }
 
-    fn random_constraint(&mut self) -> Constraint {
+    fn random_constraint(&mut self) -> ThreeAtomConstraint {
         // range for coefficient of each atom
         let coeff_range = self.settings.coeff_range as i32;
-        // generate always 3 atoms if possible
         let amount_atoms = self.settings.amount_atoms_per_constraint;
         // at least one atom should be in a constraint
-        let sample = index::sample(
+        let sorted_var_ids: Vec<u32> = index::sample(
             &mut self.rand,
             self.settings.max_vars as usize,
             amount_atoms as usize,
+        )
+        .iter()
+        .sorted()
+        // add indices + 1, because sample method samples from range (0..length)
+        .map(|n| n + 1)
+        .map(|n| n.try_into().expect("Indices should be valid u32"))
+        .collect();
+        assert!(
+            sorted_var_ids.len() == 3,
+            "Currently only constraints with 3 atoms are supported"
         );
-        let atoms: Vec<Atom> = sample
-            .iter()
-            .sorted()
-            // add indices + 1, because sample method samples from range (0..length)
-            .map(|n| n + 1)
-            .map(|n| {
-                Atom::new(
-                    n.try_into()
-                        .expect("We should always be able to cast to u32 for atom var ids"),
-                    self.sample_without_zero_from_range(-coeff_range, coeff_range),
-                )
-            })
-            .collect();
-
+        let atoms: [Atom; 3] = [
+            Atom::new(
+                *sorted_var_ids.get(0).unwrap(),
+                self.sample_without_zero_from_range(-coeff_range, coeff_range),
+            ),
+            Atom::new(
+                *sorted_var_ids.get(1).unwrap(),
+                self.sample_without_zero_from_range(-coeff_range, coeff_range),
+            ),
+            Atom::new(
+                *sorted_var_ids.get(2).unwrap(),
+                self.sample_without_zero_from_range(-coeff_range, coeff_range),
+            ),
+        ];
         let comparison = Comparison::GrEqual;
         self.create_from_atoms(atoms, comparison)
     }
@@ -271,7 +295,11 @@ impl PBSGenerator {
         }
     }
 
-    fn create_from_atoms(&mut self, atoms: Vec<Atom>, comparison: Comparison) -> Constraint {
+    fn create_from_atoms(
+        &mut self,
+        atoms: [Atom; 3],
+        comparison: Comparison,
+    ) -> ThreeAtomConstraint {
         let min_coeff: i64 = atoms
             .iter()
             .filter(|atom| atom.coeff < 0)
@@ -290,7 +318,7 @@ impl PBSGenerator {
             range_start <= range_end,
             "Range start should be smaller than / equal to range end"
         );
-        let constraint = Constraint::new(
+        let constraint = ThreeAtomConstraint::new(
             atoms,
             comparison,
             self.rand.random_range(range_start..=range_end),
@@ -301,15 +329,19 @@ impl PBSGenerator {
 
 #[test]
 fn test_statistics() {
-    let atoms1 = vec![Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
-    let atoms2 = vec![Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
-    let atoms3 = vec![Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
+    let atoms1 = [Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
+    let atoms2 = [Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
+    let atoms3 = [Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
     let constraints = vec![
-        Constraint::new(atoms1, Comparison::GrEqual, 5),
-        Constraint::new(atoms2, Comparison::GrEqual, 5),
-        Constraint::new(atoms3, Comparison::GrEqual, 5),
+        ThreeAtomConstraint::new(atoms1, Comparison::GrEqual, 5),
+        ThreeAtomConstraint::new(atoms2, Comparison::GrEqual, 5),
+        ThreeAtomConstraint::new(atoms3, Comparison::GrEqual, 5),
     ];
-    let grammar = PBSGrammar::new(42, constraints);
+    let unsat_assignments = constraints
+        .iter()
+        .map(|c| c.unsat_count_three_atoms() as u64)
+        .sum();
+    let grammar = PBSGrammar::new(42, unsat_assignments, constraints);
     let stats = grammar.get_statistics();
     assert_eq!(stats.amount_vars, 4);
     assert_eq!(stats.amount_constraints, 3);
