@@ -69,34 +69,40 @@ impl Display for Comparison {
     }
 }
 
+/// Constraint trait for different types of constraints in a PBS/PBO grammar.
+///
+/// atoms: a reference to a array slice of atoms.
+/// comparison: the comparison operator used in this constraint.
+/// degree: rhs value, for which we are solving the constraint.
 pub trait Constraint {
     fn atoms(&self) -> &[Atom];
     fn comparison(&self) -> &Comparison;
     fn degree(&self) -> i64;
 
-    fn satisfied(&self, value: i32) -> bool {
+    /// checks if a value satisfies the degree of the constraint
+    /// this depends on the comparison operator of the constraint.
+    fn satisfied(&self, value: i64) -> bool {
         match self.comparison() {
             Comparison::GrEqual => value as i64 >= self.degree(),
         }
     }
 
+    /// Checks if the constructed constraint is solvable.
+    /// A solvable constraint needs to have at least one assignment, which fulfill the degree.
     fn is_solvable(&self) -> bool {
-        match self.comparison() {
-            Comparison::GrEqual => {
-                self.atoms()
-                    .iter()
-                    .filter(|atom| atom.coeff > 0)
-                    .map(|atom| atom.coeff as i64)
-                    .sum::<i64>()
-                    >= self.degree()
-            }
-        }
+        self.satisfied(
+            self.atoms()
+                .iter()
+                .filter(|atom| atom.coeff > 0)
+                .map(|atom| atom.coeff as i64)
+                .sum::<i64>(),
+        )
     }
 }
 
 /// Constraint is a combination of atoms, comparison operator and a degree
 ///
-/// The degree should always be in bound of the atmos max and min assignment.
+/// The degree should always be in bound of the atoms max and min assignment.
 /// Otherwise a Constraint itself makes the problem instantly unsat.
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -122,9 +128,10 @@ impl Constraint for ArbitraryLengthConstraint {
 
 #[allow(dead_code)]
 impl ArbitraryLengthConstraint {
-    /// Construct a new constraints object
-    /// Atoms vector needs to have at least one item, otherwise function will panic
-    /// Degree needs to be inside the min/max bounds of atoms assignment
+    /// Construct a new constraints object with arbitrary length.
+    ///
+    /// Arbitrary length is relevant for the amount of atoms a single constraint holds.
+    /// Degree needs to be inside the min/max bounds of atoms assignment.
     pub fn new(atoms: Vec<Atom>, comparison: Comparison, degree: i64) -> Self {
         assert!(
             !atoms.is_empty(),
@@ -152,11 +159,9 @@ impl Display for ArbitraryLengthConstraint {
     }
 }
 
-impl Display for ThreeAtomConstraint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let atoms: String = self.atoms().iter().map(|x| x.to_string()).join(" ");
-
-        write!(f, "{} {} {};", atoms, self.comparison(), self.degree())
+impl From<ThreeAtomConstraint> for ArbitraryLengthConstraint {
+    fn from(value: ThreeAtomConstraint) -> Self {
+        ArbitraryLengthConstraint::new(value.atoms.to_vec(), value.comparison, value.degree)
     }
 }
 
@@ -181,6 +186,32 @@ impl Constraint for ThreeAtomConstraint {
     }
 }
 
+impl Display for ThreeAtomConstraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let atoms: String = self.atoms().iter().map(|x| x.to_string()).join(" ");
+
+        write!(f, "{} {} {};", atoms, self.comparison(), self.degree())
+    }
+}
+
+impl TryFrom<ArbitraryLengthConstraint> for ThreeAtomConstraint {
+    type Error = String;
+
+    fn try_from(value: ArbitraryLengthConstraint) -> Result<Self, Self::Error> {
+        let ArbitraryLengthConstraint {
+            atoms,
+            comparison,
+            degree,
+        } = value;
+        atoms
+            .try_into()
+            .map_err(|_| "Constraint has not exactly three atoms".to_string())
+            .map(|[a1, a2, a3]: [Atom; 3]| {
+                ThreeAtomConstraint::new([a1, a2, a3], comparison, degree)
+            })
+    }
+}
+
 impl ThreeAtomConstraint {
     const ASSIGNMENTS: [(i32, i32, i32); 8] = [
         (0, 0, 0),
@@ -201,24 +232,13 @@ impl ThreeAtomConstraint {
         }
     }
 
-    /// Checks how many assignments are unsat for a constraint
-    /// !!!IMPORTANT!!! this method is only designed for constraints with 3 Methods.
-    /// Calling this method on a constraint with different amount of methods will cause a panick
+    /// Checks how many assignments are unsat for a constraint with 3 Atoms
     pub fn unsat_count_three_atoms(&self) -> u32 {
-        let n = self.atoms.len();
-        assert_eq!(
-            n, 3,
-            "This method works only for exactly three atoms per constraint"
-        );
-
-        let [a1, a2, a3] = &self.atoms[..] else {
-            unreachable!();
-        };
-        let (a1, a2, a3) = (a1.coeff, a2.coeff, a3.coeff);
+        let [a1, a2, a3] = &self.atoms;
         Self::ASSIGNMENTS
             .iter()
-            .map(|(b1, b2, b3)| b1 * a1 + b2 * a2 + b3 * a3)
-            .filter(|&sum| !self.satisfied(sum))
+            .map(|(b1, b2, b3)| b1 * a1.coeff + b2 * a2.coeff + b3 * a3.coeff)
+            .filter(|&sum| !self.satisfied(sum.into()))
             .count()
             .try_into()
             .expect("Should be able to convert at max 8 assignments to a u32 number")
