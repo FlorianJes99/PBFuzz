@@ -3,8 +3,6 @@
 /// A constraint is build up from some amount of atoms an comparison operator and a degree (RHS)
 use std::fmt::Display;
 
-use itertools::Itertools;
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct AtomIdent(u32);
 
@@ -14,6 +12,12 @@ impl AtomIdent {
     }
     pub fn literal_id(&self) -> u32 {
         self.0
+    }
+}
+
+impl From<u32> for AtomIdent {
+    fn from(value: u32) -> Self {
+        Self::new(value)
     }
 }
 
@@ -99,6 +103,16 @@ pub trait Constraint {
                 .sum::<i64>(),
         )
     }
+
+    fn fmt_constraint(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, atom) in self.atoms().iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            atom.fmt(f)?;
+        }
+        write!(f, " {} {};", self.comparison(), self.degree())
+    }
 }
 
 /// Constraint is a combination of atoms, comparison operator and a degree
@@ -154,9 +168,7 @@ impl ArbitraryLengthConstraint {
 
 impl Display for ArbitraryLengthConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let atoms: String = self.atoms().iter().map(|x| x.to_string()).join(" ");
-
-        write!(f, "{} {} {};", atoms, self.comparison(), self.degree())
+        self.fmt_constraint(f)
     }
 }
 
@@ -189,9 +201,7 @@ impl Constraint for ThreeAtomConstraint {
 
 impl Display for ThreeAtomConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let atoms: String = self.atoms().iter().map(|x| x.to_string()).join(" ");
-
-        write!(f, "{} {} {};", atoms, self.comparison(), self.degree())
+        self.fmt_constraint(f)
     }
 }
 
