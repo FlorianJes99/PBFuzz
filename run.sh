@@ -16,7 +16,7 @@ ROUNDING_SAT="roundingsat"
 
 file_ext=".opb"
 file="out/test${file_ext}"
-amount_vars=10
+amount_vars=100
 
 counter=1
 max_iters=1000
@@ -86,4 +86,6 @@ echo "Total amount of instances generated: $counter"
 echo "Gerated instances that took longer than $threshold_ms ms: $long_running_instances"
 echo "Generated amount of SAT instances: $sat_instances"
 echo "Generated amount of UNSAT instances: $unsat_instances"
+percentage_sat=$(awk "BEGIN {printf \"%.2f\", $sat_instances / $counter * 100}")
+echo "Percentage SAT: $percentage_sat%"
 echo "========================================"

@@ -4,6 +4,7 @@ use log::info;
 use std::{
     collections::HashMap,
     fmt::Display,
+    i64,
     io::{self, Write},
 };
 
@@ -194,12 +195,12 @@ struct GeneratorSettings {
 
 impl GeneratorSettings {
     fn new(seed: u64, max_vars: u32) -> Self {
-        let coeff_range = 1;
+        let coeff_range = 3;
         let amount_atoms_per_constraint = 3;
         let max_unsat_for_single_constraint = 5;
-        let lower_bound_degree = 0.2;
-        let upper_bound_degree = 0.8;
-        let max_unsat_assignments = (max_vars as f32 * 3.5).floor() as u64;
+        let lower_bound_degree = 0.3;
+        let upper_bound_degree = 0.5;
+        let max_unsat_assignments = (max_vars as f32 * 3.2).floor() as u64;
         // assignment combinations
         Self {
             seed,
@@ -293,20 +294,26 @@ impl PBSGenerator {
         atoms: [Atom; 3],
         comparison: Comparison,
     ) -> ThreeAtomConstraint {
-        let min_coeff: i64 = atoms
-            .iter()
-            .filter(|atom| atom.coeff < 0)
-            .map(|atom| atom.coeff as i64)
-            .sum();
-        let max_coeff: i64 = atoms
-            .iter()
-            .filter(|atom| atom.coeff > 0)
-            .map(|atom| atom.coeff as i64)
-            .sum();
+        let mut min_coeff = i64::MAX;
+        let mut max_coeff = i64::MIN;
+        let mut min_sum_coeff = 0;
+        for coeff in atoms.iter().map(|a| a.coeff as i64) {
+            if coeff < 0 {
+                min_sum_coeff += coeff;
+            }
+            if coeff > max_coeff {
+                max_coeff = coeff;
+            }
+            if coeff < min_coeff {
+                min_coeff = coeff
+            }
+        }
         let distance = (max_coeff - min_coeff).abs() as f64;
-        // place the possible RHS values inside the central 20% of possible ranges
-        let range_start = min_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
+        let range_start = min_sum_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
         let range_end = min_coeff + (self.settings.upper_bound_degree * distance).ceil() as i64;
+        let range_start = min_coeff.max(range_start);
+        // this ensures that we have always a single atom, which can already fulfill the equation
+        let range_end = max_coeff.min(range_end);
         assert!(
             range_start <= range_end,
             "Range start should be smaller than / equal to range end"
