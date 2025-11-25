@@ -151,8 +151,8 @@ impl PBSGrammar {
             amount_constraints: self.amount_constraints,
             amount_vars: self.amount_vars,
             total_var_occurences: sum,
-            max_occurence: max.expect("There should always a var which occurs the most"),
-            min_occurence: min.expect("There should always a var which occurs the least"),
+            max_occurence: max.expect("There should always be a var which occurs the most"),
+            min_occurence: min.expect("There should always be a var which occurs the least"),
             average_occurence: average,
         }
     }
@@ -194,12 +194,12 @@ struct GeneratorSettings {
 
 impl GeneratorSettings {
     fn new(seed: u64, max_vars: u32) -> Self {
-        let coeff_range = 3;
+        let coeff_range = 1;
         let amount_atoms_per_constraint = 3;
-        let max_unsat_for_single_constraint = 4;
+        let max_unsat_for_single_constraint = 5;
         let lower_bound_degree = 0.2;
-        let upper_bound_degree = 0.4;
-        let max_unsat_assignments = (max_vars as f32 * 2.5).floor() as u64;
+        let upper_bound_degree = 0.8;
+        let max_unsat_assignments = (max_vars as f32 * 3.5).floor() as u64;
         // assignment combinations
         Self {
             seed,
@@ -238,7 +238,6 @@ impl PBSGenerator {
         while current_unsat < max_unsat_assignments {
             let c = self.random_constraint();
             let unsat_for_c = c.unsat_count_three_atoms() as u32;
-            // only accept constraints, which have at max 4 unsat assignments
             if unsat_for_c <= self.settings.max_unsat_for_single_constraint {
                 current_unsat += unsat_for_c as u64;
                 constraints.push(c);
@@ -253,32 +252,26 @@ impl PBSGenerator {
         let coeff_range = self.settings.coeff_range as i32;
         let amount_atoms = self.settings.amount_atoms_per_constraint;
         // at least one atom should be in a constraint
-        let sorted_var_ids: Vec<u32> = index::sample(
-            &mut self.rand,
-            self.settings.max_vars as usize,
-            amount_atoms as usize,
-        )
-        .iter()
-        .sorted()
-        // add indices + 1, because sample method samples from range (0..length)
-        .map(|n| n + 1)
-        .map(|n| n.try_into().expect("Indices should be valid u32"))
-        .collect();
         assert!(
-            sorted_var_ids.len() == 3,
+            amount_atoms == 3,
             "Currently only constraints with 3 atoms are supported"
         );
-        let atoms: [Atom; 3] = [
+        let mut ids: [usize; 3] =
+            index::sample_array(&mut self.rand, self.settings.max_vars as usize)
+                .expect("Invalid config for sampling. Constraint length > max_vars");
+        ids.sort();
+        // increment all ids by 1, because `sample_array` samples from range 0..len
+        let atoms = [
             Atom::new(
-                *sorted_var_ids.get(0).unwrap(),
+                (ids[0] + 1) as u32,
                 self.sample_without_zero_from_range(-coeff_range, coeff_range),
             ),
             Atom::new(
-                *sorted_var_ids.get(1).unwrap(),
+                (ids[1] + 1) as u32,
                 self.sample_without_zero_from_range(-coeff_range, coeff_range),
             ),
             Atom::new(
-                *sorted_var_ids.get(2).unwrap(),
+                (ids[2] + 1) as u32,
                 self.sample_without_zero_from_range(-coeff_range, coeff_range),
             ),
         ];
@@ -318,12 +311,11 @@ impl PBSGenerator {
             range_start <= range_end,
             "Range start should be smaller than / equal to range end"
         );
-        let constraint = ThreeAtomConstraint::new(
+        ThreeAtomConstraint::new(
             atoms,
             comparison,
             self.rand.random_range(range_start..=range_end),
-        );
-        constraint
+        )
     }
 }
 
