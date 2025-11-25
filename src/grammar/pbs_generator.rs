@@ -1,4 +1,4 @@
-use crate::grammar::domain::{Atom, AtomId, Comparison, Constraint, ThreeAtomConstraint};
+use crate::grammar::domain::{Atom, AtomIdent, Comparison, Constraint, ThreeAtomConstraint};
 use itertools::Itertools;
 use log::info;
 use std::{
@@ -21,12 +21,12 @@ pub struct PBSGrammar {
 
 #[derive(Clone, Copy)]
 struct OccurenceWithId {
-    atom_id: AtomId,
+    atom_id: AtomIdent,
     count: u32,
 }
 
 impl OccurenceWithId {
-    fn new(atom_id: AtomId, count: u32) -> Self {
+    fn new(atom_id: AtomIdent, count: u32) -> Self {
         Self { atom_id, count }
     }
 }
@@ -79,7 +79,7 @@ impl PBSGrammar {
         let amount_vars = constraints
             .iter()
             .flat_map(|c| c.atoms())
-            .map(|a| a.atom_id.literal_id)
+            .map(|a| a.atom_id.literal_id())
             .unique()
             .count()
             .try_into()
@@ -121,11 +121,11 @@ impl PBSGrammar {
     }
 
     pub fn get_statistics(&self) -> GrammarStatistics {
-        let mut occurences_per_var: HashMap<AtomId, u32> = HashMap::new();
+        let mut occurences_per_var: HashMap<AtomIdent, u32> = HashMap::new();
         for c in &self.constraints {
             for a in c.atoms() {
                 occurences_per_var
-                    .entry(a.atom_id.clone())
+                    .entry(a.atom_id)
                     .and_modify(|v| *v += 1)
                     .or_insert(1);
             }
@@ -194,12 +194,12 @@ struct GeneratorSettings {
 
 impl GeneratorSettings {
     fn new(seed: u64, max_vars: u32) -> Self {
-        let coeff_range = 5;
+        let coeff_range = 3;
         let amount_atoms_per_constraint = 3;
         let max_unsat_for_single_constraint = 4;
         let lower_bound_degree = 0.2;
         let upper_bound_degree = 0.4;
-        let max_unsat_assignments = 2_u64.pow(max_vars - 4); // 25% percent of total possible
+        let max_unsat_assignments = (max_vars as f32 * 2.5).floor() as u64;
         // assignment combinations
         Self {
             seed,
@@ -228,14 +228,14 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
-        let max_unsat_assignemnts = self.settings.max_unsat_assignments;
+        let max_unsat_assignments = self.settings.max_unsat_assignments;
         info!(
             "Generating a maximum of {} unsat assignments",
-            max_unsat_assignemnts
+            max_unsat_assignments
         );
         let mut current_unsat = 0;
         let mut constraints = vec![];
-        while current_unsat < max_unsat_assignemnts {
+        while current_unsat < max_unsat_assignments {
             let c = self.random_constraint();
             let unsat_for_c = c.unsat_count_three_atoms() as u32;
             // only accept constraints, which have at max 4 unsat assignments
