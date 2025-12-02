@@ -1,17 +1,30 @@
 use std::fs::File;
 use std::io::BufWriter;
 
-use clap::Parser;
+use fuzzer_pseudo_bool::grammar::pbs_generator::GeneratorSettingsBuilder;
+use fuzzer_pseudo_bool::grammar::pbs_generator::PBSGenerator;
 use log::error;
 use log::info;
 
-use crate::grammar::pbs_generator::GeneratorSettingsBuilder;
-use crate::grammar::pbs_generator::PBSGenerator;
+use clap::Parser;
 
-mod fuzzer_args;
-mod grammar {
-    pub mod domain;
-    pub mod pbs_generator;
+#[derive(Debug, Parser)]
+#[command(version, about, long_about = None)]
+pub struct FuzzerArgs {
+    #[arg(long)]
+    pub seed: u64,
+    #[arg(long)]
+    pub output_path: String,
+    // Optional arguments
+    #[arg(
+        long,
+        default_value_t = 10,
+        value_parser = clap::value_parser!(u32).range(1..),
+        help = "Number of constraints used (must be > 0)"
+    )]
+    pub amount_vars: u32,
+    #[arg(long, default_value_t = false)]
+    pub print_statistics: bool,
 }
 
 fn main() {
@@ -19,7 +32,7 @@ fn main() {
     env_logger::init();
 
     // start of actual program
-    let args = fuzzer_args::FuzzerArgs::parse();
+    let args = FuzzerArgs::parse();
 
     info!(
         "Running fuzzer with seed {} and {} variables.",

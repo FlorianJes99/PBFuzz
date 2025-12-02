@@ -11,7 +11,7 @@ function handle_sigint() {
     exit 1
 }
 
-FUZZER="./target/release/fuzzer_pseudo_bool"
+FUZZER="./target/release/fuzzer"
 ROUNDING_SAT="roundingsat"
 
 file_ext=".opb"
