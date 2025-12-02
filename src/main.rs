@@ -5,6 +5,7 @@ use clap::Parser;
 use log::error;
 use log::info;
 
+use crate::grammar::pbs_generator::GeneratorSettingsBuilder;
 use crate::grammar::pbs_generator::PBSGenerator;
 
 mod fuzzer_args;
@@ -12,6 +13,7 @@ mod grammar {
     pub mod domain;
     pub mod pbs_generator;
 }
+
 fn main() {
     // initialize the logger
     env_logger::init();
@@ -23,7 +25,8 @@ fn main() {
         "Running fuzzer with seed {} and {} variables.",
         args.seed, args.amount_vars
     );
-    let mut grammar = PBSGenerator::create_grammar(args.seed, args.amount_vars);
+    let settings = GeneratorSettingsBuilder::new(args.seed, args.amount_vars).build();
+    let mut grammar = PBSGenerator::create_grammar(settings);
     if args.print_statistics {
         println!("{}", grammar.get_statistics());
     }

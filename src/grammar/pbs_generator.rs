@@ -31,6 +31,7 @@ impl OccurenceWithId {
         Self { atom_id, count }
     }
 }
+
 impl Display for OccurenceWithId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} ({})", self.count, self.atom_id)
@@ -167,7 +168,7 @@ pub struct PBSGenerator {
 
 /// This struct holds all possible configuration parameters for the generation of a random grammar
 #[derive(Debug)]
-struct GeneratorSettings {
+pub struct GeneratorSettings {
     /// seed used for the random generator
     seed: u64,
     /// maximal amount of different variables used in the grammar
@@ -193,14 +194,27 @@ struct GeneratorSettings {
     upper_bound_degree: f64,
 }
 
-impl GeneratorSettings {
-    fn new(seed: u64, max_vars: u32) -> Self {
+#[derive(Debug)]
+pub struct GeneratorSettingsBuilder {
+    seed: u64,
+    max_vars: u32,
+    max_unsat_for_single_constraint: u32,
+    max_unsat_assignments: u64,
+    coeff_range: u32,
+    amount_atoms_per_constraint: u32,
+    lower_bound_degree: f64,
+    upper_bound_degree: f64,
+}
+
+#[allow(dead_code)]
+impl GeneratorSettingsBuilder {
+    pub fn new(seed: u64, max_vars: u32) -> Self {
         let coeff_range = 3;
         let amount_atoms_per_constraint = 3;
         let max_unsat_for_single_constraint = 5;
         let lower_bound_degree = 0.3;
         let upper_bound_degree = 0.5;
-        let max_unsat_assignments = (max_vars as f32 * 3.2).floor() as u64;
+        let max_unsat_assignments = (max_vars as f32 * 2.4).floor() as u64;
         // assignment combinations
         Self {
             seed,
@@ -213,19 +227,75 @@ impl GeneratorSettings {
             upper_bound_degree,
         }
     }
+
+    pub fn from_settings(settings: GeneratorSettings) -> Self {
+        GeneratorSettingsBuilder {
+            seed: settings.seed,
+            max_vars: settings.max_vars,
+            max_unsat_for_single_constraint: settings.max_unsat_for_single_constraint,
+            max_unsat_assignments: settings.max_unsat_assignments,
+            coeff_range: settings.coeff_range,
+            amount_atoms_per_constraint: settings.amount_atoms_per_constraint,
+            lower_bound_degree: settings.lower_bound_degree,
+            upper_bound_degree: settings.upper_bound_degree,
+        }
+    }
+
+    pub fn max_unsat_for_single_constraint(mut self, max: u32) -> Self {
+        self.max_unsat_for_single_constraint = max;
+        self
+    }
+
+    pub fn max_unsat_assignments(mut self, max: u64) -> Self {
+        self.max_unsat_assignments = max;
+        self
+    }
+
+    pub fn coeff_range(mut self, range: u32) -> Self {
+        self.coeff_range = range;
+        self
+    }
+
+    pub fn amount_atoms_per_constraint(mut self, amount: u32) -> Self {
+        self.amount_atoms_per_constraint = amount;
+        self
+    }
+
+    pub fn lower_bound_degree(mut self, lower: f64) -> Self {
+        self.lower_bound_degree = lower;
+        self
+    }
+
+    pub fn upper_bound_degree(mut self, upper: f64) -> Self {
+        self.upper_bound_degree = upper;
+        self
+    }
+
+    pub fn build(self) -> GeneratorSettings {
+        GeneratorSettings {
+            seed: self.seed,
+            max_vars: self.max_vars,
+            max_unsat_for_single_constraint: self.max_unsat_for_single_constraint,
+            max_unsat_assignments: self.max_unsat_assignments,
+            coeff_range: self.coeff_range,
+            amount_atoms_per_constraint: self.amount_atoms_per_constraint,
+            lower_bound_degree: self.lower_bound_degree,
+            upper_bound_degree: self.upper_bound_degree,
+        }
+    }
 }
 
 impl PBSGenerator {
-    fn new(seed: u64, max_vars: u32) -> Self {
-        let settings = GeneratorSettings::new(seed, max_vars);
+    fn new(settings: GeneratorSettings) -> Self {
+        let seed = settings.seed;
         Self {
             settings,
             rand: StdRng::seed_from_u64(seed),
         }
     }
 
-    pub fn create_grammar(seed: u64, max_vars: u32) -> PBSGrammar {
-        Self::new(seed, max_vars).random_grammar()
+    pub fn create_grammar(settings: GeneratorSettings) -> PBSGrammar {
+        Self::new(settings).random_grammar()
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
@@ -309,7 +379,8 @@ impl PBSGenerator {
             }
         }
         let distance = (max_coeff - min_coeff).abs() as f64;
-        let range_start = min_sum_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
+        let range_start =
+            min_sum_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
         let range_end = min_coeff + (self.settings.upper_bound_degree * distance).ceil() as i64;
         let range_start = min_coeff.max(range_start);
         // this ensures that we have always a single atom, which can already fulfill the equation
