@@ -38,7 +38,11 @@ fn main() {
         "Running fuzzer with seed {} and {} variables.",
         args.seed, args.amount_vars
     );
-    let settings = GeneratorSettingsBuilder::new(args.seed, args.amount_vars).build();
+    let settings = GeneratorSettingsBuilder::new(args.seed, args.amount_vars)
+        .max_unsat_for_single_constraint(3)
+        .coeff_range(8)
+        .max_unsat_assignments(290)
+        .build();
     let mut grammar = PBSGenerator::create_grammar(settings);
     if args.print_statistics {
         println!("{}", grammar.get_statistics());

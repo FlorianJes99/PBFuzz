@@ -194,6 +194,15 @@ pub struct GeneratorSettings {
     upper_bound_degree: f64,
 }
 
+/// Builder to create Settings for the fuzzer
+///
+/// Defaults:
+/// `coeff_range: 3`
+/// `amount_atoms_per_constraint: 3`
+/// `max_unsat_for_single_constraint: 5`
+/// `lower_bound_degree: 0.3`
+/// `upper_bound_degree: 0.5`
+/// max_unsat_assignments: max_vars * 2.4
 #[derive(Debug)]
 pub struct GeneratorSettingsBuilder {
     seed: u64,
@@ -253,11 +262,6 @@ impl GeneratorSettingsBuilder {
 
     pub fn coeff_range(mut self, range: u32) -> Self {
         self.coeff_range = range;
-        self
-    }
-
-    pub fn amount_atoms_per_constraint(mut self, amount: u32) -> Self {
-        self.amount_atoms_per_constraint = amount;
         self
     }
 
