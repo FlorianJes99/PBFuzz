@@ -3,7 +3,7 @@
 /// A constraint is build up from some amount of atoms an comparison operator and a degree (RHS)
 use std::fmt::Display;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct AtomIdent(u32);
 
 impl AtomIdent {
@@ -241,6 +241,10 @@ impl ThreeAtomConstraint {
             comparison,
             degree,
         }
+    }
+
+    pub fn atoms_mut(&mut self) -> &mut [Atom] {
+        &mut self.atoms
     }
 
     /// Checks how many assignments are unsat for a constraint with 3 Atoms

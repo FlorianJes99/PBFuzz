@@ -72,23 +72,16 @@ impl PBSGrammar {
     fn new(
         seed: u64,
         amount_unsat_assignments: u64,
+        amount_distinct_vars: u32,
         constraints: Vec<ThreeAtomConstraint>,
     ) -> Self {
         let amount_constraints = constraints
             .len()
             .try_into()
             .expect("We should never generate more constraints than 2**32");
-        let amount_vars = constraints
-            .iter()
-            .flat_map(|c| c.atoms())
-            .map(|a| a.atom_id.literal_id())
-            .unique()
-            .count()
-            .try_into()
-            .expect("We should never try to create programs with more than 2**32 vars");
         Self {
             seed,
-            amount_vars,
+            amount_vars: amount_distinct_vars,
             amount_constraints,
             amount_unsat_assignments,
             constraints,
@@ -310,16 +303,49 @@ impl PBSGenerator {
         );
         let mut current_unsat = 0;
         let mut constraints = vec![];
+        let mut highest_atom_id: AtomIdent = 0.into();
         while current_unsat < max_unsat_assignments {
             let c = self.random_constraint();
+            for a in c.atoms() {
+                highest_atom_id = a.atom_id.max(highest_atom_id);
+            }
             let unsat_for_c = c.unsat_count_three_atoms() as u32;
             if unsat_for_c <= self.settings.max_unsat_for_single_constraint {
                 current_unsat += unsat_for_c as u64;
                 constraints.push(c);
             }
         }
+
+        let amount_distinct_vars = constraints
+            .iter()
+            .flat_map(|c| c.atoms())
+            .map(|a| a.atom_id.literal_id())
+            .unique()
+            .count()
+            .try_into()
+            .expect("We should never try to create programs with more than 2**32 vars");
+
+        if highest_atom_id.literal_id() > amount_distinct_vars {
+            // remap constraint indices to always be in range of (1..max_distinct_vars)
+            // this problem can occur when sampling too few vars from the given range
+            let mut remappings: HashMap<AtomIdent, AtomIdent> = HashMap::new();
+            let mut new_atom_id = 1;
+            for c in &mut constraints {
+                for a in c.atoms_mut() {
+                    let current_id = a.atom_id;
+                    if !remappings.contains_key(&current_id) {
+                        remappings.insert(current_id, new_atom_id.into());
+                        new_atom_id += 1;
+                    }
+                    let new_id = remappings
+                        .get(&current_id)
+                        .expect("The id needs to be already remapped here");
+                    a.atom_id = *new_id;
+                }
+            }
+        }
         info!("Generated {} constraints!", constraints.len());
-        PBSGrammar::new(self.settings.seed, current_unsat, constraints)
+        PBSGrammar::new(self.settings.seed, current_unsat, amount_distinct_vars, constraints)
     }
 
     fn random_constraint(&mut self) -> ThreeAtomConstraint {
@@ -415,7 +441,7 @@ fn test_statistics() {
         .iter()
         .map(|c| c.unsat_count_three_atoms() as u64)
         .sum();
-    let grammar = PBSGrammar::new(42, unsat_assignments, constraints);
+    let grammar = PBSGrammar::new(42, unsat_assignments, 4, constraints);
     let stats = grammar.get_statistics();
     assert_eq!(stats.amount_vars, 4);
     assert_eq!(stats.amount_constraints, 3);

@@ -1,4 +1,9 @@
-use std::{fs::File, io::BufWriter, path::PathBuf, process::Command};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::PathBuf,
+    process::{Command, Output},
+};
 
 use rand;
 
@@ -7,7 +12,6 @@ use crate::grammar::pbs_generator::{GeneratorSettingsBuilder, PBSGenerator};
 pub fn run_orchestrator(fuzzer_output_dir: PathBuf) {
     let output_file = fuzzer_output_dir.join("test.opb");
     println!("Writing fuzzer output into {:?}", &output_file);
-    let solver_bin = "roundingsat";
 
     let mut stats = Stats::default();
     for counter in 1..=1000 {
@@ -33,26 +37,40 @@ pub fn run_orchestrator(fuzzer_output_dir: PathBuf) {
             break;
         }
 
-        let output_r = Command::new(solver_bin).arg(&output_file).output();
+        let output_roundingsat = Command::new("roundingsat")
+            .arg(&output_file)
+            .output()
+            .map(handle_command_output);
 
-        if output_r.is_err() {
-            println!("Error while executing roundingsat. Terminating program...");
-            println!("{}", output_r.unwrap_err());
-            break;
-        }
-        let output = output_r.unwrap();
-        let status = if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.contains("UNSATISFIABLE") {
-                SolverStatus::Unsat
-            } else if stdout.contains("SATISFIABLE") {
-                SolverStatus::Sat
-            } else {
-                SolverStatus::Unknown
+        let status_roundingsat = match output_roundingsat {
+            Ok(val) => val,
+            Err(e) => {
+                println!("Error while executing roundingsat. Terminating program...");
+                println!("{e}");
+                break;
             }
-        } else {
-            SolverStatus::Unknown
         };
+        let output_sat4j = Command::new("java")
+            .arg("-jar")
+            .arg("software/sat4j-pb.jar")
+            .arg(&output_file)
+            .output()
+            .map(handle_command_output);
+
+        let status_sat4j = match output_sat4j {
+            Ok(val) => val,
+            Err(e) => {
+                println!("Error while executing sat4j. Terminating program...");
+                println!("{e}");
+                break;
+            }
+        };
+        if status_sat4j != status_roundingsat {
+            println!("Status sat4j: {:?}", status_sat4j);
+            println!("Status roundingsat: {:?}", status_roundingsat);
+            panic!("Test panick for now")
+        }
+        let status = status_roundingsat;
         let file_path = match &status {
             SolverStatus::Sat => {
                 fuzzer_output_dir.join(format!("sat/sat_{}_{}.opb", seed, counter))
@@ -89,6 +107,17 @@ pub fn run_orchestrator(fuzzer_output_dir: PathBuf) {
     println!("========================================");
 }
 
+fn handle_command_output(output: Output) -> SolverStatus {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.contains("UNSATISFIABLE") {
+        SolverStatus::Unsat
+    } else if stdout.contains("SATISFIABLE") {
+        SolverStatus::Sat
+    } else {
+        SolverStatus::Unknown
+    }
+}
+
 #[derive(Default)]
 struct Stats {
     amount_sat: u32,
@@ -114,6 +143,7 @@ impl Stats {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum SolverStatus {
     Sat,
     Unsat,

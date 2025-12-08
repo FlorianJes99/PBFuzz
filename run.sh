@@ -13,6 +13,7 @@ function handle_sigint() {
 
 FUZZER="./target/release/fuzzer"
 ROUNDING_SAT="roundingsat"
+SAT4J="java -jar software/sat4j-pb_nightly.jar"
 
 file_ext=".opb"
 file="out/test${file_ext}"
@@ -48,7 +49,7 @@ while true; do
     echo "Running PB Solver..."
 
     start_time=$(date +%s%3N)          # milliseconds since epoch
-    output=$($ROUNDING_SAT $file)
+    output=$($SAT4J $file)
     end_time=$(date +%s%3N)            # milliseconds since epoch
     runtime_ms=$((end_time - start_time))
 
