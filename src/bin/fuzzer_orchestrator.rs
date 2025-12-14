@@ -1,11 +1,13 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
 use clap::Parser;
-use fuzzer_pseudo_bool::orchestrator::runner::run_orchestrator;
+use fuzzer_pseudo_bool::orchestrator::runner::{run_orchestrator, OrchestratorInput, SolverCommand};
 
 fn main() {
     let args = OrchestratorArgs::parse();
-    run_orchestrator(args.ouput_dir);
+    let command1 = SolverCommand::new("roundingsat".to_string(), Command::new("roundingsat"));
+    let command2 = SolverCommand::new("naps".to_string(), Command::new("software/naps"));
+    run_orchestrator(OrchestratorInput::new(args.ouput_dir, command1, command2));
 }
 
 #[derive(Debug, Parser)]

@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     fs::File,
     io::BufWriter,
     path::PathBuf,
@@ -9,9 +10,50 @@ use rand;
 
 use crate::grammar::pbs_generator::{GeneratorSettingsBuilder, PBSGenerator};
 
-pub fn run_orchestrator(fuzzer_output_dir: PathBuf) {
-    let output_file = fuzzer_output_dir.join("test.opb");
+pub struct OrchestratorInput {
+    fuzzer_output_dir: PathBuf,
+    command1: SolverCommand,
+    command2: SolverCommand,
+}
+
+impl OrchestratorInput {
+    pub fn new(
+        fuzzer_output_dir: PathBuf,
+        command1: SolverCommand,
+        command2: SolverCommand,
+    ) -> Self {
+        Self {
+            fuzzer_output_dir,
+            command1,
+            command2,
+        }
+    }
+}
+
+pub struct SolverCommand {
+    exec_name: String,
+    exec_command: Command,
+}
+
+impl SolverCommand {
+    pub fn new(exec_name: String, exec_command: Command) -> Self {
+        Self {
+            exec_name,
+            exec_command,
+        }
+    }
+
+    fn set_input_file(&mut self, output_file: &PathBuf) {
+        self.exec_command.arg(output_file);
+    }
+}
+pub fn run_orchestrator(mut input: OrchestratorInput) {
+    let output_file = input.fuzzer_output_dir.join("test.opb");
     println!("Writing fuzzer output into {:?}", &output_file);
+
+    // add file to solve to programm command
+    input.command1.set_input_file(&output_file);
+    input.command2.set_input_file(&output_file);
 
     let mut stats = Stats::default();
     for counter in 1..=1000 {
@@ -37,48 +79,38 @@ pub fn run_orchestrator(fuzzer_output_dir: PathBuf) {
             break;
         }
 
-        let output_roundingsat = Command::new("roundingsat")
-            .arg(&output_file)
-            .output()
-            .map(handle_command_output);
-
-        let status_roundingsat = match output_roundingsat {
+        let res_program1 = run_external_programm(&mut input.command1);
+        let res_program2 = run_external_programm(&mut input.command2);
+        let status_program1 = match res_program1 {
             Ok(val) => val,
             Err(e) => {
-                println!("Error while executing roundingsat. Terminating program...");
-                println!("{e}");
+                println!("{}", e);
                 break;
             }
         };
-        let output_sat4j = Command::new("java")
-            .arg("-jar")
-            .arg("software/sat4j-pb.jar")
-            .arg(&output_file)
-            .output()
-            .map(handle_command_output);
-
-        let status_sat4j = match output_sat4j {
+        let status_program2 = match res_program2 {
             Ok(val) => val,
             Err(e) => {
-                println!("Error while executing sat4j. Terminating program...");
-                println!("{e}");
+                println!("{}", e);
                 break;
             }
         };
-        if status_sat4j != status_roundingsat {
-            println!("Status sat4j: {:?}", status_sat4j);
-            println!("Status roundingsat: {:?}", status_roundingsat);
+        if status_program2 != status_program1 {
+            println!("Status sat4j: {:?}", status_program2);
+            println!("Status roundingsat: {:?}", status_program1);
             panic!("Test panick for now")
         }
-        let status = status_roundingsat;
+        let status = status_program1;
         let file_path = match &status {
-            SolverStatus::Sat => {
-                fuzzer_output_dir.join(format!("sat/sat_{}_{}.opb", seed, counter))
-            }
-            SolverStatus::Unsat => {
-                fuzzer_output_dir.join(format!("unsat/unsat_{}_{}.opb", seed, counter))
-            }
-            SolverStatus::Unknown => fuzzer_output_dir.join(format!("unknown_{}.opb", seed)),
+            SolverStatus::Sat => input
+                .fuzzer_output_dir
+                .join(format!("sat/sat_{}_{}.opb", seed, counter)),
+            SolverStatus::Unsat => input
+                .fuzzer_output_dir
+                .join(format!("unsat/unsat_{}_{}.opb", seed, counter)),
+            SolverStatus::Unknown => input
+                .fuzzer_output_dir
+                .join(format!("unknown_{}.opb", seed)),
         };
 
         let write_r = std::fs::rename(&output_file, &file_path);
@@ -105,6 +137,31 @@ pub fn run_orchestrator(fuzzer_output_dir: PathBuf) {
     );
     println!("Percentage SAT: {}", stats.percentage_sat());
     println!("========================================");
+}
+
+struct ProgramExecutionFailed {
+    program_name: String,
+    error_message: String,
+}
+
+impl Display for ProgramExecutionFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Program {} failed.", self.program_name)?;
+        writeln!(f, "{}", self.error_message)
+    }
+}
+
+fn run_external_programm(
+    command: &mut SolverCommand,
+) -> Result<SolverStatus, ProgramExecutionFailed> {
+    command
+        .exec_command
+        .output()
+        .map(handle_command_output)
+        .map_err(|err| ProgramExecutionFailed {
+            program_name: command.exec_name.clone(),
+            error_message: err.to_string(),
+        })
 }
 
 fn handle_command_output(output: Output) -> SolverStatus {
