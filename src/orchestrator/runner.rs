@@ -19,6 +19,12 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
     input.command2.set_input_file(&output_file);
 
     let mut stats = Stats::default();
+
+    let settings = GeneratorSettingsBuilder::new(50)
+        .max_unsat_for_single_constraint(3)
+        .max_unsat_assignments(170)
+        .coeff_range(5)
+        .build();
     for counter in 1..=input.iterations {
         if counter == 1000 && stats.is_sat_percentage_below(0.25) {
             // terminate early if amount sat instances below 25%
@@ -29,19 +35,13 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
         }
 
         let seed = rand::random();
-        let settings = GeneratorSettingsBuilder::new(seed, 50)
-            .max_unsat_for_single_constraint(3)
-            .max_unsat_assignments(170)
-            .coeff_range(5)
-            .build();
 
         println!("========================================");
         println!("Iteration {counter}");
         println!("========================================");
         println!("");
         println!("Running Fuzzer with seed {seed}...");
-
-        let mut grammar = PBSGenerator::create_grammar(settings);
+        let mut grammar = PBSGenerator::create_grammar(seed, settings);
         let write_result = File::create(&output_file)
             .map(|file| BufWriter::new(file))
             .map(|mut buf_writer| grammar.produce(&mut buf_writer));

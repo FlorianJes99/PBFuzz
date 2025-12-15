@@ -155,15 +155,14 @@ impl PBSGrammar {
 
 #[derive(Debug)]
 pub struct PBSGenerator {
+    seed: u64,
     settings: GeneratorSettings,
     rand: StdRng,
 }
 
 /// This struct holds all possible configuration parameters for the generation of a random grammar
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct GeneratorSettings {
-    /// seed used for the random generator
-    seed: u64,
     /// maximal amount of different variables used in the grammar
     max_vars: u32,
     max_unsat_for_single_constraint: u32,
@@ -198,7 +197,6 @@ pub struct GeneratorSettings {
 /// max_unsat_assignments: max_vars * 2.4
 #[derive(Debug)]
 pub struct GeneratorSettingsBuilder {
-    seed: u64,
     max_vars: u32,
     max_unsat_for_single_constraint: u32,
     max_unsat_assignments: u64,
@@ -210,7 +208,7 @@ pub struct GeneratorSettingsBuilder {
 
 #[allow(dead_code)]
 impl GeneratorSettingsBuilder {
-    pub fn new(seed: u64, max_vars: u32) -> Self {
+    pub fn new(max_vars: u32) -> Self {
         let coeff_range = 3;
         let amount_atoms_per_constraint = 3;
         let max_unsat_for_single_constraint = 5;
@@ -219,7 +217,6 @@ impl GeneratorSettingsBuilder {
         let max_unsat_assignments = (max_vars as f32 * 2.4).floor() as u64;
         // assignment combinations
         Self {
-            seed,
             max_vars,
             max_unsat_for_single_constraint,
             max_unsat_assignments,
@@ -232,7 +229,6 @@ impl GeneratorSettingsBuilder {
 
     pub fn from_settings(settings: GeneratorSettings) -> Self {
         GeneratorSettingsBuilder {
-            seed: settings.seed,
             max_vars: settings.max_vars,
             max_unsat_for_single_constraint: settings.max_unsat_for_single_constraint,
             max_unsat_assignments: settings.max_unsat_assignments,
@@ -268,7 +264,6 @@ impl GeneratorSettingsBuilder {
 
     pub fn build(self) -> GeneratorSettings {
         GeneratorSettings {
-            seed: self.seed,
             max_vars: self.max_vars,
             max_unsat_for_single_constraint: self.max_unsat_for_single_constraint,
             max_unsat_assignments: self.max_unsat_assignments,
@@ -281,16 +276,16 @@ impl GeneratorSettingsBuilder {
 }
 
 impl PBSGenerator {
-    fn new(settings: GeneratorSettings) -> Self {
-        let seed = settings.seed;
+    fn new(seed: u64, settings: GeneratorSettings) -> Self {
         Self {
+            seed,
             settings,
             rand: StdRng::seed_from_u64(seed),
         }
     }
 
-    pub fn create_grammar(settings: GeneratorSettings) -> PBSGrammar {
-        Self::new(settings).random_grammar()
+    pub fn create_grammar(seed: u64, settings: GeneratorSettings) -> PBSGrammar {
+        Self::new(seed, settings).random_grammar()
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
@@ -344,7 +339,7 @@ impl PBSGenerator {
         }
         info!("Generated {} constraints!", constraints.len());
         PBSGrammar::new(
-            self.settings.seed,
+            self.seed,
             current_unsat,
             amount_distinct_vars,
             constraints,
