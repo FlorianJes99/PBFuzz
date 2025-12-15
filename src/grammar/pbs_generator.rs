@@ -258,12 +258,10 @@ impl GeneratorSettingsBuilder {
         self
     }
 
-    pub fn lower_bound_degree(mut self, lower: f64) -> Self {
+    /// this method panics if lower > upper!
+    pub fn set_bounds(mut self, lower: f64, upper: f64) -> Self {
+        assert!(lower <= upper);
         self.lower_bound_degree = lower;
-        self
-    }
-
-    pub fn upper_bound_degree(mut self, upper: f64) -> Self {
         self.upper_bound_degree = upper;
         self
     }
@@ -345,7 +343,12 @@ impl PBSGenerator {
             }
         }
         info!("Generated {} constraints!", constraints.len());
-        PBSGrammar::new(self.settings.seed, current_unsat, amount_distinct_vars, constraints)
+        PBSGrammar::new(
+            self.settings.seed,
+            current_unsat,
+            amount_distinct_vars,
+            constraints,
+        )
     }
 
     fn random_constraint(&mut self) -> ThreeAtomConstraint {

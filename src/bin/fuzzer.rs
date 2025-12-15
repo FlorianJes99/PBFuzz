@@ -40,8 +40,9 @@ fn main() {
     );
     let settings = GeneratorSettingsBuilder::new(args.seed, args.amount_vars)
         .max_unsat_for_single_constraint(3)
-        .coeff_range(8)
-        .max_unsat_assignments(290)
+        .set_bounds(0.3, 0.6)
+        .coeff_range(6)
+        .max_unsat_assignments(250)
         .build();
     let mut grammar = PBSGenerator::create_grammar(settings);
     if args.print_statistics {

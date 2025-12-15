@@ -10,43 +10,6 @@ use rand;
 
 use crate::grammar::pbs_generator::{GeneratorSettingsBuilder, PBSGenerator};
 
-pub struct OrchestratorInput {
-    fuzzer_output_dir: PathBuf,
-    command1: SolverCommand,
-    command2: SolverCommand,
-}
-
-impl OrchestratorInput {
-    pub fn new(
-        fuzzer_output_dir: PathBuf,
-        command1: SolverCommand,
-        command2: SolverCommand,
-    ) -> Self {
-        Self {
-            fuzzer_output_dir,
-            command1,
-            command2,
-        }
-    }
-}
-
-pub struct SolverCommand {
-    exec_name: String,
-    exec_command: Command,
-}
-
-impl SolverCommand {
-    pub fn new(exec_name: String, exec_command: Command) -> Self {
-        Self {
-            exec_name,
-            exec_command,
-        }
-    }
-
-    fn set_input_file(&mut self, output_file: &PathBuf) {
-        self.exec_command.arg(output_file);
-    }
-}
 pub fn run_orchestrator(mut input: OrchestratorInput) {
     let output_file = input.fuzzer_output_dir.join("test.opb");
     println!("Writing fuzzer output into {:?}", &output_file);
@@ -56,11 +19,20 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
     input.command2.set_input_file(&output_file);
 
     let mut stats = Stats::default();
-    for counter in 1..=1000 {
+    for counter in 1..=input.iterations {
+        if counter == 1000 && stats.is_sat_percentage_below(0.25) {
+            // terminate early if amount sat instances below 25%
+            // and more than 1000 iterations are scheduled
+            println!("Terminating early!");
+            println!("Percentage SAT Instances below 25%");
+            break;
+        }
+
         let seed = rand::random();
         let settings = GeneratorSettingsBuilder::new(seed, 50)
-            .max_unsat_for_single_constraint(4)
-            .max_unsat_assignments(150)
+            .max_unsat_for_single_constraint(3)
+            .max_unsat_assignments(170)
+            .coeff_range(5)
             .build();
 
         println!("========================================");
@@ -121,34 +93,8 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
         stats.update(&status);
     }
 
-    println!("===============Statistics===============");
-    println!(
-        "Total amount of instances generated: {}",
-        stats.amount_runs()
-    );
-    println!("Generated amount of SAT instances: {}", stats.amount_sat);
-    println!(
-        "Generated amount of UNSAT instances: {}",
-        stats.amount_unsat
-    );
-    println!(
-        "Generated amount of unknown instances: {}",
-        stats.amount_unknown
-    );
-    println!("Percentage SAT: {}", stats.percentage_sat());
-    println!("========================================");
-}
-
-struct ProgramExecutionFailed {
-    program_name: String,
-    error_message: String,
-}
-
-impl Display for ProgramExecutionFailed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Program {} failed.", self.program_name)?;
-        writeln!(f, "{}", self.error_message)
-    }
+    // print out stats
+    println!("{stats}")
 }
 
 fn run_external_programm(
@@ -175,6 +121,47 @@ fn handle_command_output(output: Output) -> SolverStatus {
     }
 }
 
+pub struct OrchestratorInput {
+    iterations: u32,
+    fuzzer_output_dir: PathBuf,
+    command1: SolverCommand,
+    command2: SolverCommand,
+}
+
+impl OrchestratorInput {
+    pub fn new(
+        iterations: u32,
+        fuzzer_output_dir: PathBuf,
+        command1: SolverCommand,
+        command2: SolverCommand,
+    ) -> Self {
+        Self {
+            iterations,
+            fuzzer_output_dir,
+            command1,
+            command2,
+        }
+    }
+}
+
+pub struct SolverCommand {
+    exec_name: String,
+    exec_command: Command,
+}
+
+impl SolverCommand {
+    pub fn new(exec_name: String, exec_command: Command) -> Self {
+        Self {
+            exec_name,
+            exec_command,
+        }
+    }
+
+    fn set_input_file(&mut self, output_file: &PathBuf) {
+        self.exec_command.arg(output_file);
+    }
+}
+
 #[derive(Default)]
 struct Stats {
     amount_sat: u32,
@@ -197,6 +184,46 @@ impl Stats {
 
     fn percentage_sat(&self) -> f32 {
         self.amount_sat as f32 / self.amount_runs() as f32
+    }
+
+    fn is_sat_percentage_below(&self, threshold: f32) -> bool {
+        self.percentage_sat() < threshold
+    }
+}
+
+impl Display for Stats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "===============Statistics===============")?;
+        writeln!(
+            f,
+            "Total amount of instances generated: {}",
+            self.amount_runs()
+        )?;
+        writeln!(f, "Generated amount of SAT instances: {}", self.amount_sat)?;
+        writeln!(
+            f,
+            "Generated amount of UNSAT instances: {}",
+            self.amount_unsat
+        )?;
+        writeln!(
+            f,
+            "Generated amount of unknown instances: {}",
+            self.amount_unknown
+        )?;
+        writeln!(f, "Percentage SAT: {}", self.percentage_sat())?;
+        writeln!(f, "========================================")
+    }
+}
+
+struct ProgramExecutionFailed {
+    program_name: String,
+    error_message: String,
+}
+
+impl Display for ProgramExecutionFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Program {} failed.", self.program_name)?;
+        writeln!(f, "{}", self.error_message)
     }
 }
 
