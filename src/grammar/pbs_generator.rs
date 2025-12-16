@@ -1,4 +1,7 @@
-use crate::grammar::domain::{Atom, AtomIdent, Comparison, Constraint, ThreeAtomConstraint};
+use crate::grammar::{
+    constraint::{Constraint, ThreeAtomConstraint},
+    domain::{Atom, AtomIdent, Comparison},
+};
 use itertools::Itertools;
 use log::info;
 use std::{
@@ -338,12 +341,7 @@ impl PBSGenerator {
             }
         }
         info!("Generated {} constraints!", constraints.len());
-        PBSGrammar::new(
-            self.seed,
-            current_unsat,
-            amount_distinct_vars,
-            constraints,
-        )
+        PBSGrammar::new(self.seed, current_unsat, amount_distinct_vars, constraints)
     }
 
     fn random_constraint(&mut self) -> ThreeAtomConstraint {
