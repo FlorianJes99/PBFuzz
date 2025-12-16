@@ -7,11 +7,20 @@ use std::fmt::Display;
 pub struct AtomIdent(u32);
 
 impl AtomIdent {
-    fn new(var_id: u32) -> Self {
+    pub fn new(var_id: u32) -> Self {
+        assert!(var_id > 0, "Identifier of an Atom needs to start be > 0");
         Self(var_id)
     }
     pub fn literal_id(&self) -> u32 {
         self.0
+    }
+
+    /// consumes the id and creates a new atom
+    pub fn to_atom(self, coeff: i32) -> Atom {
+        Atom {
+            atom_id: self,
+            coeff,
+        }
     }
 }
 

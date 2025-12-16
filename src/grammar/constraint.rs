@@ -1,4 +1,5 @@
 use crate::grammar::domain::Atom;
+use crate::grammar::domain::AtomIdent;
 use crate::grammar::domain::Comparison;
 use std::fmt::Display;
 
@@ -7,7 +8,7 @@ use std::fmt::Display;
 /// atoms: a reference to a array slice of atoms.
 /// comparison: the comparison operator used in this constraint.
 /// degree: rhs value, for which we are solving the constraint.
-pub trait Constraint {
+pub trait Constraint: Display {
     fn atoms(&self) -> &[Atom];
     fn comparison(&self) -> &Comparison;
     fn degree(&self) -> i64;
@@ -196,10 +197,10 @@ pub struct CardinalityConstraint {
 }
 
 impl CardinalityConstraint {
-    pub fn new(atom_ids: Vec<u32>, comparison: Comparison, degree: i64) -> Self {
+    pub fn new(atom_ids: Vec<AtomIdent>, comparison: Comparison, degree: i64) -> Self {
         let atoms = atom_ids
             .iter()
-            .map(|id| Atom::new(*id, 1))
+            .map(|id| id.to_atom(1))
             .collect();
 
         Self {

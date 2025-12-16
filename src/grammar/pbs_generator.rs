@@ -1,17 +1,17 @@
 use crate::grammar::{
     constraint::{Constraint, ThreeAtomConstraint},
-    domain::{Atom, AtomIdent, Comparison},
+    constraint_generator::{ConstraintGenerator, ConstraintSettings},
+    domain::AtomIdent,
 };
 use itertools::Itertools;
 use log::info;
 use std::{
     collections::HashMap,
     fmt::Display,
-    i64,
     io::{self, Write},
 };
 
-use rand::{Rng, SeedableRng, rngs::StdRng, seq::index};
+use rand::{SeedableRng, rngs::StdRng, seq::index};
 
 /// Pseudo Boolean grammar
 #[derive(Debug)]
@@ -159,8 +159,9 @@ impl PBSGrammar {
 #[derive(Debug)]
 pub struct PBSGenerator {
     seed: u64,
-    settings: GeneratorSettings,
     rand: StdRng,
+    constraint_generator: ConstraintGenerator,
+    settings: GeneratorSettings,
 }
 
 /// This struct holds all possible configuration parameters for the generation of a random grammar
@@ -168,15 +169,15 @@ pub struct PBSGenerator {
 pub struct GeneratorSettings {
     /// maximal amount of different variables used in the grammar
     max_vars: u32,
-    max_unsat_for_single_constraint: u32,
     /// threshold for total unsat assignments - this is an upper bound, because unsats can be
     /// duplicates
     max_unsat_assignments: u64,
+    /// How many atoms a single constraint should have
+    amount_atoms_per_constraint: u32,
+    max_unsat_for_single_constraint: u32,
     /// The possible values a coefficient of a atom can be
     /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
     coeff_range: u32,
-    /// How many atoms a single constraint should have
-    amount_atoms_per_constraint: u32,
     /// Given the sampled atoms in a constraint, the lower bound specifies the smallest possible
     /// fraction of the given range
     /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
@@ -280,10 +281,17 @@ impl GeneratorSettingsBuilder {
 
 impl PBSGenerator {
     fn new(seed: u64, settings: GeneratorSettings) -> Self {
+        let constr_generator = ConstraintGenerator::new(ConstraintSettings::new(
+            settings.max_unsat_for_single_constraint,
+            settings.coeff_range as i32,
+            settings.lower_bound_degree,
+            settings.upper_bound_degree,
+        ));
         Self {
             seed,
-            settings,
             rand: StdRng::seed_from_u64(seed),
+            constraint_generator: constr_generator,
+            settings,
         }
     }
 
@@ -301,7 +309,17 @@ impl PBSGenerator {
         let mut constraints = vec![];
         let mut highest_atom_id: AtomIdent = 0.into();
         while current_unsat < max_unsat_assignments {
-            let c = self.random_constraint();
+            let mut ids: [AtomIdent; 3] =
+                index::sample_array(&mut self.rand, self.settings.max_vars as usize)
+                    .expect("Invalid config for sampling. Constraint length > max_vars")
+                    // add +1 because we want ids from 1..=len and sample are from 0..len
+                    .map(|x| x as u32 + 1)
+                    .map(|x| AtomIdent::new(x));
+            ids.sort();
+
+            let c = self
+                .constraint_generator
+                .generate_three_atom(&mut self.rand, ids);
             for a in c.atoms() {
                 highest_atom_id = a.atom_id.max(highest_atom_id);
             }
@@ -343,88 +361,11 @@ impl PBSGenerator {
         info!("Generated {} constraints!", constraints.len());
         PBSGrammar::new(self.seed, current_unsat, amount_distinct_vars, constraints)
     }
-
-    fn random_constraint(&mut self) -> ThreeAtomConstraint {
-        // range for coefficient of each atom
-        let coeff_range = self.settings.coeff_range as i32;
-        let amount_atoms = self.settings.amount_atoms_per_constraint;
-        // at least one atom should be in a constraint
-        assert!(
-            amount_atoms == 3,
-            "Currently only constraints with 3 atoms are supported"
-        );
-        let mut ids: [usize; 3] =
-            index::sample_array(&mut self.rand, self.settings.max_vars as usize)
-                .expect("Invalid config for sampling. Constraint length > max_vars");
-        ids.sort();
-        // increment all ids by 1, because `sample_array` samples from range 0..len
-        let atoms = [
-            Atom::new(
-                (ids[0] + 1) as u32,
-                self.sample_without_zero_from_range(-coeff_range, coeff_range),
-            ),
-            Atom::new(
-                (ids[1] + 1) as u32,
-                self.sample_without_zero_from_range(-coeff_range, coeff_range),
-            ),
-            Atom::new(
-                (ids[2] + 1) as u32,
-                self.sample_without_zero_from_range(-coeff_range, coeff_range),
-            ),
-        ];
-        let comparison = Comparison::GrEqual;
-        self.create_from_atoms(atoms, comparison)
-    }
-
-    fn sample_without_zero_from_range(&mut self, start_val: i32, end_val: i32) -> i32 {
-        loop {
-            let rand_sample = self.rand.random_range(start_val..=end_val);
-            if rand_sample != 0 {
-                return rand_sample;
-            }
-        }
-    }
-
-    fn create_from_atoms(
-        &mut self,
-        atoms: [Atom; 3],
-        comparison: Comparison,
-    ) -> ThreeAtomConstraint {
-        let mut min_coeff = i64::MAX;
-        let mut max_coeff = i64::MIN;
-        let mut min_sum_coeff = 0;
-        for coeff in atoms.iter().map(|a| a.coeff as i64) {
-            if coeff < 0 {
-                min_sum_coeff += coeff;
-            }
-            if coeff > max_coeff {
-                max_coeff = coeff;
-            }
-            if coeff < min_coeff {
-                min_coeff = coeff
-            }
-        }
-        let distance = (max_coeff - min_coeff).abs() as f64;
-        let range_start =
-            min_sum_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
-        let range_end = min_coeff + (self.settings.upper_bound_degree * distance).ceil() as i64;
-        let range_start = min_coeff.max(range_start);
-        // this ensures that we have always a single atom, which can already fulfill the equation
-        let range_end = max_coeff.min(range_end);
-        assert!(
-            range_start <= range_end,
-            "Range start should be smaller than / equal to range end"
-        );
-        ThreeAtomConstraint::new(
-            atoms,
-            comparison,
-            self.rand.random_range(range_start..=range_end),
-        )
-    }
 }
 
 #[test]
 fn test_statistics() {
+    use crate::grammar::domain::{Atom, Comparison};
     let atoms1 = [Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
     let atoms2 = [Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
     let atoms3 = [Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
