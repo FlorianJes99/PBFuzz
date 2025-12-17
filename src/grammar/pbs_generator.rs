@@ -307,7 +307,7 @@ impl PBSGenerator {
         );
         let mut current_unsat = 0;
         let mut constraints = vec![];
-        let mut highest_atom_id: AtomIdent = 0.into();
+        let mut highest_atom_id: Option<AtomIdent> = Option::None;
         while current_unsat < max_unsat_assignments {
             let mut ids: [AtomIdent; 3] =
                 index::sample_array(&mut self.rand, self.settings.max_vars as usize)
@@ -321,7 +321,8 @@ impl PBSGenerator {
                 .constraint_generator
                 .generate_three_atom(&mut self.rand, ids);
             for a in c.atoms() {
-                highest_atom_id = a.atom_id.max(highest_atom_id);
+                highest_atom_id =
+                    Some(highest_atom_id.map_or(a.atom_id, |current| current.max(a.atom_id)));
             }
             let unsat_for_c = c.unsat_count_three_atoms() as u32;
             if unsat_for_c <= self.settings.max_unsat_for_single_constraint {
@@ -339,7 +340,7 @@ impl PBSGenerator {
             .try_into()
             .expect("We should never try to create programs with more than 2**32 vars");
 
-        if highest_atom_id.literal_id() > amount_distinct_vars {
+        if highest_atom_id.is_some_and(|id| id.literal_id() > amount_distinct_vars) {
             // remap constraint indices to always be in range of (1..max_distinct_vars)
             // this problem can occur when sampling too few vars from the given range
             let mut remappings: HashMap<AtomIdent, AtomIdent> = HashMap::new();
@@ -348,7 +349,7 @@ impl PBSGenerator {
                 for a in c.atoms_mut() {
                     let current_id = a.atom_id;
                     if !remappings.contains_key(&current_id) {
-                        remappings.insert(current_id, new_atom_id.into());
+                        remappings.insert(current_id, AtomIdent::new(new_atom_id));
                         new_atom_id += 1;
                     }
                     let new_id = remappings

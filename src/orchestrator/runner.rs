@@ -4,6 +4,7 @@ use std::{
     io::BufWriter,
     path::PathBuf,
     process::{Command, Output},
+    time::Instant,
 };
 
 use rand;
@@ -18,7 +19,7 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
     input.command1.set_input_file(&output_file);
     input.command2.set_input_file(&output_file);
 
-    let mut stats = Stats::default();
+    let mut stats = Stats::new();
 
     let settings = GeneratorSettingsBuilder::new(50)
         .max_unsat_for_single_constraint(3)
@@ -162,14 +163,22 @@ impl SolverCommand {
     }
 }
 
-#[derive(Default)]
 struct Stats {
     amount_sat: u32,
     amount_unsat: u32,
     amount_unknown: u32,
+    start: Instant,
 }
 
 impl Stats {
+    fn new() -> Self {
+        Self {
+            amount_sat: 0,
+            amount_unsat: 0,
+            amount_unknown: 0,
+            start: Instant::now(),
+        }
+    }
     fn update(&mut self, status: &SolverStatus) {
         match status {
             SolverStatus::Sat => self.amount_sat += 1,
@@ -211,6 +220,13 @@ impl Display for Stats {
             self.amount_unknown
         )?;
         writeln!(f, "Percentage SAT: {}", self.percentage_sat())?;
+        let program_duration = Instant::now().duration_since(self.start);
+        writeln!(
+            f,
+            "Duration of program: {}.{:.3}s",
+            program_duration.as_secs(),
+            program_duration.subsec_millis()
+        )?;
         writeln!(f, "========================================")
     }
 }

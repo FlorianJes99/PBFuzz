@@ -8,7 +8,7 @@ pub struct AtomIdent(u32);
 
 impl AtomIdent {
     pub fn new(var_id: u32) -> Self {
-        assert!(var_id > 0, "Identifier of an Atom needs to start be > 0");
+        assert!(var_id > 0, "Identifier of an Atom needs to be > 0");
         Self(var_id)
     }
     pub fn literal_id(&self) -> u32 {
@@ -21,12 +21,6 @@ impl AtomIdent {
             atom_id: self,
             coeff,
         }
-    }
-}
-
-impl From<u32> for AtomIdent {
-    fn from(value: u32) -> Self {
-        Self::new(value)
     }
 }
 
@@ -47,10 +41,6 @@ pub struct Atom {
 
 impl Atom {
     pub fn new(var_id: u32, coeff: i32) -> Self {
-        assert!(
-            coeff != 0,
-            "Zero coefficient does not make any sense for an atom"
-        );
         Self {
             atom_id: AtomIdent::new(var_id),
             coeff,
