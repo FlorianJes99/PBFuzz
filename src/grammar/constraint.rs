@@ -1,5 +1,4 @@
 use crate::grammar::domain::Atom;
-use crate::grammar::domain::AtomIdent;
 use crate::grammar::domain::Comparison;
 use std::fmt::Display;
 
@@ -44,6 +43,10 @@ pub trait Constraint: Display {
     }
 }
 
+pub trait ConstraintMetrics {
+    fn amount_unsat_assignments(&self) -> u128;
+}
+
 /// Constraint is a combination of atoms, comparison operator and a degree
 ///
 /// The degree should always be in bound of the atoms max and min assignment.
@@ -51,6 +54,20 @@ pub trait Constraint: Display {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ArbitraryLengthConstraint {
+    atoms: Vec<Atom>,
+    comparison: Comparison,
+    degree: i64,
+}
+
+#[derive(Debug)]
+pub struct ThreeAtomConstraint {
+    atoms: [Atom; 3],
+    comparison: Comparison,
+    degree: i64,
+}
+
+/// Cardinality constraints are a special type of constraint, where every coefficient of an atom needs to be 1
+pub struct CardinalityConstraint {
     atoms: Vec<Atom>,
     comparison: Comparison,
     degree: i64,
@@ -107,13 +124,6 @@ impl From<ThreeAtomConstraint> for ArbitraryLengthConstraint {
     }
 }
 
-#[derive(Debug)]
-pub struct ThreeAtomConstraint {
-    atoms: [Atom; 3],
-    comparison: Comparison,
-    degree: i64,
-}
-
 impl Constraint for ThreeAtomConstraint {
     fn atoms(&self) -> &[Atom] {
         &self.atoms
@@ -125,6 +135,12 @@ impl Constraint for ThreeAtomConstraint {
 
     fn degree(&self) -> i64 {
         self.degree
+    }
+}
+
+impl ConstraintMetrics for ThreeAtomConstraint {
+    fn amount_unsat_assignments(&self) -> u128 {
+        self.unsat_count_three_atoms() as u128
     }
 }
 
@@ -177,7 +193,7 @@ impl ThreeAtomConstraint {
     }
 
     /// Checks how many assignments are unsat for a constraint with 3 Atoms
-    pub fn unsat_count_three_atoms(&self) -> u32 {
+    fn unsat_count_three_atoms(&self) -> u32 {
         let [a1, a2, a3] = &self.atoms;
         Self::ASSIGNMENTS
             .iter()
@@ -189,25 +205,22 @@ impl ThreeAtomConstraint {
     }
 }
 
-/// Cardinality constraints are a special type of constraint, where every coefficient of an atom needs to be 1
-pub struct CardinalityConstraint {
-    atoms: Vec<Atom>,
-    comparison: Comparison,
-    degree: i64,
-}
-
 impl CardinalityConstraint {
-    pub fn new(atom_ids: Vec<AtomIdent>, comparison: Comparison, degree: i64) -> Self {
-        let atoms = atom_ids
-            .iter()
-            .map(|id| id.to_atom(1))
-            .collect();
-
-        Self {
+    pub fn new(atoms: Vec<Atom>, comparison: Comparison, degree: i64) -> Result<Self, String> {
+        if atoms.iter().find(|a| a.coeff != 1).is_some() {
+            return Err(
+                "All coefficients of a CardinalityConstraint need to be either 1".to_string(),
+            );
+        }
+        let c = Self {
             atoms,
             comparison,
             degree,
+        };
+        if !c.is_solvable() {
+            return Err("A constraint on itself needs to be solvable".to_string());
         }
+        Ok(c)
     }
 }
 
@@ -223,6 +236,27 @@ impl Constraint for CardinalityConstraint {
     fn degree(&self) -> i64 {
         self.degree
     }
+}
+
+impl ConstraintMetrics for CardinalityConstraint {
+    fn amount_unsat_assignments(&self) -> u128 {
+        let amount_vars = self.atoms().len() as u64;
+        let degree = self.degree() as u64;
+        if degree == 0 {
+            return 0;
+        }
+
+        (0..degree).fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
+    }
+}
+
+fn binomial(n: u64, k: u64) -> u128 {
+    let k = k.min(n - k);
+    let mut r = 1u128;
+    for i in 0..k {
+        r = r * (n - i) as u128 / (i + 1) as u128;
+    }
+    r
 }
 
 impl Display for CardinalityConstraint {
