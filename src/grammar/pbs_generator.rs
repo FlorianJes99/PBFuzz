@@ -1,10 +1,11 @@
 use crate::grammar::{
-    constraint::{Constraint},
+    constraint::Constraint,
     constraint_generator::{ConstraintGenerator, ConstraintSettings},
     domain::AtomIdent,
 };
 use itertools::Itertools;
 use log::info;
+use serde::Serialize;
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -51,22 +52,20 @@ pub struct GrammarStatistics {
 
 impl Display for GrammarStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "**********Statistics**********")?;
         writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
-        writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
+        writeln!(f, "* Amount constraints             : {}", self.amount_constraints)?;
         writeln!(
             f,
-            "* Total amount of used vars: {}",
+            "* Total amount of used vars              : {}",
             self.total_var_occurences
         )?;
-        writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
-        writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
-        writeln!(
+        writeln!(f, "* Max occurence of a var         : {}", self.max_occurence)?;
+        writeln!(f, "* Min occurence of a var         : {}", self.min_occurence)?;
+        write!(
             f,
-            "* Average occurences of vars: {}",
+            "* Average occurences of vars             : {}",
             self.average_occurence
-        )?;
-        writeln!(f, "******************************")
+        )
     }
 }
 
@@ -163,7 +162,7 @@ pub struct PBSGenerator {
 }
 
 /// This struct holds all possible configuration parameters for the generation of a random grammar
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize)]
 pub struct GeneratorSettings {
     /// maximal amount of different variables used in the grammar
     max_vars: u32,
@@ -188,6 +187,19 @@ pub struct GeneratorSettings {
     upper_bound_degree: f64,
 }
 
+impl Display for GeneratorSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Used Settings for Generator:")?;
+        writeln!(f, "Max used vars                                : {}", self.max_vars)?;
+        writeln!(f, "Max unsat assignments                        : {}", self.max_unsat_assignments)?;
+        writeln!(f, "Atoms per constraint                         : {}", self.amount_atoms_per_constraint)?;
+        writeln!(f, "Max unsat assignments for a single constraint: {}", self.max_unsat_for_single_constraint)?;
+        writeln!(f, "Coefficient range                            : -{}..{}", self.coeff_range, self.coeff_range)?;
+        writeln!(f, "Lower bound for RHS of constraint            : {}", self.lower_bound_degree)?;
+          write!(f, "Upper bound for RHS of constraint            : {}", self.upper_bound_degree)
+    }
+}
+
 /// Builder to create Settings for the fuzzer
 ///
 /// Defaults:
@@ -208,7 +220,6 @@ pub struct GeneratorSettingsBuilder {
     upper_bound_degree: f64,
 }
 
-#[allow(dead_code)]
 impl GeneratorSettingsBuilder {
     pub fn new(max_vars: u32) -> Self {
         let coeff_range = 3;
@@ -338,9 +349,9 @@ impl PBSGenerator {
 
 #[test]
 fn test_statistics() {
-    use crate::grammar::domain::{Atom, Comparison};
-    use crate::grammar::constraint::ThreeAtomConstraint;
     use crate::grammar::constraint::CostraintWithUnsatAssignments;
+    use crate::grammar::constraint::ThreeAtomConstraint;
+    use crate::grammar::domain::{Atom, Comparison};
     let atoms1 = [Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
     let atoms2 = [Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
     let atoms3 = [Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
@@ -353,8 +364,10 @@ fn test_statistics() {
         .iter()
         .map(|c| c.amount_unsat_assignments() as u64)
         .sum();
-    let constraints: Vec<Box<dyn Constraint>> =
-        constraints.into_iter().map(|a| Box::new(a) as Box<dyn Constraint>).collect();
+    let constraints: Vec<Box<dyn Constraint>> = constraints
+        .into_iter()
+        .map(|a| Box::new(a) as Box<dyn Constraint>)
+        .collect();
     let grammar = PBSGrammar::new(42, unsat_assignments, 4, constraints);
     let stats = grammar.get_statistics();
     assert_eq!(stats.amount_vars, 4);

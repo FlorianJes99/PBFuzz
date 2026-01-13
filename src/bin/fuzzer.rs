@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::BufWriter;
 
+use fuzzer_pseudo_bool::grammar::helpers::print_block;
 use fuzzer_pseudo_bool::grammar::pbs_generator::GeneratorSettingsBuilder;
 use fuzzer_pseudo_bool::grammar::pbs_generator::PBSGenerator;
 use log::error;
@@ -46,7 +47,7 @@ fn main() {
         .build();
     let mut grammar = PBSGenerator::create_grammar(args.seed, settings);
     if args.print_statistics {
-        println!("{}", grammar.get_statistics());
+        print_block("Grammar Statistics", grammar.get_statistics());
     }
     let output_path = &args.output_path;
     let write_result = File::create(output_path)

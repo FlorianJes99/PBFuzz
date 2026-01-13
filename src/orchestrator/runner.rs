@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     fs::File,
-    io::BufWriter,
+    io::{BufWriter, Write},
     ops::Range,
     path::PathBuf,
     process::{Command, Output},
@@ -10,7 +10,10 @@ use std::{
 
 use rand;
 
-use crate::grammar::pbs_generator::{GeneratorSettingsBuilder, PBSGenerator};
+use crate::grammar::{
+    helpers::print_block,
+    pbs_generator::{GeneratorSettings, GeneratorSettingsBuilder, PBSGenerator},
+};
 
 pub fn run_orchestrator(mut input: OrchestratorInput) {
     let output_file = input.fuzzer_output_dir.join("test.opb");
@@ -22,30 +25,27 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
 
     let mut stats = Stats::new();
 
-    let settings = GeneratorSettingsBuilder::new(50)
+    let settings = GeneratorSettingsBuilder::new(100)
         .max_unsat_for_single_constraint(3)
-        .max_unsat_assignments(170)
-        .coeff_range(5)
+        .max_unsat_assignments(320)
+        .coeff_range(100)
         .build();
     let percentage_range_sat = 0.25..0.7;
     for counter in 1..=input.iterations {
-        if counter == 1000 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
+        if counter == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
             // terminate early if amount sat instances not in range
             // and more than 1000 iterations are scheduled
             println!("Terminating early!");
             println!(
-                "Percentage SAT Instances not in range {:#?}",
-                percentage_range_sat
+                "Percentage SAT Instances not in range ({}..{})",
+                percentage_range_sat.start, percentage_range_sat.end
             );
             break;
         }
 
         let seed = rand::random();
 
-        println!("========================================");
-        println!("Iteration {counter}");
-        println!("========================================");
-        println!("");
+        print_block("", format!("Iteration {counter}"));
         println!("Running Fuzzer with seed {seed}...");
         let mut grammar = PBSGenerator::create_grammar(seed, settings);
         let write_result = File::create(&output_file)
@@ -99,8 +99,14 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
         stats.update(&status);
     }
 
+    let res = save_settings(&settings, &input.fuzzer_output_dir);
+    if let std::io::Result::Err(e) = res {
+        println!("Could not save settings!\n Error: {}", e)
+    }
+    // print out settings
+    print_block("Settings", settings);
     // print out stats
-    println!("{stats}")
+    print_block("Run Statistics", stats);
 }
 
 fn run_external_programm(
@@ -207,33 +213,46 @@ impl Stats {
 
 impl Display for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "===============Statistics===============")?;
         writeln!(
             f,
-            "Total amount of instances generated: {}",
+            "Total amount of instances generated      : {}",
             self.amount_runs()
         )?;
-        writeln!(f, "Generated amount of SAT instances: {}", self.amount_sat)?;
         writeln!(
             f,
-            "Generated amount of UNSAT instances: {}",
+            "Generated amount of SAT instances        : {}",
+            self.amount_sat
+        )?;
+        writeln!(
+            f,
+            "Generated amount of UNSAT instances      : {}",
             self.amount_unsat
         )?;
         writeln!(
             f,
-            "Generated amount of unknown instances: {}",
+            "Generated amount of unknown instances    : {}",
             self.amount_unknown
         )?;
-        writeln!(f, "Percentage SAT: {}", self.percentage_sat())?;
-        let program_duration = Instant::now().duration_since(self.start);
         writeln!(
             f,
-            "Duration of program: {}.{:.3}s",
+            "Percentage SAT                           : {}",
+            self.percentage_sat()
+        )?;
+        let program_duration = Instant::now().duration_since(self.start);
+        write!(
+            f,
+            "Duration of program                      : {}.{:.3}s",
             program_duration.as_secs(),
             program_duration.subsec_millis()
-        )?;
-        writeln!(f, "========================================")
+        )
     }
+}
+
+fn save_settings(settings: &GeneratorSettings, dir: &PathBuf) -> std::io::Result<()> {
+    let json = serde_json::to_string_pretty(settings)?;
+    let file_name = dir.join("settings.json");
+    let mut file = File::create(file_name)?;
+    file.write_all(json.as_bytes())
 }
 
 struct ProgramExecutionFailed {
