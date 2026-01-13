@@ -4,7 +4,7 @@ use std::i64;
 
 use crate::grammar::{
     constraint::{
-        ArbitraryLengthConstraint, CardinalityConstraint, Constraint, ThreeAtomConstraint,
+        ArbitraryLengthConstraint, CardinalityConstraint, Constraint, CostraintWithUnsatAssignments, ThreeAtomConstraint
     },
     domain::{AtomIdent, Comparison},
 };
@@ -66,10 +66,21 @@ impl ConstraintSettings {
 }
 
 impl ConstraintGenerator {
-    pub fn generate_constraint(&mut self, ct: ConstraintKind) -> Box<dyn Constraint> {
+    pub fn generate_random(&mut self) -> Box<dyn CostraintWithUnsatAssignments> {
+        if self.rand.random_bool(0.5) {
+            Box::new(self.generate_three_atom())
+        } else {
+            Box::new(self.generate_cardinality(10))
+        }
+    }
+    fn generate_constraint(&mut self, ct: ConstraintKind) -> Box<dyn Constraint> {
         match ct {
-            ConstraintKind::Generic {constraint_length: n } => Box::new(self.generate_generic(n)),
-            ConstraintKind::Cardinality { constraint_length: n } => Box::new(self.generate_cardinality(n)),
+            ConstraintKind::Generic {
+                constraint_length: n,
+            } => Box::new(self.generate_generic(n)),
+            ConstraintKind::Cardinality {
+                constraint_length: n,
+            } => Box::new(self.generate_cardinality(n)),
             ConstraintKind::ThreeAtom => Box::new(self.generate_three_atom()),
         }
     }
@@ -78,10 +89,19 @@ impl ConstraintGenerator {
         todo!()
     }
 
-    fn generate_cardinality(&mut self, length: u32) -> CardinalityConstraint {
-        let ids = self.get_n_ids_sorted(length.try_into().expect("Failure while converting u32 to usize"));
+    pub fn generate_cardinality(&mut self, length: u32) -> CardinalityConstraint {
+        let ids = self.get_n_ids_sorted(
+            length
+                .try_into()
+                .expect("Failure while converting u32 to usize"),
+        );
+        assert!(ids.len() as u32 == length);
         let atoms = ids.iter().map(|id| id.to_atom(1)).collect();
-        let degree = self.rand.random_range(1..length) as i64;
+        let degree = self
+            .rand
+            .random_range(1..=length)
+            .try_into()
+            .expect("Length of constraint should always fit into i64");
         CardinalityConstraint::new(atoms, Comparison::GrEqual, degree)
             .expect("Builder should ensure correct constraint initalisation")
     }
@@ -142,12 +162,13 @@ impl ConstraintGenerator {
     fn get_n_ids_sorted(&mut self, n: usize) -> Vec<AtomIdent> {
         index::sample(&mut self.rand, self.settings.max_vars as usize, n)
             .iter()
-            .map(|i| {
-                AtomIdent::new(
-                    i.try_into()
-                        .expect("Error while converting usize to u32 for atom identifier"),
-                )
+            .map(|x| {
+                // add +1 because we want ids from 1..=len and sample are from 0..len
+                (x + 1)
+                    .try_into()
+                    .expect("Error while converting usize to u32 for atom identifier")
             })
+            .map(|i| AtomIdent::new(i))
             .sorted()
             .collect()
     }

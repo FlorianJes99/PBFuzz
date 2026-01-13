@@ -2,6 +2,7 @@ use std::{
     fmt::Display,
     fs::File,
     io::BufWriter,
+    ops::Range,
     path::PathBuf,
     process::{Command, Output},
     time::Instant,
@@ -26,12 +27,16 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
         .max_unsat_assignments(170)
         .coeff_range(5)
         .build();
+    let percentage_range_sat = 0.25..0.7;
     for counter in 1..=input.iterations {
-        if counter == 1000 && stats.is_sat_percentage_below(0.25) {
-            // terminate early if amount sat instances below 25%
+        if counter == 1000 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
+            // terminate early if amount sat instances not in range
             // and more than 1000 iterations are scheduled
             println!("Terminating early!");
-            println!("Percentage SAT Instances below 25%");
+            println!(
+                "Percentage SAT Instances not in range {:#?}",
+                percentage_range_sat
+            );
             break;
         }
 
@@ -195,8 +200,8 @@ impl Stats {
         self.amount_sat as f32 / self.amount_runs() as f32
     }
 
-    fn is_sat_percentage_below(&self, threshold: f32) -> bool {
-        self.percentage_sat() < threshold
+    fn is_sat_percentage_in_range(&self, range: &Range<f32>) -> bool {
+        range.contains(&self.percentage_sat())
     }
 }
 

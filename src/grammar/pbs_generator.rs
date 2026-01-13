@@ -1,5 +1,5 @@
 use crate::grammar::{
-    constraint::{Constraint, ConstraintMetrics, ThreeAtomConstraint},
+    constraint::{Constraint},
     constraint_generator::{ConstraintGenerator, ConstraintSettings},
     domain::AtomIdent,
 };
@@ -14,13 +14,12 @@ use std::{
 use rand::{SeedableRng, rngs::StdRng};
 
 /// Pseudo Boolean grammar
-#[derive(Debug)]
 pub struct PBSGrammar {
     seed: u64,
     amount_vars: u32,
     amount_constraints: u32,
     amount_unsat_assignments: u64,
-    constraints: Vec<ThreeAtomConstraint>,
+    constraints: Vec<Box<dyn Constraint>>,
 }
 
 #[derive(Clone, Copy)]
@@ -76,7 +75,7 @@ impl PBSGrammar {
         seed: u64,
         amount_unsat_assignments: u64,
         amount_distinct_vars: u32,
-        constraints: Vec<ThreeAtomConstraint>,
+        constraints: Vec<Box<dyn Constraint>>,
     ) -> Self {
         let amount_constraints = constraints
             .len()
@@ -213,7 +212,7 @@ pub struct GeneratorSettingsBuilder {
 impl GeneratorSettingsBuilder {
     pub fn new(max_vars: u32) -> Self {
         let coeff_range = 3;
-        let amount_atoms_per_constraint = 3;
+        let amount_atoms_per_constraint = 50;
         let max_unsat_for_single_constraint = 5;
         let lower_bound_degree = 0.3;
         let upper_bound_degree = 0.5;
@@ -308,10 +307,10 @@ impl PBSGenerator {
             max_unsat_assignments
         );
         let mut current_unsat = 0;
-        let mut constraints = vec![];
+        let mut constraints: Vec<Box<dyn Constraint>> = vec![];
         let mut highest_atom_id: Option<AtomIdent> = Option::None;
         while current_unsat < max_unsat_assignments {
-            let c = self.constraint_generator.generate_three_atom();
+            let c = self.constraint_generator.generate_random();
             for a in c.atoms() {
                 highest_atom_id =
                     Some(highest_atom_id.map_or(a.atom_id, |current| current.max(a.atom_id)));
@@ -332,25 +331,6 @@ impl PBSGenerator {
             .try_into()
             .expect("We should never try to create programs with more than 2**32 vars");
 
-        // if highest_atom_id.is_some_and(|id| id.literal_id() > amount_distinct_vars) {
-        //     // remap constraint indices to always be in range of (1..max_distinct_vars)
-        //     // this problem can occur when sampling too few vars from the given range
-        //     let mut remappings: HashMap<AtomIdent, AtomIdent> = HashMap::new();
-        //     let mut new_atom_id = 1;
-        //     for c in &mut constraints {
-        //         for a in c.atoms_mut() {
-        //             let current_id = a.atom_id;
-        //             if !remappings.contains_key(&current_id) {
-        //                 remappings.insert(current_id, AtomIdent::new(new_atom_id));
-        //                 new_atom_id += 1;
-        //             }
-        //             let new_id = remappings
-        //                 .get(&current_id)
-        //                 .expect("The id needs to be already remapped here");
-        //             a.atom_id = *new_id;
-        //         }
-        //     }
-        // }
         info!("Generated {} constraints!", constraints.len());
         PBSGrammar::new(self.seed, current_unsat, amount_distinct_vars, constraints)
     }
@@ -359,6 +339,8 @@ impl PBSGenerator {
 #[test]
 fn test_statistics() {
     use crate::grammar::domain::{Atom, Comparison};
+    use crate::grammar::constraint::ThreeAtomConstraint;
+    use crate::grammar::constraint::CostraintWithUnsatAssignments;
     let atoms1 = [Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
     let atoms2 = [Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
     let atoms3 = [Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
@@ -371,6 +353,8 @@ fn test_statistics() {
         .iter()
         .map(|c| c.amount_unsat_assignments() as u64)
         .sum();
+    let constraints: Vec<Box<dyn Constraint>> =
+        constraints.into_iter().map(|a| Box::new(a) as Box<dyn Constraint>).collect();
     let grammar = PBSGrammar::new(42, unsat_assignments, 4, constraints);
     let stats = grammar.get_statistics();
     assert_eq!(stats.amount_vars, 4);

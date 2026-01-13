@@ -2,3 +2,7 @@ target/
 out/
 important_findings/
 software/
+
+# cargo flamegraph ignores
+flamegraph.svg
+perf.*

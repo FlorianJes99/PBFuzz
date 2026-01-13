@@ -43,7 +43,7 @@ pub trait Constraint: Display {
     }
 }
 
-pub trait ConstraintMetrics {
+pub trait CostraintWithUnsatAssignments: Constraint {
     fn amount_unsat_assignments(&self) -> u128;
 }
 
@@ -138,7 +138,7 @@ impl Constraint for ThreeAtomConstraint {
     }
 }
 
-impl ConstraintMetrics for ThreeAtomConstraint {
+impl CostraintWithUnsatAssignments for ThreeAtomConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
         self.unsat_count_three_atoms() as u128
     }
@@ -238,7 +238,7 @@ impl Constraint for CardinalityConstraint {
     }
 }
 
-impl ConstraintMetrics for CardinalityConstraint {
+impl CostraintWithUnsatAssignments for CardinalityConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
         let amount_vars = self.atoms().len() as u64;
         let degree = self.degree() as u64;
