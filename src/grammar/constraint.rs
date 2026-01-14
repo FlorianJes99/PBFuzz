@@ -1,5 +1,6 @@
 use crate::grammar::domain::Atom;
 use crate::grammar::domain::Comparison;
+use std::cell::OnceCell;
 use std::fmt::Display;
 
 /// Constraint trait for different types of constraints in a PBS/PBO grammar.
@@ -11,6 +12,7 @@ pub trait Constraint: Display {
     fn atoms(&self) -> &[Atom];
     fn comparison(&self) -> &Comparison;
     fn degree(&self) -> i64;
+    fn kind(&self) -> ConstraintKind;
 
     /// checks if a value satisfies the degree of the constraint
     /// this depends on the comparison operator of the constraint.
@@ -43,6 +45,23 @@ pub trait Constraint: Display {
     }
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Hash)]
+pub enum ConstraintKind {
+    ArbitraryLength,
+    ThreeAtom,
+    Cardinality,
+}
+
+impl Display for ConstraintKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstraintKind::ArbitraryLength => write!(f, "Arbitrary Length"),
+            ConstraintKind::ThreeAtom => write!(f, "Three Atom"),
+            ConstraintKind::Cardinality => write!(f, "Cardinality"),
+        }
+    }
+}
+
 pub trait CostraintWithUnsatAssignments: Constraint {
     fn amount_unsat_assignments(&self) -> u128;
 }
@@ -64,6 +83,8 @@ pub struct ThreeAtomConstraint {
     atoms: [Atom; 3],
     comparison: Comparison,
     degree: i64,
+    // lazy init this when first needed, can be expensive to compute
+    amount_unsat: OnceCell<u128>,
 }
 
 /// Cardinality constraints are a special type of constraint, where every coefficient of an atom needs to be 1
@@ -71,6 +92,8 @@ pub struct CardinalityConstraint {
     atoms: Vec<Atom>,
     comparison: Comparison,
     degree: i64,
+    // lazy init this when first needed, can be expensive to compute
+    amount_unsat: OnceCell<u128>,
 }
 
 impl Constraint for ArbitraryLengthConstraint {
@@ -84,6 +107,10 @@ impl Constraint for ArbitraryLengthConstraint {
 
     fn degree(&self) -> i64 {
         self.degree
+    }
+
+    fn kind(&self) -> ConstraintKind {
+        ConstraintKind::ArbitraryLength
     }
 }
 
@@ -136,11 +163,19 @@ impl Constraint for ThreeAtomConstraint {
     fn degree(&self) -> i64 {
         self.degree
     }
+
+    fn kind(&self) -> ConstraintKind {
+        ConstraintKind::ThreeAtom
+    }
 }
 
 impl CostraintWithUnsatAssignments for ThreeAtomConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
-        self.unsat_count_three_atoms() as u128
+        *self.amount_unsat.get_or_init(|| {
+            self.unsat_count_three_atoms()
+                .try_into()
+                .expect("Should able to widen u32 into u128")
+        })
     }
 }
 
@@ -185,6 +220,7 @@ impl ThreeAtomConstraint {
             atoms,
             comparison,
             degree,
+            amount_unsat: OnceCell::new(),
         }
     }
 
@@ -216,6 +252,7 @@ impl CardinalityConstraint {
             atoms,
             comparison,
             degree,
+            amount_unsat: OnceCell::new(),
         };
         if !c.is_solvable() {
             return Err("A constraint on itself needs to be solvable".to_string());
@@ -236,17 +273,23 @@ impl Constraint for CardinalityConstraint {
     fn degree(&self) -> i64 {
         self.degree
     }
+
+    fn kind(&self) -> ConstraintKind {
+        ConstraintKind::Cardinality
+    }
 }
 
 impl CostraintWithUnsatAssignments for CardinalityConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
-        let amount_vars = self.atoms().len() as u64;
-        let degree = self.degree() as u64;
-        if degree == 0 {
-            return 0;
-        }
+        *self.amount_unsat.get_or_init(|| {
+            let amount_vars = self.atoms().len() as u64;
+            let degree = self.degree() as u64;
+            if degree == 0 {
+                return 0;
+            }
 
-        (0..degree).fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
+            (0..degree).fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
+        })
     }
 }
 

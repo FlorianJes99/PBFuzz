@@ -27,7 +27,7 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
 
     let settings = GeneratorSettingsBuilder::new(100)
         .max_unsat_for_single_constraint(3)
-        .max_unsat_assignments(320)
+        .max_unsat_assignments(2500000)
         .coeff_range(100)
         .build();
     let percentage_range_sat = 0.25..0.7;

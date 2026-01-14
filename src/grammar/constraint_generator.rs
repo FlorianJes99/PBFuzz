@@ -3,18 +3,9 @@ use rand::{Rng, rngs::StdRng, seq::index};
 use std::i64;
 
 use crate::grammar::{
-    constraint::{
-        ArbitraryLengthConstraint, CardinalityConstraint, Constraint, CostraintWithUnsatAssignments, ThreeAtomConstraint
-    },
+    constraint::{CardinalityConstraint, CostraintWithUnsatAssignments, ThreeAtomConstraint},
     domain::{AtomIdent, Comparison},
 };
-
-#[derive(Debug)]
-pub enum ConstraintKind {
-    Generic { constraint_length: u32 },
-    Cardinality { constraint_length: u32 },
-    ThreeAtom,
-}
 
 #[derive(Debug)]
 pub struct ConstraintGenerator {
@@ -68,25 +59,19 @@ impl ConstraintSettings {
 impl ConstraintGenerator {
     pub fn generate_random(&mut self) -> Box<dyn CostraintWithUnsatAssignments> {
         if self.rand.random_bool(0.5) {
-            Box::new(self.generate_three_atom())
+            let mut c = self.generate_three_atom();
+            // assert we always return a constraint which fullfils max unsat assignments requirement
+            while c.amount_unsat_assignments()
+                > self.settings.max_unsat_for_single_constraint.into()
+            {
+                c = self.generate_three_atom();
+            }
+            Box::new(c)
         } else {
-            Box::new(self.generate_cardinality(10))
+            let amount_atoms = self.rand.random_range(5..=20);
+            let c = self.generate_cardinality(amount_atoms);
+            Box::new(c)
         }
-    }
-    fn generate_constraint(&mut self, ct: ConstraintKind) -> Box<dyn Constraint> {
-        match ct {
-            ConstraintKind::Generic {
-                constraint_length: n,
-            } => Box::new(self.generate_generic(n)),
-            ConstraintKind::Cardinality {
-                constraint_length: n,
-            } => Box::new(self.generate_cardinality(n)),
-            ConstraintKind::ThreeAtom => Box::new(self.generate_three_atom()),
-        }
-    }
-
-    fn generate_generic(&mut self, length: u32) -> ArbitraryLengthConstraint {
-        todo!()
     }
 
     pub fn generate_cardinality(&mut self, length: u32) -> CardinalityConstraint {
@@ -159,6 +144,7 @@ impl ConstraintGenerator {
         }
     }
 
+    /// Generate n ids to use for creation of atoms in a single constraint
     fn get_n_ids_sorted(&mut self, n: usize) -> Vec<AtomIdent> {
         index::sample(&mut self.rand, self.settings.max_vars as usize, n)
             .iter()
@@ -173,6 +159,7 @@ impl ConstraintGenerator {
             .collect()
     }
 
+    /// Methods specifically design for ThreeAtomConstraints
     fn get_three_ids_sorted(&mut self) -> [AtomIdent; 3] {
         let mut ids: [AtomIdent; 3] =
             index::sample_array(&mut self.rand, self.settings.max_vars as usize)

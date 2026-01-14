@@ -1,5 +1,5 @@
 use crate::grammar::{
-    constraint::Constraint,
+    constraint::{Constraint, ConstraintKind},
     constraint_generator::{ConstraintGenerator, ConstraintSettings},
     domain::AtomIdent,
 };
@@ -43,6 +43,7 @@ impl Display for OccurenceWithId {
 /// Container for various statistics about the generated grammar
 pub struct GrammarStatistics {
     amount_constraints: u32,
+    amount_constraints_by_kind: HashMap<ConstraintKind, usize>,
     amount_vars: u32,
     total_var_occurences: u32,
     max_occurence: OccurenceWithId,
@@ -53,17 +54,32 @@ pub struct GrammarStatistics {
 impl Display for GrammarStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
-        writeln!(f, "* Amount constraints             : {}", self.amount_constraints)?;
         writeln!(
             f,
-            "* Total amount of used vars              : {}",
+            "* Amount constraints: {}",
+            self.amount_constraints
+        )?;
+        for (k, v) in &self.amount_constraints_by_kind {
+            writeln!(f, "* Amount constraints of type {k}: {v}")?;
+        }
+        writeln!(
+            f,
+            "* Total amount of used vars: {}",
             self.total_var_occurences
         )?;
-        writeln!(f, "* Max occurence of a var         : {}", self.max_occurence)?;
-        writeln!(f, "* Min occurence of a var         : {}", self.min_occurence)?;
+        writeln!(
+            f,
+            "* Max occurence of a var: {}",
+            self.max_occurence
+        )?;
+        writeln!(
+            f,
+            "* Min occurence of a var: {}",
+            self.min_occurence
+        )?;
         write!(
             f,
-            "* Average occurences of vars             : {}",
+            "* Average occurences of vars: {}",
             self.average_occurence
         )
     }
@@ -143,8 +159,10 @@ impl PBSGrammar {
             sum += occurences;
         }
         let average = sum as f32 / occurences_per_var.len() as f32;
+        let amount_constraints_by_kind = self.constraints.iter().counts_by(|v| v.kind());
         GrammarStatistics {
             amount_constraints: self.amount_constraints,
+            amount_constraints_by_kind,
             amount_vars: self.amount_vars,
             total_var_occurences: sum,
             max_occurence: max.expect("There should always be a var which occurs the most"),
@@ -190,13 +208,41 @@ pub struct GeneratorSettings {
 impl Display for GeneratorSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Used Settings for Generator:")?;
-        writeln!(f, "Max used vars                                : {}", self.max_vars)?;
-        writeln!(f, "Max unsat assignments                        : {}", self.max_unsat_assignments)?;
-        writeln!(f, "Atoms per constraint                         : {}", self.amount_atoms_per_constraint)?;
-        writeln!(f, "Max unsat assignments for a single constraint: {}", self.max_unsat_for_single_constraint)?;
-        writeln!(f, "Coefficient range                            : -{}..{}", self.coeff_range, self.coeff_range)?;
-        writeln!(f, "Lower bound for RHS of constraint            : {}", self.lower_bound_degree)?;
-          write!(f, "Upper bound for RHS of constraint            : {}", self.upper_bound_degree)
+        writeln!(
+            f,
+            "Max used vars                                : {}",
+            self.max_vars
+        )?;
+        writeln!(
+            f,
+            "Max unsat assignments                        : {}",
+            self.max_unsat_assignments
+        )?;
+        writeln!(
+            f,
+            "Atoms per constraint                         : {}",
+            self.amount_atoms_per_constraint
+        )?;
+        writeln!(
+            f,
+            "Max unsat assignments for a single constraint: {}",
+            self.max_unsat_for_single_constraint
+        )?;
+        writeln!(
+            f,
+            "Coefficient range                            : -{}..{}",
+            self.coeff_range, self.coeff_range
+        )?;
+        writeln!(
+            f,
+            "Lower bound for RHS of constraint            : {}",
+            self.lower_bound_degree
+        )?;
+        write!(
+            f,
+            "Upper bound for RHS of constraint            : {}",
+            self.upper_bound_degree
+        )
     }
 }
 
@@ -327,10 +373,8 @@ impl PBSGenerator {
                     Some(highest_atom_id.map_or(a.atom_id, |current| current.max(a.atom_id)));
             }
             let unsat_for_c = c.amount_unsat_assignments();
-            if unsat_for_c <= self.settings.max_unsat_for_single_constraint.into() {
-                current_unsat += unsat_for_c as u64;
-                constraints.push(c);
-            }
+            current_unsat += unsat_for_c as u64;
+            constraints.push(c);
         }
 
         let amount_distinct_vars = constraints
