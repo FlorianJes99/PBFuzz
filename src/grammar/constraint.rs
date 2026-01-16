@@ -245,7 +245,7 @@ impl CardinalityConstraint {
     pub fn new(atoms: Vec<Atom>, comparison: Comparison, degree: i64) -> Result<Self, String> {
         if atoms.iter().find(|a| a.coeff != 1).is_some() {
             return Err(
-                "All coefficients of a CardinalityConstraint need to be either 1".to_string(),
+                "All coefficients of a CardinalityConstraint need to be 1".to_string(),
             );
         }
         let c = Self {
@@ -316,7 +316,15 @@ fn amount_unsat() {
 
     let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
     let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
-    assert_eq!(c.unsat_count_three_atoms(), 1)
+    assert_eq!(c.unsat_count_three_atoms(), 1);
+
+    let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
+    let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 2).expect("Test method");
+    assert_eq!(c.amount_unsat_assignments(), 4);
+
+    let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
+    let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 1).expect("Test method");
+    assert_eq!(c.amount_unsat_assignments(), 1)
 }
 
 #[test]
