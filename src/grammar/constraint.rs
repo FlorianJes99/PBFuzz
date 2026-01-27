@@ -8,6 +8,11 @@ use std::fmt::Display;
 /// atoms: a reference to a array slice of atoms.
 /// comparison: the comparison operator used in this constraint.
 /// degree: rhs value, for which we are solving the constraint.
+///
+/// Constraint is a combination of atoms, comparison operator and a degree
+///
+/// The degree should always be in bound of the atoms max and min assignment.
+/// Otherwise, a Constraint itself makes the problem instantly unsat.
 pub trait Constraint: Display {
     fn atoms(&self) -> &[Atom];
     fn comparison(&self) -> &Comparison;
@@ -66,11 +71,6 @@ pub trait CostraintWithUnsatAssignments: Constraint {
     fn amount_unsat_assignments(&self) -> u128;
 }
 
-/// Constraint is a combination of atoms, comparison operator and a degree
-///
-/// The degree should always be in bound of the atoms max and min assignment.
-/// Otherwise a Constraint itself makes the problem instantly unsat.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ArbitraryLengthConstraint {
     atoms: Vec<Atom>,
@@ -114,7 +114,6 @@ impl Constraint for ArbitraryLengthConstraint {
     }
 }
 
-#[allow(dead_code)]
 impl ArbitraryLengthConstraint {
     /// Construct a new constraints object with arbitrary length.
     ///

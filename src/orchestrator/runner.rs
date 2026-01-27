@@ -25,12 +25,13 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
 
     let mut stats = Stats::new();
 
-    let settings = GeneratorSettingsBuilder::new(100)
+    let cancel_condition = CancelCondition::CountConstraints {
+        max_constraints: 75,
+    };
+    let settings = GeneratorSettingsBuilder::new(50)
         .max_unsat_for_single_constraint(3)
-        .cancel_condition(CancelCondition::CountUnsat {
-            max_unsat_assignments: 2500000,
-        })
-        .coeff_range(100)
+        .cancel_condition(cancel_condition)
+        .coeff_range(200)
         .build();
     let percentage_range_sat = 0.25..0.7;
     for counter in 1..=input.iterations {

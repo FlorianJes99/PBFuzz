@@ -19,7 +19,7 @@ pub struct PBSGrammar {
     seed: u64,
     amount_vars: u32,
     amount_constraints: u32,
-    amount_unsat_assignments: u64,
+    amount_unsat_assignments: Option<u64>,
     constraints: Vec<Box<dyn Constraint>>,
 }
 
@@ -76,7 +76,7 @@ impl Display for GrammarStatistics {
 impl PBSGrammar {
     fn new(
         seed: u64,
-        amount_unsat_assignments: u64,
+        amount_unsat_assignments: Option<u64>,
         amount_distinct_vars: u32,
         constraints: Vec<Box<dyn Constraint>>,
     ) -> Self {
@@ -106,11 +106,9 @@ impl PBSGrammar {
             self.amount_vars, self.amount_constraints, amount_equal_constraints
         )?;
         writeln!(writer, "* Used seed: {}", self.seed)?;
-        writeln!(
-            writer,
-            "* UNSAT assignments: {}",
-            self.amount_unsat_assignments
-        )?;
+        if let Some(n) = self.amount_unsat_assignments {
+            writeln!(writer, "* UNSAT assignments: {}", n)?;
+        }
         writeln!(writer, "{}", self.get_statistics())?;
 
         // write every constraint into the buffer
@@ -370,37 +368,36 @@ impl PBSGenerator {
 
     fn random_grammar(&mut self) -> PBSGrammar {
         let cancel_condition = self.settings.cancel_condition;
+        let mut constraints: Vec<Box<dyn Constraint>> = vec![];
+        let mut unsat_assignments = Option::None;
         match cancel_condition {
             CancelCondition::CountUnsat {
                 max_unsat_assignments,
-            } => info!(
-                "Generating a maximum of {} unsat assignments",
-                max_unsat_assignments
-            ),
-            CancelCondition::CountConstraints { max_constraints } => {
-                info!("Generating {} constraints", max_constraints)
-            }
-        };
-        let mut current_unsat = 0;
-        let mut constraints: Vec<Box<dyn Constraint>> = vec![];
-        loop {
-            match cancel_condition {
-                CancelCondition::CountUnsat {
-                    max_unsat_assignments,
-                } if current_unsat >= max_unsat_assignments => break,
-                CancelCondition::CountConstraints { max_constraints }
-                    if constraints.len() as u64 >= max_constraints =>
-                {
-                    break;
-                }
-                _ => {
-                    let c = self.constraint_generator.generate_random();
+            } => {
+                info!(
+                    "Generating a maximum of {} unsat assignments",
+                    max_unsat_assignments
+                );
+                let mut current_unsat = 0;
+                while current_unsat <= max_unsat_assignments {
+                    let c = self
+                        .constraint_generator
+                        .generate_random_constraint_with_unsat_count();
                     let unsat_for_c = c.amount_unsat_assignments();
                     current_unsat += unsat_for_c as u64;
                     constraints.push(c);
                 }
+                unsat_assignments = Option::Some(current_unsat);
             }
-        }
+            CancelCondition::CountConstraints { max_constraints } => {
+                info!("Generating {} constraints", max_constraints);
+                for _ in 0..max_constraints {
+                    let c = self.constraint_generator.generate_random_constraint();
+                    constraints.push(c);
+                }
+                assert_eq!(max_constraints, constraints.len() as u64)
+            }
+        };
 
         let amount_distinct_vars = constraints
             .iter()
@@ -412,7 +409,7 @@ impl PBSGenerator {
             .expect("We should never try to create programs with more than 2**32 vars");
 
         info!("Generated {} constraints!", constraints.len());
-        PBSGrammar::new(self.seed, current_unsat, amount_distinct_vars, constraints)
+        PBSGrammar::new(self.seed, unsat_assignments, amount_distinct_vars, constraints)
     }
 }
 
@@ -429,10 +426,10 @@ fn test_statistics() {
         ThreeAtomConstraint::new(atoms2, Comparison::GrEqual, 5),
         ThreeAtomConstraint::new(atoms3, Comparison::GrEqual, 5),
     ];
-    let unsat_assignments = constraints
+    let unsat_assignments = Option::Some(constraints
         .iter()
         .map(|c| c.amount_unsat_assignments() as u64)
-        .sum();
+        .sum());
     let constraints: Vec<Box<dyn Constraint>> = constraints
         .into_iter()
         .map(|a| Box::new(a) as Box<dyn Constraint>)
