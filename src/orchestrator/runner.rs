@@ -9,6 +9,7 @@ use std::{
 };
 
 use rand;
+use regex::Regex;
 
 use crate::grammar::{
     helpers::print_block,
@@ -26,9 +27,9 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
     let mut stats = Stats::new();
 
     let cancel_condition = CancelCondition::CountConstraints {
-        max_constraints: 75,
+        max_constraints: 250,
     };
-    let settings = GeneratorSettingsBuilder::new(50)
+    let settings = GeneratorSettingsBuilder::new(200)
         .max_unsat_for_single_constraint(3)
         .cancel_condition(cancel_condition)
         .coeff_range(200)
@@ -118,24 +119,20 @@ fn run_external_programm(
     command
         .exec_command
         .output()
-        .map(handle_command_output)
+        .map(|out| handle_command_output(&mut command.parser, &out))
         .map_err(|err| ProgramExecutionFailed {
             program_name: command.exec_name.clone(),
             error_message: err.to_string(),
         })
 }
 
-fn handle_command_output(output: Output) -> SolverResult {
+fn handle_command_output(parser: &mut OutputParser, output: &Output) -> SolverResult {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut status = SolverStatus::Unknown;
     let mut conflicts = 0;
     for line in stdout.lines() {
         let line = line.trim();
-        if line.contains("UNSATISFIABLE") {
-            status = SolverStatus::Unsat;
-        } else if line.contains("SATISFIABLE") {
-            status = SolverStatus::Sat;
-        } else if line.contains("conflicts") {
+        parser.parse_line(line);
+        if line.contains("conflicts") {
             conflicts = line
                 .split_whitespace()
                 .last()
@@ -143,6 +140,7 @@ fn handle_command_output(output: Output) -> SolverResult {
                 .unwrap_or(0);
         }
     }
+    let status = parser.status;
     SolverResult { status, conflicts }
 }
 
@@ -169,16 +167,42 @@ impl OrchestratorInput {
     }
 }
 
+pub struct OutputParser {
+    status: SolverStatus,
+    reg_sat: Regex,
+    reg_unsat: Regex,
+}
+
+impl OutputParser {
+    pub fn new(reg_sat: Regex, reg_unsat: Regex) -> Self {
+        Self {
+            status: SolverStatus::Unknown,
+            reg_sat,
+            reg_unsat,
+        }
+    }
+
+    fn parse_line(&mut self, line: &str) {
+        if self.reg_unsat.is_match(line) {
+            self.status = SolverStatus::Unsat;
+        } else if self.reg_sat.is_match(line) {
+            self.status = SolverStatus::Sat;
+        }
+    }
+}
+
 pub struct SolverCommand {
     exec_name: String,
     exec_command: Command,
+    parser: OutputParser,
 }
 
 impl SolverCommand {
-    pub fn new(exec_name: String, exec_command: Command) -> Self {
+    pub fn new(exec_name: String, exec_command: Command, parser: OutputParser) -> Self {
         Self {
             exec_name,
             exec_command,
+            parser,
         }
     }
 
@@ -296,7 +320,7 @@ struct SolverResult {
     conflicts: u32,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SolverStatus {
     Sat,
     Unsat,
