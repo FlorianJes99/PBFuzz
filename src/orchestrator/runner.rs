@@ -19,7 +19,7 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
     let output_file = input.fuzzer_output_dir.join("test.opb");
     println!("Writing fuzzer output into {:?}", &output_file);
 
-    // add file to solve to programm command
+    // Add file to solve to program command
     input.command1.set_input_file(&output_file);
     input.command2.set_input_file(&output_file);
 
@@ -33,7 +33,7 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
     let percentage_range_sat = 0.25..0.7;
     for counter in 1..=input.iterations {
         if counter == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
-            // terminate early if amount sat instances not in range
+            // Terminate early if amount sat instances not in range
             // and more than 1000 iterations are scheduled
             println!("Terminating early!");
             println!(
@@ -57,22 +57,22 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
             break;
         }
 
-        let res_program1 = run_external_programm(&mut input.command1);
-        let res_program2 = run_external_programm(&mut input.command2);
-        let status_program1 = match res_program1 {
+        let res_program1 = match run_external_programm(&mut input.command1) {
             Ok(val) => val,
             Err(e) => {
                 println!("{}", e);
                 break;
             }
         };
-        let status_program2 = match res_program2 {
+        let res_program2 = match run_external_programm(&mut input.command2) {
             Ok(val) => val,
             Err(e) => {
                 println!("{}", e);
                 break;
             }
         };
+        let status_program1 = &res_program1.status;
+        let status_program2 = &res_program2.status;
         if status_program2 != status_program1 {
             println!("Status sat4j: {:?}", status_program2);
             println!("Status roundingsat: {:?}", status_program1);
@@ -96,7 +96,7 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
             println!("Could not write to file. Terminating...");
             break;
         }
-        stats.update(&status);
+        stats.update(&res_program1);
     }
 
     let res = save_settings(&settings, &input.fuzzer_output_dir);
@@ -111,7 +111,7 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
 
 fn run_external_programm(
     command: &mut SolverCommand,
-) -> Result<SolverStatus, ProgramExecutionFailed> {
+) -> Result<SolverResult, ProgramExecutionFailed> {
     command
         .exec_command
         .output()
@@ -122,15 +122,25 @@ fn run_external_programm(
         })
 }
 
-fn handle_command_output(output: Output) -> SolverStatus {
+fn handle_command_output(output: Output) -> SolverResult {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.contains("UNSATISFIABLE") {
-        SolverStatus::Unsat
-    } else if stdout.contains("SATISFIABLE") {
-        SolverStatus::Sat
-    } else {
-        SolverStatus::Unknown
+    let mut status = SolverStatus::Unknown;
+    let mut conflicts = 0;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.contains("UNSATISFIABLE") {
+            status = SolverStatus::Unsat;
+        } else if line.contains("SATISFIABLE") {
+            status = SolverStatus::Sat;
+        } else if line.contains("conflicts") {
+            conflicts = line
+                .split_whitespace()
+                .last()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+        }
     }
+    SolverResult { status, conflicts }
 }
 
 pub struct OrchestratorInput {
@@ -178,6 +188,7 @@ struct Stats {
     amount_sat: u32,
     amount_unsat: u32,
     amount_unknown: u32,
+    average_conflicts: f32,
     start: Instant,
 }
 
@@ -187,11 +198,16 @@ impl Stats {
             amount_sat: 0,
             amount_unsat: 0,
             amount_unknown: 0,
+            average_conflicts: 0.0,
             start: Instant::now(),
         }
     }
-    fn update(&mut self, status: &SolverStatus) {
-        match status {
+    fn update(&mut self, result: &SolverResult) {
+        // running average
+        let n = self.amount_runs();
+        self.average_conflicts =
+            (n as f32 * self.average_conflicts + result.conflicts as f32) / (n + 1) as f32;
+        match result.status {
             SolverStatus::Sat => self.amount_sat += 1,
             SolverStatus::Unsat => self.amount_unsat += 1,
             SolverStatus::Unknown => self.amount_unknown += 1,
@@ -238,6 +254,11 @@ impl Display for Stats {
             "Percentage SAT                           : {}",
             self.percentage_sat()
         )?;
+        writeln!(
+            f,
+            "Average conficts to solve                : {}",
+            self.average_conflicts
+        )?;
         let program_duration = Instant::now().duration_since(self.start);
         write!(
             f,
@@ -267,9 +288,54 @@ impl Display for ProgramExecutionFailed {
     }
 }
 
+struct SolverResult {
+    status: SolverStatus,
+    conflicts: u32,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum SolverStatus {
     Sat,
     Unsat,
     Unknown,
+}
+
+#[test]
+fn test_stats() {
+    let mut stats = Stats::new();
+    let res = SolverResult {
+        status: SolverStatus::Sat,
+        conflicts: 4,
+    };
+
+    stats.update(&res);
+    assert_eq!(1, stats.amount_runs());
+    assert_eq!(1, stats.amount_sat);
+    assert_eq!(0, stats.amount_unsat);
+    assert_eq!(0, stats.amount_unknown);
+    assert_float_approx(4.0, stats.average_conflicts, 0.0001);
+
+    let res = SolverResult {
+        status: SolverStatus::Unsat,
+        conflicts: 3,
+    };
+
+    stats.update(&res);
+    assert_eq!(2, stats.amount_runs());
+    assert_eq!(1, stats.amount_sat);
+    assert_eq!(1, stats.amount_unsat);
+    assert_eq!(0, stats.amount_unknown);
+    assert_float_approx(3.5, stats.average_conflicts, 0.0001);
+}
+
+#[cfg(test)]
+fn assert_float_approx(a: f32, b: f32, epsilon: f32) {
+    assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
+    assert!(
+        (a - b).abs() <= epsilon,
+        "Assertion failed, float values {} and {} are not identical (epsilon: {})",
+        a,
+        b,
+        epsilon
+    )
 }
