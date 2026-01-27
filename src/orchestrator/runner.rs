@@ -12,7 +12,7 @@ use rand;
 
 use crate::grammar::{
     helpers::print_block,
-    pbs_generator::{GeneratorSettings, GeneratorSettingsBuilder, PBSGenerator},
+    pbs_generator::{CancelCondition, GeneratorSettings, GeneratorSettingsBuilder, PBSGenerator},
 };
 
 pub fn run_orchestrator(mut input: OrchestratorInput) {
@@ -27,7 +27,9 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
 
     let settings = GeneratorSettingsBuilder::new(100)
         .max_unsat_for_single_constraint(3)
-        .max_unsat_assignments(2500000)
+        .cancel_condition(CancelCondition::CountUnsat {
+            max_unsat_assignments: 2500000,
+        })
         .coeff_range(100)
         .build();
     let percentage_range_sat = 0.25..0.7;

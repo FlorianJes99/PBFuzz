@@ -54,11 +54,7 @@ pub struct GrammarStatistics {
 impl Display for GrammarStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
-        writeln!(
-            f,
-            "* Amount constraints: {}",
-            self.amount_constraints
-        )?;
+        writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
         for (k, v) in &self.amount_constraints_by_kind {
             writeln!(f, "* Amount constraints of type {k}: {v}")?;
         }
@@ -67,16 +63,8 @@ impl Display for GrammarStatistics {
             "* Total amount of used vars: {}",
             self.total_var_occurences
         )?;
-        writeln!(
-            f,
-            "* Max occurence of a var: {}",
-            self.max_occurence
-        )?;
-        writeln!(
-            f,
-            "* Min occurence of a var: {}",
-            self.min_occurence
-        )?;
+        writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
+        writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
         write!(
             f,
             "* Average occurences of vars: {}",
@@ -179,6 +167,31 @@ pub struct PBSGenerator {
     settings: GeneratorSettings,
 }
 
+#[derive(Debug, Copy, Clone, Serialize)]
+pub enum CancelCondition {
+    CountUnsat { max_unsat_assignments: u64 },
+    CountConstraints { max_constraints: u64 },
+}
+
+impl Display for CancelCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CancelCondition::CountUnsat {
+                max_unsat_assignments,
+            } => write!(
+                f,
+                "Max unsat assignments                        : {}",
+                max_unsat_assignments
+            ),
+            CancelCondition::CountConstraints { max_constraints } => write!(
+                f,
+                "Max constraints:                             : {}",
+                max_constraints
+            ),
+        }
+    }
+}
+
 /// This struct holds all possible configuration parameters for the generation of a random grammar
 #[derive(Debug, Copy, Clone, Serialize)]
 pub struct GeneratorSettings {
@@ -186,7 +199,7 @@ pub struct GeneratorSettings {
     max_vars: u32,
     /// threshold for total unsat assignments - this is an upper bound, because unsats can be
     /// duplicates
-    max_unsat_assignments: u64,
+    cancel_condition: CancelCondition,
     /// How many atoms a single constraint should have
     amount_atoms_per_constraint: u32,
     max_unsat_for_single_constraint: u32,
@@ -213,11 +226,7 @@ impl Display for GeneratorSettings {
             "Max used vars                                : {}",
             self.max_vars
         )?;
-        writeln!(
-            f,
-            "Max unsat assignments                        : {}",
-            self.max_unsat_assignments
-        )?;
+        writeln!(f, "{}", self.cancel_condition)?;
         writeln!(
             f,
             "Atoms per constraint                         : {}",
@@ -259,7 +268,7 @@ impl Display for GeneratorSettings {
 pub struct GeneratorSettingsBuilder {
     max_vars: u32,
     max_unsat_for_single_constraint: u32,
-    max_unsat_assignments: u64,
+    cancel_condition: CancelCondition,
     coeff_range: u32,
     amount_atoms_per_constraint: u32,
     lower_bound_degree: f64,
@@ -273,12 +282,14 @@ impl GeneratorSettingsBuilder {
         let max_unsat_for_single_constraint = 5;
         let lower_bound_degree = 0.3;
         let upper_bound_degree = 0.5;
-        let max_unsat_assignments = (max_vars as f32 * 2.4).floor() as u64;
+        let cancel_condition = CancelCondition::CountUnsat {
+            max_unsat_assignments: (max_vars as f32 * 2.4).floor() as u64,
+        };
         // assignment combinations
         Self {
             max_vars,
             max_unsat_for_single_constraint,
-            max_unsat_assignments,
+            cancel_condition,
             coeff_range,
             amount_atoms_per_constraint,
             lower_bound_degree,
@@ -290,7 +301,7 @@ impl GeneratorSettingsBuilder {
         GeneratorSettingsBuilder {
             max_vars: settings.max_vars,
             max_unsat_for_single_constraint: settings.max_unsat_for_single_constraint,
-            max_unsat_assignments: settings.max_unsat_assignments,
+            cancel_condition: settings.cancel_condition,
             coeff_range: settings.coeff_range,
             amount_atoms_per_constraint: settings.amount_atoms_per_constraint,
             lower_bound_degree: settings.lower_bound_degree,
@@ -303,8 +314,8 @@ impl GeneratorSettingsBuilder {
         self
     }
 
-    pub fn max_unsat_assignments(mut self, max: u64) -> Self {
-        self.max_unsat_assignments = max;
+    pub fn cancel_condition(mut self, cancel_condition: CancelCondition) -> Self {
+        self.cancel_condition = cancel_condition;
         self
     }
 
@@ -325,7 +336,7 @@ impl GeneratorSettingsBuilder {
         GeneratorSettings {
             max_vars: self.max_vars,
             max_unsat_for_single_constraint: self.max_unsat_for_single_constraint,
-            max_unsat_assignments: self.max_unsat_assignments,
+            cancel_condition: self.cancel_condition,
             coeff_range: self.coeff_range,
             amount_atoms_per_constraint: self.amount_atoms_per_constraint,
             lower_bound_degree: self.lower_bound_degree,
@@ -358,23 +369,37 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> PBSGrammar {
-        let max_unsat_assignments = self.settings.max_unsat_assignments;
-        info!(
-            "Generating a maximum of {} unsat assignments",
-            max_unsat_assignments
-        );
+        let cancel_condition = self.settings.cancel_condition;
+        match cancel_condition {
+            CancelCondition::CountUnsat {
+                max_unsat_assignments,
+            } => info!(
+                "Generating a maximum of {} unsat assignments",
+                max_unsat_assignments
+            ),
+            CancelCondition::CountConstraints { max_constraints } => {
+                info!("Generating {} constraints", max_constraints)
+            }
+        };
         let mut current_unsat = 0;
         let mut constraints: Vec<Box<dyn Constraint>> = vec![];
-        let mut highest_atom_id: Option<AtomIdent> = Option::None;
-        while current_unsat < max_unsat_assignments {
-            let c = self.constraint_generator.generate_random();
-            for a in c.atoms() {
-                highest_atom_id =
-                    Some(highest_atom_id.map_or(a.atom_id, |current| current.max(a.atom_id)));
+        loop {
+            match cancel_condition {
+                CancelCondition::CountUnsat {
+                    max_unsat_assignments,
+                } if current_unsat >= max_unsat_assignments => break,
+                CancelCondition::CountConstraints { max_constraints }
+                    if constraints.len() as u64 >= max_constraints =>
+                {
+                    break;
+                }
+                _ => {
+                    let c = self.constraint_generator.generate_random();
+                    let unsat_for_c = c.amount_unsat_assignments();
+                    current_unsat += unsat_for_c as u64;
+                    constraints.push(c);
+                }
             }
-            let unsat_for_c = c.amount_unsat_assignments();
-            current_unsat += unsat_for_c as u64;
-            constraints.push(c);
         }
 
         let amount_distinct_vars = constraints

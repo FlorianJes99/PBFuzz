@@ -43,7 +43,11 @@ fn main() {
         .max_unsat_for_single_constraint(3)
         .set_bounds(0.3, 0.6)
         .coeff_range(6)
-        .max_unsat_assignments(250)
+        .cancel_condition(
+            fuzzer_pseudo_bool::grammar::pbs_generator::CancelCondition::CountUnsat {
+                max_unsat_assignments: 250,
+            },
+        )
         .build();
     let mut grammar = PBSGenerator::create_grammar(args.seed, settings);
     if args.print_statistics {
