@@ -24,7 +24,7 @@ pub struct ConstraintGenerator {
 
 impl ConstraintGenerator {
     pub fn new(rand: StdRng, settings: ConstraintSettings) -> Self {
-        let weights = [2, 2, 1];
+        let weights = [45, 45, 10];
         let dist = WeightedIndex::new(weights)
             .expect("We should only create valid distributions, when sampling constraint types");
         Self {
@@ -81,7 +81,7 @@ impl ConstraintGenerator {
                 Box::new(c)
             }
             ConstraintKind::ArbitraryLength => {
-                let atom_len = (self.settings.max_vars as f32 * 0.5).floor() as u32;
+                let atom_len = (self.settings.max_vars as f32 * 0.25).floor() as u32;
                 let c = self.generate_generic(atom_len);
                 Box::new(c)
             }
@@ -139,7 +139,9 @@ impl ConstraintGenerator {
         let atoms = ids.iter().map(|id| id.to_atom(1)).collect();
         let degree = self
             .rand
-            .random_range(1..=length)
+            .random_range(
+                (length as f32 * 0.3).ceil() as u32..=(length as f32 * 0.7).floor() as u32,
+            )
             .try_into()
             .expect("Length of constraint should always fit into i64");
         CardinalityConstraint::new(atoms, Comparison::GrEqual, degree)

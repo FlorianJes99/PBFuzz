@@ -27,9 +27,9 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
     let mut stats = Stats::new();
 
     let cancel_condition = CancelCondition::CountConstraints {
-        max_constraints: 250,
+        max_constraints: 200,
     };
-    let settings = GeneratorSettingsBuilder::new(200)
+    let settings = GeneratorSettingsBuilder::new(100)
         .max_unsat_for_single_constraint(3)
         .cancel_condition(cancel_condition)
         .coeff_range(200)
