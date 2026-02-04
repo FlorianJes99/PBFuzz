@@ -27,6 +27,7 @@ fn main() {
     run_orchestrator(OrchestratorInput::new(
         args.iterations,
         args.ouput_dir,
+        args.settings_file,
         command1,
         command2,
     ));
@@ -39,4 +40,6 @@ struct OrchestratorArgs {
     ouput_dir: PathBuf,
     #[arg(short, long, default_value_t = 1000)]
     iterations: u32,
+    #[arg(long)]
+    settings_file: Option<PathBuf>,
 }

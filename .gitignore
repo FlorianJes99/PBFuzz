@@ -2,6 +2,7 @@ target/
 out/
 important_findings/
 software/
+good_settings/
 
 # cargo flamegraph ignores
 flamegraph.svg

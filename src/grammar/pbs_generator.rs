@@ -5,7 +5,7 @@ use crate::grammar::{
 };
 use itertools::Itertools;
 use log::info;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -165,7 +165,7 @@ pub struct PBSGenerator {
     settings: GeneratorSettings,
 }
 
-#[derive(Debug, Copy, Clone, Serialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum CancelCondition {
     CountUnsat { max_unsat_assignments: u64 },
     CountConstraints { max_constraints: u64 },
@@ -191,7 +191,7 @@ impl Display for CancelCondition {
 }
 
 /// This struct holds all possible configuration parameters for the generation of a random grammar
-#[derive(Debug, Copy, Clone, Serialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct GeneratorSettings {
     /// maximal amount of different variables used in the grammar
     max_vars: u32,

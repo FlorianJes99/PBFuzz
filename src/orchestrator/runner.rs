@@ -1,15 +1,17 @@
 use std::{
     fmt::Display,
-    fs::File,
-    io::{BufWriter, Write},
+    fs::{self, File},
+    io::{BufWriter, Error, ErrorKind, Write},
     ops::Range,
     path::PathBuf,
     process::{Command, Output},
     time::Instant,
 };
 
+use itertools::Itertools;
 use rand;
 use regex::Regex;
+use ron::ser::PrettyConfig;
 
 use crate::grammar::{
     helpers::print_block,
@@ -26,14 +28,16 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
 
     let mut stats = Stats::new();
 
-    let cancel_condition = CancelCondition::CountConstraints {
-        max_constraints: 200,
+    let settings = match input.settings_file {
+        Some(file) => load_settings(file).unwrap_or_else(|e| {
+            println!("Error occured while loading settings: {}", e);
+            println!("Using default settings...");
+            default_settings()
+        }),
+        None => default_settings(),
     };
-    let settings = GeneratorSettingsBuilder::new(100)
-        .max_unsat_for_single_constraint(3)
-        .cancel_condition(cancel_condition)
-        .coeff_range(200)
-        .build();
+    print_block("Settings to use", &settings);
+
     let percentage_range_sat = 0.25..0.7;
     for counter in 1..=input.iterations {
         if counter == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
@@ -78,32 +82,41 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
         let status_program1 = &res_program1.status;
         let status_program2 = &res_program2.status;
         if status_program2 != status_program1 {
-            println!("Status sat4j: {:?}", status_program2);
-            println!("Status roundingsat: {:?}", status_program1);
-            panic!("Test panick for now")
-        }
-        let status = status_program1;
-        let file_path = match &status {
-            SolverStatus::Sat => input
+            println!("Status {}: {:?}", input.command2.exec_name, status_program2);
+            println!("Status {}: {:?}", input.command1.exec_name, status_program1);
+            let file_path = input
                 .fuzzer_output_dir
-                .join(format!("sat/sat_{}_{}.opb", seed, counter)),
-            SolverStatus::Unsat => input
-                .fuzzer_output_dir
-                .join(format!("unsat/unsat_{}_{}.opb", seed, counter)),
-            SolverStatus::Unknown => input
-                .fuzzer_output_dir
-                .join(format!("unknown_{}.opb", seed)),
-        };
+                .join(format!("bug/bug_{}_{}.opb", seed, counter));
+            let write_r = std::fs::rename(&output_file, &file_path);
+            if write_r.is_err() {
+                println!("Could not write to file. Terminating...");
+                break;
+            }
+            stats.count_bug();
+        } else {
+            let status = status_program1;
+            let file_path = match &status {
+                SolverStatus::Sat => input
+                    .fuzzer_output_dir
+                    .join(format!("sat/sat_{}_{}.opb", seed, counter)),
+                SolverStatus::Unsat => input
+                    .fuzzer_output_dir
+                    .join(format!("unsat/unsat_{}_{}.opb", seed, counter)),
+                SolverStatus::Unknown => input
+                    .fuzzer_output_dir
+                    .join(format!("unknown_{}.opb", seed)),
+            };
 
-        let write_r = std::fs::rename(&output_file, &file_path);
-        if write_r.is_err() {
-            println!("Could not write to file. Terminating...");
-            break;
+            let write_r = std::fs::rename(&output_file, &file_path);
+            if write_r.is_err() {
+                println!("Could not write to file. Terminating...");
+                break;
+            }
+            stats.update(&res_program1);
         }
-        stats.update(&res_program1);
     }
 
-    let res = save_settings(&settings, &input.fuzzer_output_dir);
+    let res = save_settings(&settings, &input.fuzzer_output_dir, Some(&stats));
     if let std::io::Result::Err(e) = res {
         println!("Could not save settings!\n Error: {}", e)
     }
@@ -147,6 +160,7 @@ fn handle_command_output(parser: &mut OutputParser, output: &Output) -> SolverRe
 pub struct OrchestratorInput {
     iterations: u32,
     fuzzer_output_dir: PathBuf,
+    settings_file: Option<PathBuf>,
     command1: SolverCommand,
     command2: SolverCommand,
 }
@@ -155,12 +169,14 @@ impl OrchestratorInput {
     pub fn new(
         iterations: u32,
         fuzzer_output_dir: PathBuf,
+        settings_file: Option<PathBuf>,
         command1: SolverCommand,
         command2: SolverCommand,
     ) -> Self {
         Self {
             iterations,
             fuzzer_output_dir,
+            settings_file,
             command1,
             command2,
         }
@@ -216,6 +232,7 @@ struct Stats {
     amount_unsat: u32,
     amount_unknown: u32,
     average_conflicts: f32,
+    bugs_found: u32,
     start: Instant,
 }
 
@@ -226,6 +243,7 @@ impl Stats {
             amount_unsat: 0,
             amount_unknown: 0,
             average_conflicts: 0.0,
+            bugs_found: 0,
             start: Instant::now(),
         }
     }
@@ -239,6 +257,10 @@ impl Stats {
             SolverStatus::Unsat => self.amount_unsat += 1,
             SolverStatus::Unknown => self.amount_unknown += 1,
         }
+    }
+
+    fn count_bug(&mut self) {
+        self.bugs_found += 1
     }
 
     fn amount_runs(&self) -> u32 {
@@ -286,7 +308,19 @@ impl Display for Stats {
             "Average conficts to solve                : {}",
             self.average_conflicts
         )?;
+        writeln!(
+            f,
+            "Bugs found                               : {}",
+            self.bugs_found
+        )?;
         let program_duration = Instant::now().duration_since(self.start);
+        let avg_time_per_instance = program_duration / self.amount_runs();
+        writeln!(
+            f,
+            "Average Time per Instance                : {}.{:.3}s",
+            avg_time_per_instance.as_secs(),
+            avg_time_per_instance.subsec_millis()
+        )?;
         write!(
             f,
             "Duration of program                      : {}.{:.3}s",
@@ -296,11 +330,43 @@ impl Display for Stats {
     }
 }
 
-fn save_settings(settings: &GeneratorSettings, dir: &PathBuf) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(settings)?;
-    let file_name = dir.join("settings.json");
+fn default_settings() -> GeneratorSettings {
+    let cancel_condition = CancelCondition::CountConstraints {
+        max_constraints: 200,
+    };
+    GeneratorSettingsBuilder::new(100)
+        .max_unsat_for_single_constraint(3)
+        .cancel_condition(cancel_condition)
+        .coeff_range(200)
+        .build()
+}
+
+fn load_settings(file: PathBuf) -> std::io::Result<GeneratorSettings> {
+    let data = fs::read_to_string(file)?;
+    let settings = ron::from_str(&data).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    Ok(settings)
+}
+
+fn save_settings(
+    settings: &GeneratorSettings,
+    dir: &PathBuf,
+    stats_opt: Option<&Stats>,
+) -> std::io::Result<()> {
+    let data = ron::ser::to_string_pretty(settings, PrettyConfig::default())
+        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let file_name = dir.join("settings.ron");
     let mut file = File::create(file_name)?;
-    file.write_all(json.as_bytes())
+    file.write_all(data.as_bytes())?;
+    file.write_all("\n".as_bytes())?;
+    if let Some(stats) = stats_opt {
+        let commented_stats: String = stats
+            .to_string()
+            .lines()
+            .map(|line| format!("// {}", line))
+            .join("\n");
+        file.write_all(commented_stats.as_bytes())?;
+    }
+    Ok(())
 }
 
 struct ProgramExecutionFailed {
@@ -327,42 +393,45 @@ enum SolverStatus {
     Unknown,
 }
 
-#[test]
-fn test_stats() {
-    let mut stats = Stats::new();
-    let res = SolverResult {
-        status: SolverStatus::Sat,
-        conflicts: 4,
-    };
-
-    stats.update(&res);
-    assert_eq!(1, stats.amount_runs());
-    assert_eq!(1, stats.amount_sat);
-    assert_eq!(0, stats.amount_unsat);
-    assert_eq!(0, stats.amount_unknown);
-    assert_float_approx(4.0, stats.average_conflicts, 0.0001);
-
-    let res = SolverResult {
-        status: SolverStatus::Unsat,
-        conflicts: 3,
-    };
-
-    stats.update(&res);
-    assert_eq!(2, stats.amount_runs());
-    assert_eq!(1, stats.amount_sat);
-    assert_eq!(1, stats.amount_unsat);
-    assert_eq!(0, stats.amount_unknown);
-    assert_float_approx(3.5, stats.average_conflicts, 0.0001);
-}
-
 #[cfg(test)]
-fn assert_float_approx(a: f32, b: f32, epsilon: f32) {
-    assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
-    assert!(
-        (a - b).abs() <= epsilon,
-        "Assertion failed, float values {} and {} are not identical (epsilon: {})",
-        a,
-        b,
-        epsilon
-    )
+mod tests {
+    use super::*;
+    #[test]
+    fn test_stats() {
+        let mut stats = Stats::new();
+        let res = SolverResult {
+            status: SolverStatus::Sat,
+            conflicts: 4,
+        };
+
+        stats.update(&res);
+        assert_eq!(1, stats.amount_runs());
+        assert_eq!(1, stats.amount_sat);
+        assert_eq!(0, stats.amount_unsat);
+        assert_eq!(0, stats.amount_unknown);
+        assert_float_approx(4.0, stats.average_conflicts, 0.0001);
+
+        let res = SolverResult {
+            status: SolverStatus::Unsat,
+            conflicts: 3,
+        };
+
+        stats.update(&res);
+        assert_eq!(2, stats.amount_runs());
+        assert_eq!(1, stats.amount_sat);
+        assert_eq!(1, stats.amount_unsat);
+        assert_eq!(0, stats.amount_unknown);
+        assert_float_approx(3.5, stats.average_conflicts, 0.0001);
+    }
+
+    fn assert_float_approx(a: f32, b: f32, epsilon: f32) {
+        assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
+        assert!(
+            (a - b).abs() <= epsilon,
+            "Assertion failed, float values {} and {} are not identical (epsilon: {})",
+            a,
+            b,
+            epsilon
+        )
+    }
 }
