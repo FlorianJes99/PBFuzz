@@ -65,6 +65,10 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
             break;
         }
 
+        println!(
+            "Solving generated instance with {}",
+            input.command1.exec_name
+        );
         let res_program1 = match run_external_programm(&mut input.command1) {
             Ok(val) => val,
             Err(e) => {
@@ -72,6 +76,10 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
                 break;
             }
         };
+        println!(
+            "Solving generated instance with {}",
+            input.command2.exec_name
+        );
         let res_program2 = match run_external_programm(&mut input.command2) {
             Ok(val) => val,
             Err(e) => {
@@ -139,12 +147,21 @@ fn run_external_programm(
         })
 }
 
-fn handle_command_output(parser: &mut OutputParser, output: &Output) -> SolverResult {
+fn handle_command_output(parser: &OutputParser, output: &Output) -> SolverResult {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut conflicts = 0;
+    let mut status = SolverStatus::Unknown;
     for line in stdout.lines() {
         let line = line.trim();
-        parser.parse_line(line);
+        let parsed_result = parser.parse_line(line);
+        match parsed_result {
+            // Only update status if its currently unknown
+            // IMPORTANT: parsing needs to be unambiguous
+            SolverStatus::Sat if status == SolverStatus::Unknown => status = parsed_result,
+            SolverStatus::Unsat if status == SolverStatus::Unknown => status = parsed_result,
+            _ => {},
+        }
+        // Hacky solution to look for conflicts of roundingsat output
         if line.contains("conflicts") {
             conflicts = line
                 .split_whitespace()
@@ -153,7 +170,6 @@ fn handle_command_output(parser: &mut OutputParser, output: &Output) -> SolverRe
                 .unwrap_or(0);
         }
     }
-    let status = parser.status;
     SolverResult { status, conflicts }
 }
 
@@ -184,25 +200,22 @@ impl OrchestratorInput {
 }
 
 pub struct OutputParser {
-    status: SolverStatus,
     reg_sat: Regex,
     reg_unsat: Regex,
 }
 
 impl OutputParser {
     pub fn new(reg_sat: Regex, reg_unsat: Regex) -> Self {
-        Self {
-            status: SolverStatus::Unknown,
-            reg_sat,
-            reg_unsat,
-        }
+        Self { reg_sat, reg_unsat }
     }
 
-    fn parse_line(&mut self, line: &str) {
+    fn parse_line(&self, line: &str) -> SolverStatus {
         if self.reg_unsat.is_match(line) {
-            self.status = SolverStatus::Unsat;
+            SolverStatus::Unsat
         } else if self.reg_sat.is_match(line) {
-            self.status = SolverStatus::Sat;
+            SolverStatus::Sat
+        } else {
+            SolverStatus::Unknown
         }
     }
 }

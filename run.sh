@@ -19,4 +19,4 @@ mkdir out/unsat
 
 echo "Building release executable..."
 cargo build --release
-target/release/fuzzer_orchestrator -o out/ -i 1000
+target/release/fuzzer_orchestrator -o out/ -i 1000 --settings-file configuration/settings.ron

@@ -1,6 +1,7 @@
 target/
 out/
 important_findings/
+configuration/
 software/
 good_settings/
 
