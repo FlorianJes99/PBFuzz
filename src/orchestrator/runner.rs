@@ -313,8 +313,8 @@ impl Display for Stats {
         )?;
         writeln!(
             f,
-            "Percentage SAT                           : {}",
-            self.percentage_sat()
+            "Percentage SAT                           : {}%",
+            self.percentage_sat() * 100.0
         )?;
         writeln!(
             f,

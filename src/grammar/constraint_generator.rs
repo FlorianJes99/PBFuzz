@@ -15,6 +15,17 @@ use crate::grammar::{
     domain::{AtomIdent, Comparison},
 };
 
+//  [ThreeAtom, Cardinality, Arbitrary]
+const CONSTRAINT_DISTR: [i32; 3] = [2, 1, 1];
+
+// Cardinality parameters
+const CARDINALITY_CONSTRAINT_LENGTH: u32 = 30;
+const CARDINALITY_RHS_LOWER_BOUND: f32 = 0.3;
+const CARDINALITY_RHS_UPPER_BOUND: f32 = 0.5;
+
+// Arbitrary Constraint parameters
+const GENERIC_CONSTRAINT_LENGTH: u32 = 30;
+
 #[derive(Debug)]
 pub struct ConstraintGenerator {
     rand: StdRng,
@@ -24,8 +35,7 @@ pub struct ConstraintGenerator {
 
 impl ConstraintGenerator {
     pub fn new(rand: StdRng, settings: ConstraintSettings) -> Self {
-        let weights = [45, 45, 10];
-        let dist = WeightedIndex::new(weights)
+        let dist = WeightedIndex::new(CONSTRAINT_DISTR)
             .expect("We should only create valid distributions, when sampling constraint types");
         Self {
             rand,
@@ -76,12 +86,20 @@ impl ConstraintGenerator {
                 Box::new(c)
             }
             ConstraintKind::Cardinality => {
-                let atom_len = (self.settings.max_vars as f32 * 0.75).floor() as u32;
+                let atom_len = if self.settings.max_vars <= CARDINALITY_CONSTRAINT_LENGTH {
+                    (self.settings.max_vars as f32 * 0.5).floor() as u32
+                } else {
+                    CARDINALITY_CONSTRAINT_LENGTH
+                };
                 let c = self.generate_cardinality(atom_len);
                 Box::new(c)
             }
             ConstraintKind::ArbitraryLength => {
-                let atom_len = (self.settings.max_vars as f32 * 0.25).floor() as u32;
+                let atom_len = if self.settings.max_vars <= GENERIC_CONSTRAINT_LENGTH {
+                    (self.settings.max_vars as f32 * 0.5).floor() as u32
+                } else {
+                    GENERIC_CONSTRAINT_LENGTH
+                };
                 let c = self.generate_generic(atom_len);
                 Box::new(c)
             }
@@ -136,12 +154,26 @@ impl ConstraintGenerator {
                 .expect("Failure while converting u32 to usize"),
         );
         assert!(ids.len() as u32 == length);
-        let atoms = ids.iter().map(|id| id.to_atom(1)).collect();
+        let mut atoms = vec![];
+        let mut lower_max: i32 = 0;
+        let mut upper_max: i32 = 0;
+        for id in &ids {
+            if self.rand.random_bool(0.5) {
+                atoms.push(id.to_atom(1));
+                upper_max += 1;
+            } else {
+                atoms.push(id.to_atom(-1));
+                lower_max -= 1;
+            }
+        }
+        assert!(atoms.len() as u32 == length);
+        let distance = upper_max - lower_max;
+        let lower_bound = lower_max + (CARDINALITY_RHS_LOWER_BOUND * distance as f32).ceil() as i32;
+        let upper_bound =
+            lower_max + (CARDINALITY_RHS_UPPER_BOUND * distance as f32).floor() as i32;
         let degree = self
             .rand
-            .random_range(
-                (length as f32 * 0.3).ceil() as u32..=(length as f32 * 0.7).floor() as u32,
-            )
+            .random_range(lower_bound..upper_bound)
             .try_into()
             .expect("Length of constraint should always fit into i64");
         CardinalityConstraint::new(atoms, Comparison::GrEqual, degree)

@@ -5,9 +5,9 @@ use std::fmt::Display;
 
 /// Constraint trait for different types of constraints in a PBS/PBO grammar.
 ///
-/// atoms: a reference to a array slice of atoms.
-/// comparison: the comparison operator used in this constraint.
-/// degree: rhs value, for which we are solving the constraint.
+/// Atoms: a reference to a array slice of atoms.
+/// Comparison: the comparison operator used in this constraint.
+/// Degree: rhs value, for which we are solving the constraint.
 ///
 /// Constraint is a combination of atoms, comparison operator and a degree
 ///
@@ -39,6 +39,8 @@ pub trait Constraint: Display {
         )
     }
 
+    /// Can be used in every implementation of the trait in order to get a formatted version of the
+    /// constraint
     fn fmt_constraint(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, atom) in self.atoms().iter().enumerate() {
             if i > 0 {
@@ -50,6 +52,16 @@ pub trait Constraint: Display {
     }
 }
 
+/// Extension of the Constraint type
+///
+/// It is used for Constraint Kinds, where we can compute the amount of unsat assignments
+/// in reasonable time amount (e.g. Three Atom or Cardinality)
+pub trait CostraintWithUnsatAssignments: Constraint {
+    fn amount_unsat_assignments(&self) -> u128;
+}
+
+/// Currently, these types of constraints are supported.
+///  Mainly used for type safe generation of the different types of actual constraints
 #[derive(PartialEq, Eq, PartialOrd, Hash)]
 pub enum ConstraintKind {
     ArbitraryLength,
@@ -67,10 +79,9 @@ impl Display for ConstraintKind {
     }
 }
 
-pub trait CostraintWithUnsatAssignments: Constraint {
-    fn amount_unsat_assignments(&self) -> u128;
-}
-
+/// A constraint with no specific characteristics.
+///
+/// Length can be chosen arbitrary as well as coefficient range
 #[derive(Debug)]
 pub struct ArbitraryLengthConstraint {
     atoms: Vec<Atom>,
@@ -78,6 +89,9 @@ pub struct ArbitraryLengthConstraint {
     degree: i64,
 }
 
+/// A constraint with exactly three atoms
+///
+/// For this type it's is fairly ease to compute all possible unsat assignments.
 #[derive(Debug)]
 pub struct ThreeAtomConstraint {
     atoms: [Atom; 3],
@@ -87,12 +101,13 @@ pub struct ThreeAtomConstraint {
     amount_unsat: OnceCell<u128>,
 }
 
-/// Cardinality constraints are a special type of constraint, where every coefficient of an atom needs to be 1
+/// Cardinality constraints are a special type of constraint, where every coefficient
+/// of an atom needs to be 1 or -1
 pub struct CardinalityConstraint {
     atoms: Vec<Atom>,
     comparison: Comparison,
     degree: i64,
-    // lazy init this when first needed, can be expensive to compute
+    // Lazy init this when first needed, can be expensive to compute
     amount_unsat: OnceCell<u128>,
 }
 
@@ -242,9 +257,13 @@ impl ThreeAtomConstraint {
 
 impl CardinalityConstraint {
     pub fn new(atoms: Vec<Atom>, comparison: Comparison, degree: i64) -> Result<Self, String> {
-        if atoms.iter().find(|a| a.coeff != 1).is_some() {
+        if atoms
+            .iter()
+            .find(|a| !(a.coeff == 1 || a.coeff == -1))
+            .is_some()
+        {
             return Err(
-                "All coefficients of a CardinalityConstraint need to be 1".to_string(),
+                "All coefficients of a CardinalityConstraint need to be 1 or -1".to_string(),
             );
         }
         let c = Self {
@@ -257,6 +276,14 @@ impl CardinalityConstraint {
             return Err("A constraint on itself needs to be solvable".to_string());
         }
         Ok(c)
+    }
+
+    pub fn lowest_rhs_assignment(&self) -> i32 {
+        self.atoms().iter().map(|a| a.coeff).filter(|coeff| *coeff < 0).sum()
+    }
+
+    pub fn highest_rhs_assingment(&self) -> i32 {
+        self.atoms().iter().map(|a| a.coeff).filter(|coeff| *coeff > 0).sum()
     }
 }
 
@@ -281,13 +308,10 @@ impl Constraint for CardinalityConstraint {
 impl CostraintWithUnsatAssignments for CardinalityConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
         *self.amount_unsat.get_or_init(|| {
+            let max_combinations_to_set_true = self.degree() - self.lowest_rhs_assignment() as i64;
             let amount_vars = self.atoms().len() as u64;
-            let degree = self.degree() as u64;
-            if degree == 0 {
-                return 0;
-            }
 
-            (0..degree).fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
+            (0..max_combinations_to_set_true as u64).fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
         })
     }
 }
@@ -307,33 +331,53 @@ impl Display for CardinalityConstraint {
     }
 }
 
-#[test]
-fn amount_unsat() {
-    let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
-    let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 4);
-    assert_eq!(c.unsat_count_three_atoms(), 4);
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn amount_unsat() {
+        let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
+        let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 4);
+        assert_eq!(c.unsat_count_three_atoms(), 4);
 
-    let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
-    let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
-    assert_eq!(c.unsat_count_three_atoms(), 1);
+        let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
+        let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
+        assert_eq!(c.unsat_count_three_atoms(), 1);
 
-    let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
-    let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 2).expect("Test method");
-    assert_eq!(c.amount_unsat_assignments(), 4);
+        let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
+        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 2).expect("Test method");
+        assert_eq!(c.amount_unsat_assignments(), 4);
 
-    let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
-    let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 1).expect("Test method");
-    assert_eq!(c.amount_unsat_assignments(), 1)
-}
+        let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
+        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 1).expect("Test method");
+        assert_eq!(c.amount_unsat_assignments(), 1)
+    }
 
-#[test]
-fn display_constraint() {
-    let atoms: Vec<Atom> = (1..=3).map(|i| Atom::new(i as u32, i * 10)).collect();
+    #[test]
+    fn amount_unsat_with_negative_coefficeints() {
 
-    let comp = Comparison::GrEqual;
-    let res = 15;
+        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
+        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 0).expect("Test method");
+        assert_eq!(c.amount_unsat_assignments(), 7);
 
-    let constr = ArbitraryLengthConstraint::new(atoms, comp, res);
+        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
+        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, -2).expect("Test method");
+        assert_eq!(c.amount_unsat_assignments(), 1);
 
-    assert_eq!(constr.to_string(), "10 x1 20 x2 30 x3 >= 15;")
+        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
+        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, -3).expect("Test method");
+        assert_eq!(c.amount_unsat_assignments(), 0)
+    }
+
+    #[test]
+    fn display_constraint() {
+        let atoms: Vec<Atom> = (1..=3).map(|i| Atom::new(i as u32, i * 10)).collect();
+
+        let comp = Comparison::GrEqual;
+        let res = 15;
+
+        let constr = ArbitraryLengthConstraint::new(atoms, comp, res);
+
+        assert_eq!(constr.to_string(), "10 x1 20 x2 30 x3 >= 15;")
+    }
 }
