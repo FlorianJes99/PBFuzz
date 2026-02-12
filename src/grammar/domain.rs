@@ -1,6 +1,4 @@
 /// Basic building blocks for generating pseudo boolean constraints
-///
-/// A constraint is build up from some amount of atoms an comparison operator and a degree (RHS)
 use std::fmt::Display;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]

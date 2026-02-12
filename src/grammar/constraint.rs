@@ -1,6 +1,8 @@
 use crate::grammar::domain::Atom;
+use crate::grammar::domain::AtomIdent;
 use crate::grammar::domain::Comparison;
 use std::cell::OnceCell;
+use std::collections::HashSet;
 use std::fmt::Display;
 
 /// Constraint trait for different types of constraints in a PBS/PBO grammar.
@@ -19,12 +21,30 @@ pub trait Constraint: Display {
     fn degree(&self) -> i64;
     fn kind(&self) -> ConstraintKind;
 
-    /// checks if a value satisfies the degree of the constraint
+    /// Checks if a value satisfies the degree of the constraint
     /// this depends on the comparison operator of the constraint.
     fn satisfied(&self, value: i64) -> bool {
         match self.comparison() {
-            Comparison::GrEqual => value as i64 >= self.degree(),
+            Comparison::GrEqual => value >= self.degree(),
         }
+    }
+
+    /// Checks if the constraint is satisfied for a given set of true variables in a grammar
+    ///
+    /// This can be used in order to verify the results of a solver
+    fn verify(&self, true_vars: &HashSet<AtomIdent>) -> bool {
+        self.satisfied(
+            self.atoms()
+                .iter()
+                .map(|atom| {
+                    if true_vars.contains(&atom.atom_id) {
+                        atom.coeff
+                    } else {
+                        0
+                    }
+                })
+                .sum::<i32>() as i64,
+        )
     }
 
     /// Checks if the constructed constraint is solvable.
@@ -279,11 +299,19 @@ impl CardinalityConstraint {
     }
 
     pub fn lowest_rhs_assignment(&self) -> i32 {
-        self.atoms().iter().map(|a| a.coeff).filter(|coeff| *coeff < 0).sum()
+        self.atoms()
+            .iter()
+            .map(|a| a.coeff)
+            .filter(|coeff| *coeff < 0)
+            .sum()
     }
 
     pub fn highest_rhs_assingment(&self) -> i32 {
-        self.atoms().iter().map(|a| a.coeff).filter(|coeff| *coeff > 0).sum()
+        self.atoms()
+            .iter()
+            .map(|a| a.coeff)
+            .filter(|coeff| *coeff > 0)
+            .sum()
     }
 }
 
@@ -311,7 +339,8 @@ impl CostraintWithUnsatAssignments for CardinalityConstraint {
             let max_combinations_to_set_true = self.degree() - self.lowest_rhs_assignment() as i64;
             let amount_vars = self.atoms().len() as u64;
 
-            (0..max_combinations_to_set_true as u64).fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
+            (0..max_combinations_to_set_true as u64)
+                .fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
         })
     }
 }
@@ -355,7 +384,6 @@ mod test {
 
     #[test]
     fn amount_unsat_with_negative_coefficeints() {
-
         let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
         let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 0).expect("Test method");
         assert_eq!(c.amount_unsat_assignments(), 7);
@@ -379,5 +407,28 @@ mod test {
         let constr = ArbitraryLengthConstraint::new(atoms, comp, res);
 
         assert_eq!(constr.to_string(), "10 x1 20 x2 30 x3 >= 15;")
+    }
+
+    #[test]
+    fn verify_constraint() {
+        let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
+        let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
+        let true_vars = HashSet::from([AtomIdent::new(1)]);
+        assert!(c.verify(&true_vars));
+        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]);
+        assert!(c.verify(&true_vars));
+        let true_vars = HashSet::from([AtomIdent::new(3)]);
+        assert_eq!(false, c.verify(&true_vars));
+
+        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
+        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 0).expect("Test method");
+        let true_vars = HashSet::new();
+        assert!(c.verify(&true_vars));
+
+        let true_vars = HashSet::from([AtomIdent::new(1)]);
+        assert_eq!(false, c.verify(&true_vars));
+
+        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]);
+        assert_eq!(false, c.verify(&true_vars));
     }
 }

@@ -7,7 +7,7 @@ use itertools::Itertools;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Display,
     io::{self, Write},
 };
@@ -155,6 +155,11 @@ impl PBSGrammar {
             min_occurence: min.expect("There should always be a var which occurs the least"),
             average_occurence: average,
         }
+    }
+
+    pub fn verify_solution(&self, true_vars: &HashSet<AtomIdent>) -> bool {
+        self.constraints.iter()
+            .all(|c| c.verify(&true_vars))
     }
 }
 
