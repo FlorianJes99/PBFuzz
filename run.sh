@@ -17,6 +17,8 @@ echo "Cleaning up output directory..."
 rm -r out/*
 mkdir out/sat
 mkdir out/unsat
+mkdir out/unknown
+mkdir out/bug
 
 echo "Building release executable..."
 cargo build --release

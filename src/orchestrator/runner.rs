@@ -4,27 +4,28 @@ use std::{
     io::{BufWriter, Error, ErrorKind, Write},
     ops::Range,
     path::PathBuf,
-    process::{Command, Output},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use itertools::Itertools;
 use rand;
-use regex::Regex;
 use ron::ser::PrettyConfig;
 
-use crate::grammar::{
-    helpers::print_block,
-    pbs_generator::{CancelCondition, GeneratorSettings, GeneratorSettingsBuilder, PBSGenerator},
+use crate::{
+    grammar::{
+        helpers::print_block,
+        pbs_generator::{
+            CancelCondition, GeneratorSettings, GeneratorSettingsBuilder, PBSGenerator,
+        },
+    },
+    orchestrator::external_program::{Solver, SolverResult, SolverStatus},
 };
 
-pub fn run_orchestrator(mut input: OrchestratorInput) {
+pub fn run_orchestrator<T: Solver, U: Solver>(
+    input: OrchestratorInput<T, U>,
+) -> Result<(), String> {
     let output_file = input.fuzzer_output_dir.join("test.opb");
-    println!("Writing fuzzer output into {:?}", &output_file);
-
-    // Add file to solve to program command
-    input.command1.set_input_file(&output_file);
-    input.command2.set_input_file(&output_file);
+    println!("Writing fuzzer output into {}", &output_file.display());
 
     let mut stats = Stats::new();
 
@@ -56,138 +57,116 @@ pub fn run_orchestrator(mut input: OrchestratorInput) {
         print_block("", format!("Iteration {counter}"));
         println!("Running Fuzzer with seed {seed}...");
         let mut grammar = PBSGenerator::create_grammar(seed, settings);
-        let write_result = File::create(&output_file)
+        let _ok = File::create(&output_file)
             .map(|file| BufWriter::new(file))
-            .map(|mut buf_writer| grammar.produce(&mut buf_writer));
-        if write_result.is_err() {
-            println!("Error while writing into output file");
-            println!("Terminating orchestrator");
-            break;
-        }
+            .map(|mut buf_writer| grammar.produce(&mut buf_writer))
+            .map_err(|e| e.to_string())?;
 
         println!(
             "Solving generated instance with {}",
-            input.command1.exec_name
+            input.command1.get_name()
         );
-        let res_program1 = match run_external_programm(&mut input.command1) {
-            Ok(val) => val,
-            Err(e) => {
-                println!("{}", e);
-                break;
-            }
-        };
+        let res_program1 = input
+            .command1
+            .execute_solver(&output_file)
+            .map_err(|e| e.to_string())?;
         println!(
             "Solving generated instance with {}",
-            input.command2.exec_name
+            input.command2.get_name()
         );
-        let res_program2 = match run_external_programm(&mut input.command2) {
-            Ok(val) => val,
-            Err(e) => {
-                println!("{}", e);
-                break;
+        let res_program2 = input
+            .command2
+            .execute_solver(&output_file)
+            .map_err(|e| e.to_string())?;
+        let status_program1 = res_program1.get_status();
+        let status_program2 = res_program2.get_status();
+        match (status_program1, status_program2) {
+            (
+                SolverStatus::Sat {
+                    found_model: solution1,
+                },
+                SolverStatus::Sat {
+                    found_model: solution2,
+                },
+            ) => {
+                let valid1 = grammar.verify_solution(solution1);
+                let valid2 = grammar.verify_solution(solution2);
+                if valid1 && valid2 {
+                    let file_path = input
+                        .fuzzer_output_dir
+                        .join(format!("sat/sat_{}_{}.opb", seed, counter));
+                    move_file(&output_file, &file_path)?;
+                    stats.update(&res_program1);
+                } else {
+                    let file_path = input
+                        .fuzzer_output_dir
+                        .join(format!("bug/invalid_solution_{}_{}.opb", seed, counter));
+                    move_file(&output_file, &file_path)?;
+                    stats.count_bug();
+                }
             }
-        };
-        let status_program1 = &res_program1.status;
-        let status_program2 = &res_program2.status;
-        if status_program2 != status_program1 {
-            println!("Status {}: {:?}", input.command2.exec_name, status_program2);
-            println!("Status {}: {:?}", input.command1.exec_name, status_program1);
-            let file_path = input
-                .fuzzer_output_dir
-                .join(format!("bug/bug_{}_{}.opb", seed, counter));
-            let write_r = std::fs::rename(&output_file, &file_path);
-            if write_r.is_err() {
-                println!("Could not write to file. Terminating...");
-                break;
-            }
-            stats.count_bug();
-        } else {
-            let status = status_program1;
-            let file_path = match &status {
-                SolverStatus::Sat => input
+            (SolverStatus::Unsat, SolverStatus::Unsat) => {
+                let file_path = input
                     .fuzzer_output_dir
-                    .join(format!("sat/sat_{}_{}.opb", seed, counter)),
-                SolverStatus::Unsat => input
-                    .fuzzer_output_dir
-                    .join(format!("unsat/unsat_{}_{}.opb", seed, counter)),
-                SolverStatus::Unknown => input
-                    .fuzzer_output_dir
-                    .join(format!("unknown_{}.opb", seed)),
-            };
+                    .join(format!("unsat/unsat_{}_{}.opb", seed, counter));
 
-            let write_r = std::fs::rename(&output_file, &file_path);
-            if write_r.is_err() {
-                println!("Could not write to file. Terminating...");
-                break;
+                move_file(&output_file, &file_path)?;
+                stats.update(&res_program1);
             }
-            stats.update(&res_program1);
+            (SolverStatus::Unknown, SolverStatus::Unknown) => {
+                let file_path = input
+                    .fuzzer_output_dir
+                    .join(format!("unknown/unknown_{}_{}.opb", seed, counter));
+
+                move_file(&output_file, &file_path)?;
+                stats.update(&res_program1);
+            }
+            // If status 1 and status 2 are unequal
+            _ => {
+                let file_path = input
+                    .fuzzer_output_dir
+                    .join(format!("bug/bug_{}_{}.opb", seed, counter));
+                move_file(&output_file, &file_path)?;
+                stats.count_bug();
+            }
         }
     }
 
-    let res = save_settings(&settings, &input.fuzzer_output_dir, Some(&stats));
-    if let std::io::Result::Err(e) = res {
-        println!("Could not save settings!\n Error: {}", e)
-    }
+    save_settings(&settings, &input.fuzzer_output_dir, Some(&stats))
+        .map_err(|e| format!("Could not save settings!\n Error: {}", e))?;
     // print out settings
     print_block("Settings", settings);
     // print out stats
     print_block("Run Statistics", stats);
+    Ok(())
 }
 
-fn run_external_programm(
-    command: &mut SolverCommand,
-) -> Result<SolverResult, ProgramExecutionFailed> {
-    command
-        .exec_command
-        .output()
-        .map(|out| handle_command_output(&mut command.parser, &out))
-        .map_err(|err| ProgramExecutionFailed {
-            program_name: command.exec_name.clone(),
-            error_message: err.to_string(),
-        })
+fn move_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
+    std::fs::rename(&src, &dst).map_err(|e| {
+        format!(
+            "Could not move file from {} to {}\n Error: {}",
+            &src.display(),
+            &dst.display(),
+            e
+        )
+    })
 }
 
-fn handle_command_output(parser: &OutputParser, output: &Output) -> SolverResult {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut conflicts = 0;
-    let mut status = SolverStatus::Unknown;
-    for line in stdout.lines() {
-        let line = line.trim();
-        let parsed_result = parser.parse_line(line);
-        match parsed_result {
-            // Only update status if its currently unknown
-            // IMPORTANT: parsing needs to be unambiguous
-            SolverStatus::Sat if status == SolverStatus::Unknown => status = parsed_result,
-            SolverStatus::Unsat if status == SolverStatus::Unknown => status = parsed_result,
-            _ => {},
-        }
-        // Hacky solution to look for conflicts of roundingsat output
-        if line.contains("conflicts") {
-            conflicts = line
-                .split_whitespace()
-                .last()
-                .and_then(|n| n.parse().ok())
-                .unwrap_or(0);
-        }
-    }
-    SolverResult { status, conflicts }
-}
-
-pub struct OrchestratorInput {
+pub struct OrchestratorInput<T: Solver, U: Solver> {
     iterations: u32,
     fuzzer_output_dir: PathBuf,
     settings_file: Option<PathBuf>,
-    command1: SolverCommand,
-    command2: SolverCommand,
+    command1: T,
+    command2: U,
 }
 
-impl OrchestratorInput {
+impl<T: Solver, U: Solver> OrchestratorInput<T, U> {
     pub fn new(
         iterations: u32,
         fuzzer_output_dir: PathBuf,
         settings_file: Option<PathBuf>,
-        command1: SolverCommand,
-        command2: SolverCommand,
+        command1: T,
+        command2: U,
     ) -> Self {
         Self {
             iterations,
@@ -196,47 +175,6 @@ impl OrchestratorInput {
             command1,
             command2,
         }
-    }
-}
-
-pub struct OutputParser {
-    reg_sat: Regex,
-    reg_unsat: Regex,
-}
-
-impl OutputParser {
-    pub fn new(reg_sat: Regex, reg_unsat: Regex) -> Self {
-        Self { reg_sat, reg_unsat }
-    }
-
-    fn parse_line(&self, line: &str) -> SolverStatus {
-        if self.reg_unsat.is_match(line) {
-            SolverStatus::Unsat
-        } else if self.reg_sat.is_match(line) {
-            SolverStatus::Sat
-        } else {
-            SolverStatus::Unknown
-        }
-    }
-}
-
-pub struct SolverCommand {
-    exec_name: String,
-    exec_command: Command,
-    parser: OutputParser,
-}
-
-impl SolverCommand {
-    pub fn new(exec_name: String, exec_command: Command, parser: OutputParser) -> Self {
-        Self {
-            exec_name,
-            exec_command,
-            parser,
-        }
-    }
-
-    fn set_input_file(&mut self, output_file: &PathBuf) {
-        self.exec_command.arg(output_file);
     }
 }
 
@@ -264,9 +202,9 @@ impl Stats {
         // running average
         let n = self.amount_runs();
         self.average_conflicts =
-            (n as f32 * self.average_conflicts + result.conflicts as f32) / (n + 1) as f32;
-        match result.status {
-            SolverStatus::Sat => self.amount_sat += 1,
+            (n as f32 * self.average_conflicts + result.get_conflicts() as f32) / (n + 1) as f32;
+        match result.get_status() {
+            SolverStatus::Sat { found_model: _ } => self.amount_sat += 1,
             SolverStatus::Unsat => self.amount_unsat += 1,
             SolverStatus::Unknown => self.amount_unknown += 1,
         }
@@ -281,6 +219,9 @@ impl Stats {
     }
 
     fn percentage_sat(&self) -> f32 {
+        if self.amount_runs() == 0 {
+            return 0.0;
+        }
         self.amount_sat as f32 / self.amount_runs() as f32
     }
 
@@ -327,7 +268,11 @@ impl Display for Stats {
             self.bugs_found
         )?;
         let program_duration = Instant::now().duration_since(self.start);
-        let avg_time_per_instance = program_duration / self.amount_runs();
+        let avg_time_per_instance = if self.amount_runs() == 0 {
+            Duration::new(0, 0)
+        } else {
+            program_duration / self.amount_runs()
+        };
         writeln!(
             f,
             "Average Time per Instance                : {}.{:.3}s",
@@ -382,40 +327,20 @@ fn save_settings(
     Ok(())
 }
 
-struct ProgramExecutionFailed {
-    program_name: String,
-    error_message: String,
-}
-
-impl Display for ProgramExecutionFailed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Program {} failed.", self.program_name)?;
-        writeln!(f, "{}", self.error_message)
-    }
-}
-
-struct SolverResult {
-    status: SolverStatus,
-    conflicts: u32,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum SolverStatus {
-    Sat,
-    Unsat,
-    Unknown,
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     #[test]
     fn test_stats() {
         let mut stats = Stats::new();
-        let res = SolverResult {
-            status: SolverStatus::Sat,
-            conflicts: 4,
-        };
+        let res = SolverResult::new(
+            SolverStatus::Sat {
+                found_model: HashSet::new(),
+            },
+            4,
+        );
 
         stats.update(&res);
         assert_eq!(1, stats.amount_runs());
@@ -424,10 +349,7 @@ mod tests {
         assert_eq!(0, stats.amount_unknown);
         assert_float_approx(4.0, stats.average_conflicts, 0.0001);
 
-        let res = SolverResult {
-            status: SolverStatus::Unsat,
-            conflicts: 3,
-        };
+        let res = SolverResult::new(SolverStatus::Unsat, 3);
 
         stats.update(&res);
         assert_eq!(2, stats.amount_runs());

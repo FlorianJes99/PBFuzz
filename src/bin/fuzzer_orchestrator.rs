@@ -1,36 +1,26 @@
-use std::{path::PathBuf, process::Command};
+use std::{path::PathBuf};
 
 use clap::Parser;
-use fuzzer_pseudo_bool::orchestrator::runner::{
-    OrchestratorInput, OutputParser, SolverCommand, run_orchestrator,
+use fuzzer_pseudo_bool::orchestrator::{
+    roundingsat::Roundingsat,
+    runner::{OrchestratorInput, run_orchestrator},
+    scip::Scip,
 };
-use regex::Regex;
 
 fn main() {
     let args = OrchestratorArgs::parse();
-    let parser1 = OutputParser::new(
-        Regex::new(r"^s\s+SATISFIABLE$").unwrap(),
-        Regex::new(r"^s\s+UNSATISFIABLE$").unwrap(),
-    );
-    let command1 = SolverCommand::new(
-        "roundingsat".to_string(),
-        Command::new("roundingsat"),
-        parser1,
-    );
-    let parser2 = OutputParser::new(
-        Regex::new(r"\[optimal solution found\]").unwrap(),
-        Regex::new(r"\[infeasible\]").unwrap(),
-    );
-    let mut program2 = Command::new("software/scip");
-    program2.arg("-f");
-    let command2 = SolverCommand::new("scip".to_string(), program2, parser2);
-    run_orchestrator(OrchestratorInput::new(
+    let rounding_sat = Roundingsat::new("roundingsat".into());
+    let scip = Scip::new("software/scip".into());
+    let res = run_orchestrator(OrchestratorInput::new(
         args.iterations,
         args.ouput_dir,
         args.settings_file,
-        command1,
-        command2,
+        rounding_sat,
+        scip,
     ));
+    if res.is_err() {
+        println!("{}", res.unwrap_err())
+    }
 }
 
 #[derive(Debug, Parser)]

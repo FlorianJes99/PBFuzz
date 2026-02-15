@@ -22,6 +22,24 @@ impl AtomIdent {
     }
 }
 
+impl std::str::FromStr for AtomIdent {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if !s.starts_with("x") {
+            return Err(format!(
+                "Identifier does not start with character 'x', instead {}",
+                s
+            ));
+        }
+        let num_str = &s[1..];
+        num_str
+            .parse::<u32>()
+            .map(|n| AtomIdent::new(n))
+            .map_err(|e| format!("Failed to parse number: {}", e))
+    }
+}
+
 impl Display for AtomIdent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "x{}", self.literal_id())
