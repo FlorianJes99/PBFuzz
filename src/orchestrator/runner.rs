@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    fs::{File},
+    fs::File,
     io::{BufWriter, Error, ErrorKind, Write},
     ops::Range,
     path::PathBuf,
@@ -13,10 +13,8 @@ use ron::ser::PrettyConfig;
 
 use crate::{
     fuzzer::{
-        helpers::print_block,
-        pbs_generator::{
-            GeneratorSettings, PBSGenerator,
-        },
+        helpers::{compute_running_average, print_block},
+        pbs_generator::{GeneratorSettings, PBSGenerator},
     },
     orchestrator::external_program::{Solver, SolverResult, SolverStatus},
 };
@@ -195,7 +193,7 @@ impl Stats {
         // running average
         let n = self.amount_runs();
         self.average_conflicts =
-            (n as f32 * self.average_conflicts + result.get_conflicts() as f32) / (n + 1) as f32;
+            compute_running_average(self.average_conflicts, result.get_conflicts(), n);
         match result.get_status() {
             SolverStatus::Sat { found_model: _ } => self.amount_sat += 1,
             SolverStatus::Unsat => self.amount_unsat += 1,

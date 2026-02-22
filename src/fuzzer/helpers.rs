@@ -15,3 +15,7 @@ pub fn print_block<T: Display>(heading: &str, item: T) {
     println!("{}", "=".repeat(amount_signs));
     println!("")
 }
+
+pub fn compute_running_average(current_average: f32, sample: u32, total_runs: u32) -> f32 {
+    return (total_runs as f32 * current_average + sample as f32) / (total_runs + 1) as f32;
+}

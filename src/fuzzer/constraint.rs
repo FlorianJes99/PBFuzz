@@ -101,7 +101,7 @@ impl Display for ConstraintKind {
 
 /// A constraint with no specific characteristics.
 ///
-/// Length can be chosen arbitrary as well as coefficient range
+/// Length can be chosen arbitrary as well as coefficient range.
 #[derive(Debug)]
 pub struct ArbitraryLengthConstraint {
     atoms: Vec<Atom>,
@@ -111,13 +111,13 @@ pub struct ArbitraryLengthConstraint {
 
 /// A constraint with exactly three atoms
 ///
-/// For this type it's is fairly ease to compute all possible unsat assignments.
+/// For this type it is fairly ease to compute all possible unsat assignments.
 #[derive(Debug)]
 pub struct ThreeAtomConstraint {
     atoms: [Atom; 3],
     comparison: Comparison,
     degree: i64,
-    // lazy init this when first needed, can be expensive to compute
+    /// lazy init this when first needed, can be expensive to compute
     amount_unsat: OnceCell<u128>,
 }
 
@@ -258,10 +258,6 @@ impl ThreeAtomConstraint {
         }
     }
 
-    pub fn atoms_mut(&mut self) -> &mut [Atom] {
-        &mut self.atoms
-    }
-
     /// Checks how many assignments are unsat for a constraint with 3 Atoms
     fn unsat_count_three_atoms(&self) -> u32 {
         let [a1, a2, a3] = &self.atoms;
@@ -298,7 +294,7 @@ impl CardinalityConstraint {
         Ok(c)
     }
 
-    pub fn lowest_rhs_assignment(&self) -> i32 {
+    fn lowest_rhs_assignment(&self) -> i32 {
         self.atoms()
             .iter()
             .map(|a| a.coeff)
@@ -306,13 +302,6 @@ impl CardinalityConstraint {
             .sum()
     }
 
-    pub fn highest_rhs_assingment(&self) -> i32 {
-        self.atoms()
-            .iter()
-            .map(|a| a.coeff)
-            .filter(|coeff| *coeff > 0)
-            .sum()
-    }
 }
 
 impl Constraint for CardinalityConstraint {
