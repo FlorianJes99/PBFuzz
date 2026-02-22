@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, path::PathBuf};
 
-use crate::grammar::domain::AtomIdent;
+use crate::fuzzer::domain::AtomIdent;
 
 pub trait Solver {
     fn execute_solver(&self, file_path: &PathBuf) -> Result<SolverResult, ExternalProgramError>;

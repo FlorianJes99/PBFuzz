@@ -7,7 +7,7 @@ use rand::{
 };
 use std::i64;
 
-use crate::grammar::{
+use crate::fuzzer::{
     constraint::{
         ArbitraryLengthConstraint, CardinalityConstraint, Constraint, ConstraintKind,
         CostraintWithUnsatAssignments, ThreeAtomConstraint,

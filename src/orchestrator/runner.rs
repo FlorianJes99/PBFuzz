@@ -12,7 +12,7 @@ use rand;
 use ron::ser::PrettyConfig;
 
 use crate::{
-    grammar::{
+    fuzzer::{
         helpers::print_block,
         pbs_generator::{
             CancelCondition, GeneratorSettings, GeneratorSettingsBuilder, PBSGenerator,

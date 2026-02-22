@@ -1,6 +1,6 @@
-use crate::grammar::domain::Atom;
-use crate::grammar::domain::AtomIdent;
-use crate::grammar::domain::Comparison;
+use crate::fuzzer::domain::Atom;
+use crate::fuzzer::domain::AtomIdent;
+use crate::fuzzer::domain::Comparison;
 use std::cell::OnceCell;
 use std::collections::HashSet;
 use std::fmt::Display;

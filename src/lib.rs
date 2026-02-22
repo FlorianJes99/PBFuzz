@@ -1,2 +1,2 @@
-pub mod grammar;
+pub mod fuzzer;
 pub mod orchestrator;

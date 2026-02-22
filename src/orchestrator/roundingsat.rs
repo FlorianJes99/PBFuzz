@@ -4,7 +4,7 @@ use std::{
     process::{Command, Output},
 };
 
-use crate::grammar::domain::AtomIdent;
+use crate::fuzzer::domain::AtomIdent;
 use crate::orchestrator::external_program::{
     ErrorKind, ExternalProgramError, SolverResult, SolverStatus, Solver
 };

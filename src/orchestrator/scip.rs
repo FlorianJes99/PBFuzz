@@ -6,7 +6,7 @@ use std::{
 
 use regex::Regex;
 
-use crate::grammar::domain::AtomIdent;
+use crate::fuzzer::domain::AtomIdent;
 use crate::orchestrator::external_program::{
     ErrorKind, ExternalProgramError, Solver, SolverResult, SolverStatus,
 };

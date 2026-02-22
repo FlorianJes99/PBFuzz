@@ -1,4 +1,4 @@
-use crate::grammar::{
+use crate::fuzzer::{
     constraint::{Constraint, ConstraintKind},
     constraint_generator::{ConstraintGenerator, ConstraintSettings},
     domain::AtomIdent,

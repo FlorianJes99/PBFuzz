@@ -1,9 +1,10 @@
 use std::fs::File;
 use std::io::BufWriter;
 
-use fuzzer_pseudo_bool::grammar::helpers::print_block;
-use fuzzer_pseudo_bool::grammar::pbs_generator::GeneratorSettingsBuilder;
-use fuzzer_pseudo_bool::grammar::pbs_generator::PBSGenerator;
+use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
+use fuzzer_pseudo_bool::fuzzer::pbs_generator::CancelCondition;
+use fuzzer_pseudo_bool::fuzzer::pbs_generator::GeneratorSettingsBuilder;
+use fuzzer_pseudo_bool::fuzzer::pbs_generator::PBSGenerator;
 use log::error;
 use log::info;
 
@@ -44,7 +45,7 @@ fn main() {
         .set_bounds(0.3, 0.6)
         .coeff_range(6)
         .cancel_condition(
-            fuzzer_pseudo_bool::grammar::pbs_generator::CancelCondition::CountUnsat {
+            CancelCondition::CountUnsat {
                 max_unsat_assignments: 250,
             },
         )
