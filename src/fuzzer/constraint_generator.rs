@@ -3,7 +3,7 @@ use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
     rngs::StdRng,
-    seq::index,
+    seq::{IndexedRandom, index},
 };
 use std::i64;
 
@@ -12,7 +12,7 @@ use crate::fuzzer::{
         ArbitraryLengthConstraint, CardinalityConstraint, Constraint, ConstraintKind,
         CostraintWithUnsatAssignments, ThreeAtomConstraint,
     },
-    domain::{AtomIdent, Comparison},
+    domain::{AtomIdent, Comparison, MinFunction},
 };
 
 //  [ThreeAtom, Cardinality, Arbitrary]
@@ -222,6 +222,19 @@ impl ConstraintGenerator {
             comparison,
             self.rand.random_range(range_start..=range_end),
         )
+    }
+
+    pub fn generate_min_function(
+        &mut self,
+        possible_vars: &[AtomIdent],
+        amount: usize,
+    ) -> MinFunction {
+        let atoms = possible_vars
+            .choose_multiple(&mut self.rand, amount)
+            .sorted()
+            .map(|id| id.to_atom(self.sample_without_zero_from_range(-3, 3)))
+            .collect();
+        MinFunction::new(atoms)
     }
 
     fn sample_without_zero_from_range(&mut self, start_val: i32, end_val: i32) -> i32 {

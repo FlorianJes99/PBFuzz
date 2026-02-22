@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::BufWriter;
 
+use fuzzer_pseudo_bool::fuzzer::grammar::PBKind;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::CancelCondition;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::GeneratorSettingsBuilder;
@@ -13,20 +14,27 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 pub struct FuzzerArgs {
+    /// Seed used for reproducible runs
     #[arg(long)]
-    pub seed: u64,
+    seed: u64,
+    /// Destination to write generated grammar into
     #[arg(long)]
-    pub output_path: String,
+    output_path: String,
     // Optional arguments
+    /// Amount of distinct variables used in the PB Grammar
     #[arg(
         long,
         default_value_t = 10,
         value_parser = clap::value_parser!(u32).range(1..),
-        help = "Number of constraints used (must be > 0)"
+        help = "Number of variables used (must be > 0)"
     )]
-    pub amount_vars: u32,
+    amount_vars: u32,
+    /// Option to print statistics about a single fuzzer run
     #[arg(long, default_value_t = false)]
-    pub print_statistics: bool,
+    print_statistics: bool,
+    /// Choose mode for Fuzzer
+    #[arg(long, value_enum, default_value_t)]
+    mode: PBKind,
 }
 
 fn main() {
@@ -44,11 +52,10 @@ fn main() {
         .max_unsat_for_single_constraint(3)
         .set_bounds(0.3, 0.6)
         .coeff_range(6)
-        .cancel_condition(
-            CancelCondition::CountUnsat {
-                max_unsat_assignments: 250,
-            },
-        )
+        .cancel_condition(CancelCondition::CountUnsat {
+            max_unsat_assignments: 250,
+        })
+        .pb_kind(args.mode)
         .build();
     let mut grammar = PBSGenerator::create_grammar(args.seed, settings);
     if args.print_statistics {

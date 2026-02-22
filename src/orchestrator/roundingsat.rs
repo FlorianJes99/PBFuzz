@@ -6,7 +6,7 @@ use std::{
 
 use crate::fuzzer::domain::AtomIdent;
 use crate::orchestrator::external_program::{
-    ErrorKind, ExternalProgramError, SolverResult, SolverStatus, Solver
+    ErrorKind, ExternalProgramError, Solver, SolverResult, SolverStatus,
 };
 
 /// Struct for running the external program roundingsat and evaluating its output
@@ -32,10 +32,7 @@ impl Roundingsat {
         }
     }
 
-    fn execute_program(
-        &self,
-        input_file: &PathBuf,
-    ) -> Result<SolverResult, ExternalProgramError> {
+    fn execute_program(&self, input_file: &PathBuf) -> Result<SolverResult, ExternalProgramError> {
         Command::new(self.binary.as_os_str())
             // If solution is SAT print found model
             // needed for verification of the found result
@@ -75,21 +72,13 @@ impl Roundingsat {
                 solution_model_line = line
             }
         }
-        let status = status_line
-            .split_whitespace()
-            .last()
-            .map(|word| {
-                if word.starts_with("UNSAT") {
-                    SolverStatus::Unsat
-                } else if word.starts_with("SAT") {
-                    SolverStatus::Sat {
-                        found_model: self.parse_solution(solution_model_line),
-                    }
-                } else {
-                    SolverStatus::Unknown
-                }
-            })
-            .unwrap_or(SolverStatus::Unknown);
+        let status = match status_line {
+            "s UNSATISFIABLE" => SolverStatus::Unsat,
+            "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat {
+                found_model: self.parse_solution(solution_model_line),
+            },
+            _ => SolverStatus::Unknown,
+        };
         Ok(SolverResult::new(status, conflicts))
     }
 
@@ -97,8 +86,10 @@ impl Roundingsat {
         solution_model_line
             .split_whitespace()
             .filter(|w| w.starts_with("x"))
-            .map(|w| w.parse::<AtomIdent>())
-            .map(|r| r.expect("Roundingsat should output valid model. Probable parsing error!"))
+            .map(|w| {
+                w.parse::<AtomIdent>()
+                    .expect("Roundingsat should output valid model. Probable parsing error!")
+            })
             .collect()
     }
 }

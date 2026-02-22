@@ -1,5 +1,5 @@
 /// Basic building blocks for generating pseudo boolean constraints
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct AtomIdent(u32);
@@ -70,6 +70,27 @@ impl Display for Atom {
     }
 }
 
+pub struct MinFunction(Vec<Atom>);
+
+impl MinFunction {
+    pub fn new(atoms: Vec<Atom>) -> Self {
+        MinFunction(atoms)
+    }
+}
+
+impl Display for MinFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("min: ")?;
+        for (i, atom) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            write!(f, "{}", atom)?;
+        }
+        f.write_char(';')
+    }
+}
+
 /// Comparison enum models the different (In)equalities.
 ///
 /// PBS/PBO normally supports only >= and = operators.
@@ -89,11 +110,27 @@ impl Display for Comparison {
     }
 }
 
-#[test]
-fn display_atom() {
-    let atom = Atom::new(1, 3);
-    assert_eq!(atom.to_string(), "3 x1".to_string());
+#[cfg(test)]
+mod test {
+    use super::*;
 
-    let negative_coeff = Atom::new(1, -3);
-    assert_eq!(negative_coeff.to_string(), "-3 x1".to_string());
+    #[test]
+    fn display_atom() {
+        let atom = Atom::new(1, 3);
+        assert_eq!(atom.to_string(), "3 x1".to_string());
+
+        let negative_coeff = Atom::new(1, -3);
+        assert_eq!(negative_coeff.to_string(), "-3 x1".to_string());
+    }
+
+    #[test]
+    fn display_min_function() {
+        let min_function = MinFunction::new(vec![
+            Atom::new(1, 3),
+            Atom::new(2, 8),
+            Atom::new(5, -3)
+        ]);
+
+        assert_eq!("min: 3 x1 8 x2 -3 x5;", min_function.to_string())
+    }
 }

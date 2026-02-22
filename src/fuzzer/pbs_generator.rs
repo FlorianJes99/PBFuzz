@@ -1,167 +1,15 @@
 use crate::fuzzer::{
-    constraint::{Constraint, ConstraintKind},
+    constraint::Constraint,
     constraint_generator::{ConstraintGenerator, ConstraintSettings},
     domain::AtomIdent,
+    grammar::{PBGrammar, PBKind},
 };
 use itertools::Itertools;
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Display,
-    io::{self, Write},
-};
+use std::fmt::Display;
 
 use rand::{SeedableRng, rngs::StdRng};
-
-/// Pseudo Boolean grammar
-pub struct PBSGrammar {
-    seed: u64,
-    amount_vars: u32,
-    amount_constraints: u32,
-    amount_unsat_assignments: Option<u64>,
-    constraints: Vec<Box<dyn Constraint>>,
-}
-
-#[derive(Clone, Copy)]
-struct OccurenceWithId {
-    atom_id: AtomIdent,
-    count: u32,
-}
-
-impl OccurenceWithId {
-    fn new(atom_id: AtomIdent, count: u32) -> Self {
-        Self { atom_id, count }
-    }
-}
-
-impl Display for OccurenceWithId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.count, self.atom_id)
-    }
-}
-/// Container for various statistics about the generated grammar
-pub struct GrammarStatistics {
-    amount_constraints: u32,
-    amount_constraints_by_kind: HashMap<ConstraintKind, usize>,
-    amount_vars: u32,
-    total_var_occurences: u32,
-    max_occurence: OccurenceWithId,
-    min_occurence: OccurenceWithId,
-    average_occurence: f32,
-}
-
-impl Display for GrammarStatistics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
-        writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
-        for (k, v) in &self.amount_constraints_by_kind {
-            writeln!(f, "* Amount constraints of type {k}: {v}")?;
-        }
-        writeln!(
-            f,
-            "* Total amount of used vars: {}",
-            self.total_var_occurences
-        )?;
-        writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
-        writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
-        write!(
-            f,
-            "* Average occurences of vars: {}",
-            self.average_occurence
-        )
-    }
-}
-
-impl PBSGrammar {
-    fn new(
-        seed: u64,
-        amount_unsat_assignments: Option<u64>,
-        amount_distinct_vars: u32,
-        constraints: Vec<Box<dyn Constraint>>,
-    ) -> Self {
-        let amount_constraints = constraints
-            .len()
-            .try_into()
-            .expect("We should never generate more constraints than 2**32");
-        Self {
-            seed,
-            amount_vars: amount_distinct_vars,
-            amount_constraints,
-            amount_unsat_assignments,
-            constraints,
-        }
-    }
-
-    pub fn produce<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        info!(
-            "Generated random grammar PBS grammar with {} vars and {} constraints.",
-            self.amount_vars, self.amount_constraints
-        );
-        let amount_equal_constraints = 0; //TODO: implement this as soon as constraints can be
-        //equal with RHS
-        writeln!(
-            writer,
-            "* #variable= {} #constraint= {} #equal= {} intsize= 32",
-            self.amount_vars, self.amount_constraints, amount_equal_constraints
-        )?;
-        writeln!(writer, "* Used seed: {}", self.seed)?;
-        if let Some(n) = self.amount_unsat_assignments {
-            writeln!(writer, "* UNSAT assignments: {}", n)?;
-        }
-        writeln!(writer, "{}", self.get_statistics())?;
-
-        // write every constraint into the buffer
-        for constraint in &self.constraints {
-            writeln!(writer, "{}", constraint)?;
-        }
-        writer.flush()
-    }
-
-    pub fn get_statistics(&self) -> GrammarStatistics {
-        let mut occurences_per_var: HashMap<AtomIdent, u32> = HashMap::new();
-        for c in &self.constraints {
-            for a in c.atoms() {
-                occurences_per_var
-                    .entry(a.atom_id)
-                    .and_modify(|v| *v += 1)
-                    .or_insert(1);
-            }
-        }
-        let mut max: Option<OccurenceWithId> = Option::None;
-        let mut min: Option<OccurenceWithId> = Option::None;
-        let mut sum = 0;
-        for (id, occurences) in occurences_per_var.iter() {
-            if max.is_none() {
-                max = Some(OccurenceWithId::new(id.clone(), *occurences));
-            } else if max.is_some_and(|f| *occurences > f.count) {
-                max = Some(OccurenceWithId::new(id.clone(), *occurences));
-            }
-            if min.is_none() {
-                min = Some(OccurenceWithId::new(id.clone(), *occurences));
-            } else if min.is_some_and(|f| *occurences < f.count) {
-                min = Some(OccurenceWithId::new(id.clone(), *occurences));
-            }
-            sum += occurences;
-        }
-        let average = sum as f32 / occurences_per_var.len() as f32;
-        let amount_constraints_by_kind = self.constraints.iter().counts_by(|v| v.kind());
-        GrammarStatistics {
-            amount_constraints: self.amount_constraints,
-            amount_constraints_by_kind,
-            amount_vars: self.amount_vars,
-            total_var_occurences: sum,
-            max_occurence: max.expect("There should always be a var which occurs the most"),
-            min_occurence: min.expect("There should always be a var which occurs the least"),
-            average_occurence: average,
-        }
-    }
-
-    pub fn verify_solution(&self, true_vars: &HashSet<AtomIdent>) -> bool {
-        self.constraints.iter()
-            .all(|c| c.verify(&true_vars))
-    }
-}
 
 #[derive(Debug)]
 pub struct PBSGenerator {
@@ -200,9 +48,10 @@ impl Display for CancelCondition {
 pub struct GeneratorSettings {
     /// maximal amount of different variables used in the grammar
     max_vars: u32,
-    /// threshold for total unsat assignments - this is an upper bound, because unsats can be
-    /// duplicates
+    /// different methods to determine when to stop generation of constraints
     cancel_condition: CancelCondition,
+    /// which type of grammar we want to generate: PBS | PBO
+    grammar_kind: PBKind,
     /// How many atoms a single constraint should have
     amount_atoms_per_constraint: u32,
     max_unsat_for_single_constraint: u32,
@@ -224,6 +73,11 @@ pub struct GeneratorSettings {
 impl Display for GeneratorSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Used Settings for Generator:")?;
+        writeln!(
+            f,
+            "Problem Task                                 : {}",
+            self.grammar_kind
+        )?;
         writeln!(
             f,
             "Max used vars                                : {}",
@@ -272,10 +126,23 @@ pub struct GeneratorSettingsBuilder {
     max_vars: u32,
     max_unsat_for_single_constraint: u32,
     cancel_condition: CancelCondition,
+    grammar_kind: PBKind,
     coeff_range: u32,
     amount_atoms_per_constraint: u32,
     lower_bound_degree: f64,
     upper_bound_degree: f64,
+}
+
+impl Default for GeneratorSettingsBuilder {
+    fn default() -> Self {
+        let cancel_condition = CancelCondition::CountConstraints {
+            max_constraints: 150,
+        };
+        GeneratorSettingsBuilder::new(100)
+            .max_unsat_for_single_constraint(3)
+            .cancel_condition(cancel_condition)
+            .coeff_range(200)
+    }
 }
 
 impl GeneratorSettingsBuilder {
@@ -288,11 +155,13 @@ impl GeneratorSettingsBuilder {
         let cancel_condition = CancelCondition::CountUnsat {
             max_unsat_assignments: (max_vars as f32 * 2.4).floor() as u64,
         };
+        let grammar_kind = PBKind::PBS;
         // assignment combinations
         Self {
             max_vars,
             max_unsat_for_single_constraint,
             cancel_condition,
+            grammar_kind,
             coeff_range,
             amount_atoms_per_constraint,
             lower_bound_degree,
@@ -305,6 +174,7 @@ impl GeneratorSettingsBuilder {
             max_vars: settings.max_vars,
             max_unsat_for_single_constraint: settings.max_unsat_for_single_constraint,
             cancel_condition: settings.cancel_condition,
+            grammar_kind: settings.grammar_kind,
             coeff_range: settings.coeff_range,
             amount_atoms_per_constraint: settings.amount_atoms_per_constraint,
             lower_bound_degree: settings.lower_bound_degree,
@@ -319,6 +189,11 @@ impl GeneratorSettingsBuilder {
 
     pub fn cancel_condition(mut self, cancel_condition: CancelCondition) -> Self {
         self.cancel_condition = cancel_condition;
+        self
+    }
+
+    pub fn pb_kind(mut self, grammar_kind: PBKind) -> Self {
+        self.grammar_kind = grammar_kind;
         self
     }
 
@@ -340,6 +215,7 @@ impl GeneratorSettingsBuilder {
             max_vars: self.max_vars,
             max_unsat_for_single_constraint: self.max_unsat_for_single_constraint,
             cancel_condition: self.cancel_condition,
+            grammar_kind: self.grammar_kind,
             coeff_range: self.coeff_range,
             amount_atoms_per_constraint: self.amount_atoms_per_constraint,
             lower_bound_degree: self.lower_bound_degree,
@@ -367,11 +243,11 @@ impl PBSGenerator {
         }
     }
 
-    pub fn create_grammar(seed: u64, settings: GeneratorSettings) -> PBSGrammar {
+    pub fn create_grammar(seed: u64, settings: GeneratorSettings) -> PBGrammar {
         Self::new(seed, settings).random_grammar()
     }
 
-    fn random_grammar(&mut self) -> PBSGrammar {
+    fn random_grammar(&mut self) -> PBGrammar {
         let cancel_condition = self.settings.cancel_condition;
         let mut constraints: Vec<Box<dyn Constraint>> = vec![];
         let mut unsat_assignments = Option::None;
@@ -404,47 +280,28 @@ impl PBSGenerator {
             }
         };
 
-        let amount_distinct_vars = constraints
+        let distinct_atom_ids: Vec<AtomIdent> = constraints
             .iter()
             .flat_map(|c| c.atoms())
-            .map(|a| a.atom_id.literal_id())
+            .map(|a| a.atom_id)
             .unique()
-            .count()
-            .try_into()
-            .expect("We should never try to create programs with more than 2**32 vars");
+            .collect();
+
+        let min_constraint = match self.settings.grammar_kind {
+            PBKind::PBS => Option::None,
+            PBKind::PBO => Some(
+                self.constraint_generator
+                    .generate_min_function(&distinct_atom_ids, 5),
+            ),
+        };
 
         info!("Generated {} constraints!", constraints.len());
-        PBSGrammar::new(self.seed, unsat_assignments, amount_distinct_vars, constraints)
+        PBGrammar::new(
+            self.seed,
+            unsat_assignments,
+            distinct_atom_ids.len() as u32,
+            constraints,
+            min_constraint,
+        )
     }
-}
-
-#[test]
-fn test_statistics() {
-    use crate::grammar::constraint::CostraintWithUnsatAssignments;
-    use crate::grammar::constraint::ThreeAtomConstraint;
-    use crate::grammar::domain::{Atom, Comparison};
-    let atoms1 = [Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
-    let atoms2 = [Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
-    let atoms3 = [Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
-    let constraints = vec![
-        ThreeAtomConstraint::new(atoms1, Comparison::GrEqual, 5),
-        ThreeAtomConstraint::new(atoms2, Comparison::GrEqual, 5),
-        ThreeAtomConstraint::new(atoms3, Comparison::GrEqual, 5),
-    ];
-    let unsat_assignments = Option::Some(constraints
-        .iter()
-        .map(|c| c.amount_unsat_assignments() as u64)
-        .sum());
-    let constraints: Vec<Box<dyn Constraint>> = constraints
-        .into_iter()
-        .map(|a| Box::new(a) as Box<dyn Constraint>)
-        .collect();
-    let grammar = PBSGrammar::new(42, unsat_assignments, 4, constraints);
-    let stats = grammar.get_statistics();
-    assert_eq!(stats.amount_vars, 4);
-    assert_eq!(stats.amount_constraints, 3);
-    assert_eq!(stats.max_occurence.count, 3);
-    assert_eq!(stats.min_occurence.count, 2);
-    assert_eq!(stats.total_var_occurences, 9);
-    assert!((stats.average_occurence - 2.25).abs() < 0.001);
 }

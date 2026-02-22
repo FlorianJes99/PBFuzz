@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    fs::{self, File},
+    fs::{File},
     io::{BufWriter, Error, ErrorKind, Write},
     ops::Range,
     path::PathBuf,
@@ -15,7 +15,7 @@ use crate::{
     fuzzer::{
         helpers::print_block,
         pbs_generator::{
-            CancelCondition, GeneratorSettings, GeneratorSettingsBuilder, PBSGenerator,
+            GeneratorSettings, PBSGenerator,
         },
     },
     orchestrator::external_program::{Solver, SolverResult, SolverStatus},
@@ -29,14 +29,7 @@ pub fn run_orchestrator<T: Solver, U: Solver>(
 
     let mut stats = Stats::new();
 
-    let settings = match input.settings_file {
-        Some(file) => load_settings(file).unwrap_or_else(|e| {
-            println!("Error occured while loading settings: {}", e);
-            println!("Using default settings...");
-            default_settings()
-        }),
-        None => default_settings(),
-    };
+    let settings = input.generator_settings;
     print_block("Settings to use", &settings);
 
     let percentage_range_sat = 0.25..0.7;
@@ -155,7 +148,7 @@ fn move_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
 pub struct OrchestratorInput<T: Solver, U: Solver> {
     iterations: u32,
     fuzzer_output_dir: PathBuf,
-    settings_file: Option<PathBuf>,
+    generator_settings: GeneratorSettings,
     command1: T,
     command2: U,
 }
@@ -164,14 +157,14 @@ impl<T: Solver, U: Solver> OrchestratorInput<T, U> {
     pub fn new(
         iterations: u32,
         fuzzer_output_dir: PathBuf,
-        settings_file: Option<PathBuf>,
+        generator_settings: GeneratorSettings,
         command1: T,
         command2: U,
     ) -> Self {
         Self {
             iterations,
             fuzzer_output_dir,
-            settings_file,
+            generator_settings,
             command1,
             command2,
         }
@@ -286,23 +279,6 @@ impl Display for Stats {
             program_duration.subsec_millis()
         )
     }
-}
-
-fn default_settings() -> GeneratorSettings {
-    let cancel_condition = CancelCondition::CountConstraints {
-        max_constraints: 200,
-    };
-    GeneratorSettingsBuilder::new(100)
-        .max_unsat_for_single_constraint(3)
-        .cancel_condition(cancel_condition)
-        .coeff_range(200)
-        .build()
-}
-
-fn load_settings(file: PathBuf) -> std::io::Result<GeneratorSettings> {
-    let data = fs::read_to_string(file)?;
-    let settings = ron::from_str(&data).map_err(|e| Error::new(ErrorKind::Other, e))?;
-    Ok(settings)
 }
 
 fn save_settings(
