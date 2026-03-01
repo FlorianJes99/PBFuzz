@@ -8,6 +8,15 @@ use std::fmt::{Display, Write};
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct AtomIdent(u32);
 
+#[derive(PartialOrd, PartialEq, Eq)]
+pub struct MinObjectiveValue(i32);
+
+impl From<i32> for MinObjectiveValue {
+    fn from(value: i32) -> Self {
+        MinObjectiveValue(value)
+    }
+}
+
 impl AtomIdent {
     pub fn new(var_id: u32) -> Self {
         assert!(var_id > 0, "Identifier of an Atom needs to be > 0");
@@ -90,6 +99,10 @@ pub struct MinFunction(Vec<Atom>);
 impl MinFunction {
     pub fn new(atoms: Vec<Atom>) -> Self {
         MinFunction(atoms)
+    }
+
+    pub fn get_atoms(&self) -> &[Atom] {
+        &self.0
     }
 }
 

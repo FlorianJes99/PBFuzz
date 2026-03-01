@@ -1,3 +1,4 @@
+use crate::fuzzer::helpers::move_file;
 use std::{
     fmt::Display,
     fs::File,
@@ -16,12 +17,16 @@ use crate::{
         helpers::{compute_running_average, print_block},
         pbs_generator::{GeneratorSettings, PBSGenerator},
     },
-    orchestrator::external_program::{Solver, SolverResult, SolverStatus},
+    orchestrator::external_program::{
+        PBOProcessor, PBSProcessor, SolverResult, SolverRunner, SolverStatus, run_pbo, run_pbs,
+    },
 };
 
-pub fn run_orchestrator<T: Solver, U: Solver>(
-    input: OrchestratorInput<T, U>,
-) -> Result<(), String> {
+pub fn run_orchestrator<U, T>(input: OrchestratorInput<T, U>) -> Result<(), String>
+where
+    T: SolverRunner + PBOProcessor + PBSProcessor,
+    U: SolverRunner + PBOProcessor + PBSProcessor,
+{
     let output_file = input.fuzzer_output_dir.join("test.opb");
     println!("Writing fuzzer output into {}", &output_file.display());
 
@@ -53,72 +58,141 @@ pub fn run_orchestrator<T: Solver, U: Solver>(
             .map(|mut buf_writer| grammar.produce(&mut buf_writer))
             .map_err(|e| e.to_string())?;
 
-        println!(
-            "Solving generated instance with {}",
-            input.command1.get_name()
-        );
-        let res_program1 = input
-            .command1
-            .execute_solver(&output_file)
-            .map_err(|e| e.to_string())?;
-        println!(
-            "Solving generated instance with {}",
-            input.command2.get_name()
-        );
-        let res_program2 = input
-            .command2
-            .execute_solver(&output_file)
-            .map_err(|e| e.to_string())?;
-        let status_program1 = res_program1.get_status();
-        let status_program2 = res_program2.get_status();
-        match (status_program1, status_program2) {
-            (
-                SolverStatus::Sat {
-                    found_model: solution1,
-                },
-                SolverStatus::Sat {
-                    found_model: solution2,
-                },
-            ) => {
-                let valid1 = grammar.verify_solution(solution1);
-                let valid2 = grammar.verify_solution(solution2);
-                if valid1 && valid2 {
-                    let file_path = input
-                        .fuzzer_output_dir
-                        .join(format!("sat/sat_{}_{}.opb", seed, counter));
-                    move_file(&output_file, &file_path)?;
-                    stats.update(&res_program1);
-                } else {
-                    let file_path = input
-                        .fuzzer_output_dir
-                        .join(format!("bug/invalid_solution_{}_{}.opb", seed, counter));
-                    move_file(&output_file, &file_path)?;
-                    stats.count_bug();
+        match settings.get_problem_kind() {
+            crate::fuzzer::grammar::PBKind::PBS => {
+                println!(
+                    "Solving generated instance with {}",
+                    input.command1.get_name()
+                );
+                let res_program1 =
+                    run_pbs(&input.command1, &output_file).map_err(|e| e.to_string())?;
+                println!(
+                    "Solving generated instance with {}",
+                    input.command2.get_name()
+                );
+                let res_program2 =
+                    run_pbs(&input.command2, &output_file).map_err(|e| e.to_string())?;
+                let status_program1 = res_program1.get_status();
+                let status_program2 = res_program2.get_status();
+                match (status_program1, status_program2) {
+                    (SolverStatus::Sat(solution1), SolverStatus::Sat(solution2)) => {
+                        let valid1 = grammar.verify_solution(solution1.get_true_model());
+                        let valid2 = grammar.verify_solution(solution2.get_true_model());
+                        if valid1 && valid2 {
+                            let file_path = input
+                                .fuzzer_output_dir
+                                .join(format!("sat/sat_{}_{}.opb", seed, counter));
+                            move_file(&output_file, &file_path)?;
+                            stats.update(&res_program1);
+                        } else {
+                            let file_path = input
+                                .fuzzer_output_dir
+                                .join(format!("bug/invalid_solution_{}_{}.opb", seed, counter));
+                            move_file(&output_file, &file_path)?;
+                            stats.count_bug();
+                        }
+                    }
+                    (SolverStatus::Unsat, SolverStatus::Unsat) => {
+                        let file_path = input
+                            .fuzzer_output_dir
+                            .join(format!("unsat/unsat_{}_{}.opb", seed, counter));
+
+                        move_file(&output_file, &file_path)?;
+                        stats.update(&res_program1);
+                    }
+                    (SolverStatus::Unknown, SolverStatus::Unknown) => {
+                        let file_path = input
+                            .fuzzer_output_dir
+                            .join(format!("unknown/unknown_{}_{}.opb", seed, counter));
+
+                        move_file(&output_file, &file_path)?;
+                        stats.update(&res_program1);
+                    }
+                    // If status 1 and status 2 are unequal
+                    _ => {
+                        let file_path = input
+                            .fuzzer_output_dir
+                            .join(format!("bug/bug_{}_{}.opb", seed, counter));
+                        move_file(&output_file, &file_path)?;
+                        stats.count_bug();
+                    }
                 }
             }
-            (SolverStatus::Unsat, SolverStatus::Unsat) => {
-                let file_path = input
-                    .fuzzer_output_dir
-                    .join(format!("unsat/unsat_{}_{}.opb", seed, counter));
+            crate::fuzzer::grammar::PBKind::PBO => {
+                println!(
+                    "Solving generated instance with {}",
+                    input.command1.get_name()
+                );
+                let res_program1 =
+                    run_pbo(&input.command1, &output_file).map_err(|e| e.to_string())?;
+                println!(
+                    "Solving generated instance with {}",
+                    input.command2.get_name()
+                );
+                let res_program2 =
+                    run_pbo(&input.command2, &output_file).map_err(|e| e.to_string())?;
+                let status_program1 = res_program1.get_status();
+                let status_program2 = res_program2.get_status();
+                match (status_program1, status_program2) {
+                    (SolverStatus::Sat(solution1), SolverStatus::Sat(solution2)) => {
+                        let valid1 = grammar.verify_solution(solution1.get_true_model())
+                            && grammar.verify_min_constraint(
+                                solution1.get_true_model(),
+                                solution1.get_min_objective_values(),
+                            );
+                        let valid2 = grammar.verify_solution(solution2.get_true_model())
+                            && grammar.verify_min_constraint(
+                                solution2.get_true_model(),
+                                solution2.get_min_objective_values(),
+                            );
+                        let same_objective = solution1.get_min_objective_values()
+                            == solution2.get_min_objective_values();
+                        if !same_objective {
+                            let file_path = input
+                                .fuzzer_output_dir
+                                .join(format!("bug/different_objectives_{}_{}.opb", seed, counter));
+                            move_file(&output_file, &file_path)?;
+                            stats.count_bug();
+                        } else if !(valid1 || valid2) {
+                            let file_path = input
+                                .fuzzer_output_dir
+                                .join(format!("bug/invalid_solution_{}_{}.opb", seed, counter));
+                            move_file(&output_file, &file_path)?;
+                            stats.count_bug();
+                        } else {
+                            let file_path = input
+                                .fuzzer_output_dir
+                                .join(format!("sat/sat_{}_{}.opb", seed, counter));
+                            move_file(&output_file, &file_path)?;
+                            stats.update(&res_program1);
+                        }
+                    }
+                    (SolverStatus::Unsat, SolverStatus::Unsat) => {
+                        let file_path = input
+                            .fuzzer_output_dir
+                            .join(format!("unsat/unsat_{}_{}.opb", seed, counter));
 
-                move_file(&output_file, &file_path)?;
-                stats.update(&res_program1);
-            }
-            (SolverStatus::Unknown, SolverStatus::Unknown) => {
-                let file_path = input
-                    .fuzzer_output_dir
-                    .join(format!("unknown/unknown_{}_{}.opb", seed, counter));
+                        move_file(&output_file, &file_path)?;
+                        stats.update(&res_program1);
+                    }
+                    (SolverStatus::Unknown, SolverStatus::Unknown) => {
+                        let file_path = input
+                            .fuzzer_output_dir
+                            .join(format!("unknown/unknown_{}_{}.opb", seed, counter));
 
-                move_file(&output_file, &file_path)?;
-                stats.update(&res_program1);
-            }
-            // If status 1 and status 2 are unequal
-            _ => {
-                let file_path = input
-                    .fuzzer_output_dir
-                    .join(format!("bug/bug_{}_{}.opb", seed, counter));
-                move_file(&output_file, &file_path)?;
-                stats.count_bug();
+                        move_file(&output_file, &file_path)?;
+                        stats.update(&res_program1);
+                    }
+                    // If status 1 and status 2 are unequal
+                    _ => {
+                        let file_path = input.fuzzer_output_dir.join(format!(
+                            "bug/output_status_differs_{}_{}.opb",
+                            seed, counter
+                        ));
+                        move_file(&output_file, &file_path)?;
+                        stats.count_bug();
+                    }
+                }
             }
         }
     }
@@ -132,18 +206,11 @@ pub fn run_orchestrator<T: Solver, U: Solver>(
     Ok(())
 }
 
-fn move_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
-    std::fs::rename(&src, &dst).map_err(|e| {
-        format!(
-            "Could not move file from {} to {}\n Error: {}",
-            &src.display(),
-            &dst.display(),
-            e
-        )
-    })
-}
-
-pub struct OrchestratorInput<T: Solver, U: Solver> {
+pub struct OrchestratorInput<T, U>
+where
+    T: SolverRunner + PBOProcessor + PBSProcessor,
+    U: SolverRunner + PBOProcessor + PBSProcessor,
+{
     iterations: u32,
     fuzzer_output_dir: PathBuf,
     generator_settings: GeneratorSettings,
@@ -151,7 +218,11 @@ pub struct OrchestratorInput<T: Solver, U: Solver> {
     command2: U,
 }
 
-impl<T: Solver, U: Solver> OrchestratorInput<T, U> {
+impl<T, U> OrchestratorInput<T, U>
+where
+    T: SolverRunner + PBOProcessor + PBSProcessor,
+    U: SolverRunner + PBOProcessor + PBSProcessor,
+{
     pub fn new(
         iterations: u32,
         fuzzer_output_dir: PathBuf,
@@ -189,13 +260,13 @@ impl Stats {
             start: Instant::now(),
         }
     }
-    fn update(&mut self, result: &SolverResult) {
+    fn update<M>(&mut self, result: &SolverResult<M>) {
         // running average
         let n = self.amount_runs();
         self.average_conflicts =
             compute_running_average(self.average_conflicts, result.get_conflicts(), n);
         match result.get_status() {
-            SolverStatus::Sat { found_model: _ } => self.amount_sat += 1,
+            SolverStatus::Sat(_) => self.amount_sat += 1,
             SolverStatus::Unsat => self.amount_unsat += 1,
             SolverStatus::Unknown => self.amount_unknown += 1,
         }
@@ -303,18 +374,14 @@ fn save_settings(
 
 #[cfg(test)]
 mod tests {
+    use crate::orchestrator::external_program::{PBSValues, SolverResultPBS};
     use std::collections::HashSet;
 
     use super::*;
     #[test]
     fn test_stats() {
         let mut stats = Stats::new();
-        let res = SolverResult::new(
-            SolverStatus::Sat {
-                found_model: HashSet::new(),
-            },
-            4,
-        );
+        let res = SolverResultPBS::new(SolverStatus::Sat(PBSValues::new(HashSet::new())), 4);
 
         stats.update(&res);
         assert_eq!(1, stats.amount_runs());
@@ -323,7 +390,7 @@ mod tests {
         assert_eq!(0, stats.amount_unknown);
         assert_float_approx(4.0, stats.average_conflicts, 0.0001);
 
-        let res = SolverResult::new(SolverStatus::Unsat, 3);
+        let res = SolverResultPBS::new(SolverStatus::Unsat, 3);
 
         stats.update(&res);
         assert_eq!(2, stats.amount_runs());

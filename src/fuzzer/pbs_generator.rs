@@ -70,6 +70,12 @@ pub struct GeneratorSettings {
     upper_bound_degree: f64,
 }
 
+impl GeneratorSettings {
+    pub fn get_problem_kind(&self) -> PBKind {
+        self.grammar_kind
+    }
+}
+
 impl Display for GeneratorSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Used Settings for Generator:")?;
