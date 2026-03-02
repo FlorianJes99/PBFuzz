@@ -1,4 +1,7 @@
-use crate::fuzzer::helpers::move_file;
+use crate::fuzzer::{
+    grammar::PBKind,
+    helpers::{get_hms_parts, move_file},
+};
 use std::{
     fmt::Display,
     fs::File,
@@ -9,7 +12,7 @@ use std::{
 };
 
 use itertools::Itertools;
-use rand;
+use rand::{self, Rng};
 use ron::ser::PrettyConfig;
 
 use crate::{
@@ -36,7 +39,9 @@ where
     print_block("Settings to use", &settings);
 
     let percentage_range_sat = 0.25..0.7;
-    for counter in 1..=input.iterations {
+    let mut rng = rand::rng();
+    let timed_iter = input.stop_condition.into_timed_iterator();
+    for (counter, elapsed_time) in timed_iter {
         if counter == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
             // Terminate early if amount sat instances not in range
             // and more than 1000 iterations are scheduled
@@ -48,9 +53,13 @@ where
             break;
         }
 
-        let seed = rand::random();
+        let seed = rng.random();
 
-        print_block("", format!("Iteration {counter}"));
+        let (h, m, s) = get_hms_parts(&elapsed_time);
+        print_block(
+            "",
+            format!("Iteration {counter}\nTime elapsed {}h {}m {}s", h, m, s),
+        );
         println!("Running Fuzzer with seed {seed}...");
         let mut grammar = PBSGenerator::create_grammar(seed, settings);
         let _ok = File::create(&output_file)
@@ -59,7 +68,7 @@ where
             .map_err(|e| e.to_string())?;
 
         match settings.get_problem_kind() {
-            crate::fuzzer::grammar::PBKind::PBS => {
+            PBKind::PBS => {
                 println!(
                     "Solving generated instance with {}",
                     input.command1.get_name()
@@ -118,7 +127,7 @@ where
                     }
                 }
             }
-            crate::fuzzer::grammar::PBKind::PBO => {
+            PBKind::PBO => {
                 println!(
                     "Solving generated instance with {}",
                     input.command1.get_name()
@@ -206,12 +215,83 @@ where
     Ok(())
 }
 
+/// Iterator, which additionally keeps track of elapsed time during iterations
+///
+/// Depending on the stop condition, this iterator will stop producing values
+/// after reaching the maximum iterations or a maximum duration is elapsed
+struct TimedIterator {
+    start: Instant,
+    stop_condition: StopCondition,
+    current: u32,
+}
+
+impl Iterator for TimedIterator {
+    type Item = (u32, Duration);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.stop_condition {
+            StopCondition::MaxIterations(iter) if self.current > iter => return None,
+            StopCondition::MaxDuration(duration) if self.start.elapsed() >= duration => {
+                return None;
+            }
+            _ => {
+                // Clone the current value for returning before incrementing
+                let result = Some((self.current.clone(), self.start.elapsed()));
+                self.current += 1;
+                result
+            }
+        }
+    }
+}
+
+/// Cancel iterations of fuzzing runs
+///
+/// Stop either after n iterations or after time t is passed
+#[derive(Debug)]
+pub enum StopCondition {
+    MaxIterations(u32),
+    MaxDuration(Duration),
+}
+
+impl StopCondition {
+    /// Create the stop condition from either a maximum iteration threshold or a maximum duration
+    ///
+    /// Creation can fail if:
+    ///     max iterations < 1
+    ///     both passed values are Some
+    ///     both passed values are None
+    pub fn new(max_iter: Option<u32>, max_duration: Option<Duration>) -> Result<Self, String> {
+        match (max_iter, max_duration) {
+            (None, None) => Err("One cancelation method exptected, zero provided".to_string()),
+            (None, Some(d)) => Ok(Self::MaxDuration(d)),
+            // Because we start iterations at 1, max iterations needs to be at least 1
+            (Some(i), None) if i < 1 => Err(format!(
+                "Max iteration needs to be larger than 0, actual: {}",
+                i
+            )),
+            (Some(i), None) => Ok(Self::MaxIterations(i)),
+            (Some(_), Some(_)) => {
+                Err("Expected one cancelation method, but provided two".to_string())
+            }
+        }
+    }
+
+    fn into_timed_iterator(self) -> TimedIterator {
+        TimedIterator {
+            start: Instant::now(),
+            stop_condition: self,
+            // start at index one
+            current: 1,
+        }
+    }
+}
+
 pub struct OrchestratorInput<T, U>
 where
     T: SolverRunner + PBOProcessor + PBSProcessor,
     U: SolverRunner + PBOProcessor + PBSProcessor,
 {
-    iterations: u32,
+    stop_condition: StopCondition,
     fuzzer_output_dir: PathBuf,
     generator_settings: GeneratorSettings,
     command1: T,
@@ -224,14 +304,14 @@ where
     U: SolverRunner + PBOProcessor + PBSProcessor,
 {
     pub fn new(
-        iterations: u32,
+        stop_condition: StopCondition,
         fuzzer_output_dir: PathBuf,
         generator_settings: GeneratorSettings,
         command1: T,
         command2: U,
     ) -> Self {
         Self {
-            iterations,
+            stop_condition,
             fuzzer_output_dir,
             generator_settings,
             command1,
@@ -374,6 +454,7 @@ fn save_settings(
 
 #[cfg(test)]
 mod tests {
+    use crate::fuzzer::helpers::float_equals;
     use crate::orchestrator::external_program::{PBSValues, SolverResultPBS};
     use std::collections::HashSet;
 
@@ -388,7 +469,7 @@ mod tests {
         assert_eq!(1, stats.amount_sat);
         assert_eq!(0, stats.amount_unsat);
         assert_eq!(0, stats.amount_unknown);
-        assert_float_approx(4.0, stats.average_conflicts, 0.0001);
+        float_equals(4.0, stats.average_conflicts, 0.0001);
 
         let res = SolverResultPBS::new(SolverStatus::Unsat, 3);
 
@@ -397,17 +478,35 @@ mod tests {
         assert_eq!(1, stats.amount_sat);
         assert_eq!(1, stats.amount_unsat);
         assert_eq!(0, stats.amount_unknown);
-        assert_float_approx(3.5, stats.average_conflicts, 0.0001);
+        float_equals(3.5, stats.average_conflicts, 0.0001);
     }
 
-    fn assert_float_approx(a: f32, b: f32, epsilon: f32) {
-        assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
-        assert!(
-            (a - b).abs() <= epsilon,
-            "Assertion failed, float values {} and {} are not identical (epsilon: {})",
-            a,
-            b,
-            epsilon
-        )
+    #[test]
+    fn test_iteration_timer() {
+        let err = StopCondition::new(Some(3), Some(Duration::from_mins(1)));
+        assert!(err.is_err());
+        let err = StopCondition::new(None, None);
+        assert!(err.is_err());
+        let err = StopCondition::new(Some(0), None);
+        assert!(err.is_err());
+        let count_iter = StopCondition::new(Some(3), None)
+            .unwrap()
+            .into_timed_iterator();
+        let vec: Vec<u32> = count_iter.into_iter().map(|t| t.0).sorted().collect();
+        assert_eq!(vec![1, 2, 3], vec);
+        let count_iter = StopCondition::new(Some(1), None)
+            .unwrap()
+            .into_timed_iterator();
+        let vec: Vec<u32> = count_iter.into_iter().map(|t| t.0).sorted().collect();
+        assert_eq!(vec![1], vec);
+        let duration_iter = StopCondition::new(None, Some(Duration::from_millis(10)))
+            .unwrap()
+            .into_timed_iterator();
+        use std::thread;
+        let wait_time = 1;
+        for (i, elapsed) in duration_iter {
+            assert!(elapsed >= Duration::from_millis((i as u64 -1) * wait_time));
+            thread::sleep(Duration::from_millis(wait_time));
+        }
     }
 }

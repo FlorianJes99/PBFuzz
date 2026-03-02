@@ -22,4 +22,4 @@ mkdir out/bug
 
 echo "Building release executable..."
 cargo build --release
-target/release/fuzzer_orchestrator -o out/ -i 100 --settings-file configuration/settings.ron
+target/release/fuzzer_orchestrator -o out/ -t 1 --settings-file configuration/settings.ron

@@ -74,7 +74,12 @@ impl Scip {
         let unsat_parser = Regex::new(r"\[infeasible\]").unwrap();
         // We don't support conflict counting for scip ATM
         let conflict_count = 0;
-        let mut min_objective_result: Option<i32> = Option::None;
+        let mut min_objective_result: Result<i32, ExternalProgramError> =
+            Err(ExternalProgramError::new(
+                self.get_name(),
+                "Objective not parsed yet".to_string(),
+                ErrorKind::OutputParsingError,
+            ));
         let mut is_sat = false;
         let mut true_vars: HashSet<AtomIdent> = HashSet::new();
         for line in stdout.lines() {
@@ -91,7 +96,20 @@ impl Scip {
                 min_objective_result = line
                     .split_whitespace()
                     .last()
-                    .and_then(|w| w.trim().parse::<i32>().ok());
+                    .ok_or(ExternalProgramError::new(
+                        self.get_name(),
+                        format!("Expteced at least one word in line: {line}"),
+                        ErrorKind::OutputParsingError,
+                    ))
+                    .and_then(|w| {
+                        w.trim().parse::<i32>().map_err(|e| {
+                            ExternalProgramError::new(
+                                self.get_name(),
+                                format!("Failed to parse integer: {e}"),
+                                ErrorKind::OutputParsingError,
+                            )
+                        })
+                    });
             }
             if line.starts_with("x") {
                 if let Some(ident) = line.split_whitespace().next()
@@ -104,18 +122,14 @@ impl Scip {
 
         if is_sat {
             match min_objective_result {
-                Some(objective_result) => Ok(SolverResultPBO::new(
+                Ok(objective_result) => Ok(SolverResultPBO::new(
                     SolverStatus::Sat(PBOValues::new(
                         PBSValues::new(true_vars),
                         objective_result.into(),
                     )),
                     conflict_count,
                 )),
-                None => Err(ExternalProgramError::new(
-                    self.get_name(),
-                    "Failed to parse objective value".to_string(),
-                    ErrorKind::OutputParsingError,
-                )),
+                Err(e) => Err(e),
             }
         } else {
             Ok(SolverResultPBO::new(SolverStatus::Unknown, 0))

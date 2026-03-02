@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::{fmt::Display, path::PathBuf, time::Duration};
 
 pub fn print_block<T: Display>(heading: &str, item: T) {
     let amount_signs = 40;
@@ -16,10 +16,48 @@ pub fn print_block<T: Display>(heading: &str, item: T) {
     println!("")
 }
 
+/// Returns the parts of a duration in the format (hours, minutes, seconds)
+///
+/// Example
+/// ```rust
+/// # use fuzzer_pseudo_bool::fuzzer::helpers::get_hms_parts;
+/// # use std::time::Duration;
+/// let dur = Duration::from_secs(9_812);
+/// let (h, m, s) = get_hms_parts(&dur);
+/// assert_eq!(2, h);
+/// assert_eq!(43, m);
+/// assert_eq!(32, s);
+/// ````
+pub fn get_hms_parts(duration: &Duration) -> (u64, u64, u64) {
+    let secs = duration.as_secs();
+    let hours = secs / 3600;
+    let remainder = secs % 3600;
+    let mins = remainder / 60;
+    let secs = remainder % 60;
+    (hours, mins, secs)
+}
+
+/// Compute the running average given a current average, a sample, and the size of already measured
+/// samples
+///
+/// Example:
+/// ```rust
+///  # use fuzzer_pseudo_bool::fuzzer::helpers::compute_running_average;
+///  let current_average = (2 + 3) as f32 / 2.0;
+///  let total_runs = 2;
+///  let sample = 5;
+///  let new_average = compute_running_average(current_average, sample, total_runs);
+///  assert_eq!(new_average, (2 + 3 + 5) as f32 / 3.0);
+/// ````
+/// This is expected to return the same like just computing `(2+3+5) / 3`
 pub fn compute_running_average(current_average: f32, sample: u32, total_runs: u32) -> f32 {
     return (total_runs as f32 * current_average + sample as f32) / (total_runs + 1) as f32;
 }
 
+/// Moves a file from the specified source to a new destination
+///
+/// This operation calls the rename function of the std crate and is just a simple wrapper
+/// and formats the error value to a string.
 pub fn move_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
     std::fs::rename(&src, &dst).map_err(|e| {
         format!(
@@ -29,4 +67,49 @@ pub fn move_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
             e
         )
     })
+}
+
+/// Helper function to check two floats on equality
+///
+/// ```rust
+/// # use fuzzer_pseudo_bool::fuzzer::helpers::float_equals;
+/// assert!(float_equals(3.333332, 3.333335, 0.0001))
+/// ````
+pub fn float_equals(a: f32, b: f32, epsilon: f32) -> bool {
+    assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
+    (a - b).abs() <= epsilon
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_duration_to_hours() {
+        let dur = Duration::from_mins(255);
+        let (h, m, s) = get_hms_parts(&dur);
+        assert_eq!(4, h);
+        assert_eq!(15, m);
+        assert_eq!(0, s);
+    }
+
+    #[test]
+    fn test_equals_float() {
+        assert!(float_equals(3.333332, 3.333335, 0.0001))
+    }
+
+    #[test]
+    fn test_running_average() {
+        let current_average = (2 + 3) as f32 / 2.0;
+        let sample = 5;
+        let total_runs = 2;
+        let new_average = compute_running_average(current_average, sample, total_runs);
+        let expected_average = (2 + 3 + sample) as f32 / 3.0;
+        assert!(
+            float_equals(expected_average, new_average, 0.0001,),
+            "Expected: {}\nActual: {}",
+            expected_average,
+            new_average
+        )
+    }
 }
