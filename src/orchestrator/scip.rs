@@ -85,7 +85,9 @@ impl Scip {
         for line in stdout.lines() {
             let line = line.trim();
             if unsat_parser.is_match(line) {
-                return Ok(SolverResultPBO::new(SolverStatus::Unsat, conflict_count));
+                return Ok(SolverStatus::Unsat {
+                    conflicts: conflict_count,
+                });
             }
 
             if sat_parser.is_match(line) {
@@ -122,17 +124,14 @@ impl Scip {
 
         if is_sat {
             match min_objective_result {
-                Ok(objective_result) => Ok(SolverResultPBO::new(
-                    SolverStatus::Sat(PBOValues::new(
-                        PBSValues::new(true_vars),
-                        objective_result.into(),
-                    )),
-                    conflict_count,
-                )),
+                Ok(objective_result) => Ok(SolverStatus::Sat {
+                    conflicts: conflict_count,
+                    solution: PBOValues::new(PBSValues::new(true_vars), objective_result.into()),
+                }),
                 Err(e) => Err(e),
             }
         } else {
-            Ok(SolverResultPBO::new(SolverStatus::Unknown, 0))
+            Ok(SolverStatus::Unknown)
         }
     }
 
@@ -150,7 +149,9 @@ impl Scip {
         for line in stdout.lines() {
             let line = line.trim();
             if unsat_parser.is_match(line) {
-                return Ok(SolverResultPBS::new(SolverStatus::Unsat, conflict_count));
+                return Ok(SolverStatus::Unsat {
+                    conflicts: conflict_count,
+                });
             }
 
             if sat_parser.is_match(line) {
@@ -167,12 +168,12 @@ impl Scip {
         }
 
         if is_sat {
-            Ok(SolverResultPBS::new(
-                SolverStatus::Sat(PBSValues::new(true_vars)),
-                conflict_count,
-            ))
+            Ok(SolverStatus::Sat {
+                conflicts: conflict_count,
+                solution: PBSValues::new(true_vars),
+            })
         } else {
-            Ok(SolverResultPBS::new(SolverStatus::Unknown, 0))
+            Ok(SolverStatus::Unknown)
         }
     }
 }

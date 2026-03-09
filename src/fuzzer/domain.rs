@@ -124,7 +124,7 @@ impl Display for MinFunction {
 /// PBS/PBO normally supports only >= and = operators.
 #[derive(Debug)]
 pub enum Comparison {
-    //TODO:  Equal,
+    //TODO: Equal,
     GrEqual,
 }
 

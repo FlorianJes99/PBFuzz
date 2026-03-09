@@ -1,6 +1,9 @@
 use std::{collections::HashSet, fmt::Display, path::PathBuf, process::Output};
 
-use crate::fuzzer::domain::{AtomIdent, MinObjectiveValue};
+use crate::fuzzer::{
+    domain::{AtomIdent, MinObjectiveValue},
+    grammar::PBGrammar,
+};
 
 /// Shared behavior in order to run an external program and extract the output printed to console
 pub trait SolverRunner {
@@ -60,6 +63,17 @@ pub struct PBSValues {
     true_vars: HashSet<AtomIdent>,
 }
 
+impl SatSolutionVerifyer for PBSValues {
+    fn verify_model(&self, grammar: &PBGrammar) -> bool {
+        grammar.verify_solution(&self.true_vars)
+    }
+
+    fn has_same_min_objective(&self, _: &Self) -> bool {
+        // pbs does not track min objective
+        true
+    }
+}
+
 impl PBSValues {
     pub fn new(true_vars: HashSet<AtomIdent>) -> Self {
         Self { true_vars }
@@ -75,6 +89,16 @@ pub struct PBOValues {
     min_objective_value: MinObjectiveValue,
 }
 
+impl SatSolutionVerifyer for PBOValues {
+    fn verify_model(&self, grammar: &PBGrammar) -> bool {
+        self.pbs_values.verify_model(grammar)
+            && grammar.verify_min_constraint(&self.pbs_values.true_vars, &self.min_objective_value)
+    }
+
+    fn has_same_min_objective(&self, other: &Self) -> bool {
+        self.min_objective_value == other.min_objective_value
+    }
+}
 impl PBOValues {
     pub fn new(pbs_values: PBSValues, min_objective_value: MinObjectiveValue) -> Self {
         Self {
@@ -92,71 +116,99 @@ impl PBOValues {
     }
 }
 
-pub type SolverResultPBS = SolverResult<PBSValues>;
-pub type SolverResultPBO = SolverResult<PBOValues>;
-
-pub struct SolverResult<M> {
-    status: SolverStatus<M>,
-    conflicts: u32,
+pub trait SatSolutionVerifyer {
+    fn verify_model(&self, grammar: &PBGrammar) -> bool;
+    fn has_same_min_objective(&self, other: &Self) -> bool;
 }
 
-impl<M> SolverResult<M> {
-    pub fn get_conflicts(&self) -> u32 {
-        self.conflicts
-    }
-
-    pub fn get_status(&self) -> &SolverStatus<M> {
-        &self.status
-    }
-}
-
-impl SolverResultPBO {
-    pub fn new(status: SolverStatus<PBOValues>, conflicts: u32) -> Self {
-        Self { status, conflicts }
-    }
-}
-
-impl SolverResultPBS {
-    pub fn new(status: SolverStatus<PBSValues>, conflicts: u32) -> Self {
-        Self { status, conflicts }
-    }
-}
+pub type SolverResultPBS = SolverStatus<PBSValues>;
+pub type SolverResultPBO = SolverStatus<PBOValues>;
 
 #[derive(Debug, Clone)]
 pub enum SolverStatus<M> {
-    Sat(M),
-    Unsat,
+    Sat { conflicts: u32, solution: M },
+    Unsat { conflicts: u32 },
     Unknown,
 }
 
-impl<M> SolverStatus<M> {
-    pub fn has_same_status(&self, other: &SolverStatus<M>) -> bool {
+impl<M: SatSolutionVerifyer> SolverStatus<M> {
+    pub fn compare_status(&self, other: &SolverStatus<M>, grammar: &PBGrammar) -> IterationOutcome {
         match (self, other) {
-            // Different solvers can possibly find different sat models.
-            // Ignore when just comparing status
-            (SolverStatus::Sat(_), SolverStatus::Sat(_)) => true,
-            (SolverStatus::Unsat, SolverStatus::Unsat) => true,
-            (SolverStatus::Unknown, SolverStatus::Unknown) => true,
-            _ => false,
+            (
+                SolverStatus::Sat {
+                    conflicts: c1,
+                    solution: s1,
+                },
+                SolverStatus::Sat {
+                    // Currently we don't track conflicts for scip
+                    conflicts: _,
+                    solution: s2,
+                },
+            ) => {
+                let v1 = s1.verify_model(grammar);
+                if !v1 {
+                    return IterationOutcome::Bug {
+                        reason: BugReason::InvalidSolution,
+                    };
+                }
+                let v2 = s2.verify_model(grammar);
+                if !v2 {
+                    return IterationOutcome::Bug {
+                        reason: BugReason::InvalidSolution,
+                    };
+                }
+                if s1.has_same_min_objective(s2) {
+                    return IterationOutcome::Sat { conflicts: *c1 };
+                } else {
+                    return IterationOutcome::Bug {
+                        reason: BugReason::DifferentObjectives,
+                    };
+                }
+            }
+            (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: _ }) => {
+                IterationOutcome::Unsat { conflicts: *c1 }
+            }
+            (SolverStatus::Unknown, SolverStatus::Unknown) => IterationOutcome::Unknown,
+            _ => IterationOutcome::Bug {
+                reason: BugReason::OutputStatusDiffers,
+            },
         }
     }
+}
 
-    pub fn get_status_string(&self) -> String {
-        match self {
-            SolverStatus::Sat(_) => "SAT",
-            SolverStatus::Unsat => "UNSAT",
-            SolverStatus::Unknown => "UNKNOWN",
-        }
-        .to_string()
-    }
+pub enum IterationOutcome {
+    Sat { conflicts: u32 },
+    Unsat { conflicts: u32 },
+    Unknown,
+    Bug { reason: BugReason },
+    Error { error: ExternalProgramError },
+}
 
-    pub fn is_sat(&self) -> bool {
+impl IterationOutcome {
+    pub fn get_folder_name(&self) -> &str {
         match self {
-            SolverStatus::Sat(_) => true,
-            SolverStatus::Unsat => false,
-            SolverStatus::Unknown => false,
+            IterationOutcome::Sat { .. } => "sat",
+            IterationOutcome::Unsat { .. } => "unsat",
+            IterationOutcome::Unknown => "unknown",
+            IterationOutcome::Bug { .. } => "bug",
+            IterationOutcome::Error { .. } => "error",
         }
     }
+    pub fn get_file_name_prefix(&self) -> &str {
+        match self {
+            IterationOutcome::Sat { .. } => "sat",
+            IterationOutcome::Unsat { .. } => "unsat",
+            IterationOutcome::Unknown => "unknown",
+            IterationOutcome::Bug { .. } => "bug",
+            IterationOutcome::Error { .. } => "error",
+        }
+    }
+}
+
+pub enum BugReason {
+    InvalidSolution,
+    DifferentObjectives,
+    OutputStatusDiffers,
 }
 
 #[derive(Debug)]

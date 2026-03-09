@@ -93,22 +93,27 @@ impl Roundingsat {
             }
         }
         let status = match status_line {
-            "s UNSATISFIABLE" => SolverStatus::Unsat,
-            "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat(PBOValues::new(
-                PBSValues::new(self.parse_solution(solution_model_line)),
-                objective_min_result
-                    .ok_or_else(|| {
-                        ExternalProgramError::new(
-                            self.get_name(),
-                            "Error while parsing minimum objective value".to_string(),
-                            ErrorKind::OutputParsingError,
-                        )
-                    })?
-                    .into(),
-            )),
+            "s UNSATISFIABLE" => SolverStatus::Unsat {
+                conflicts: conflicts,
+            },
+            "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat {
+                conflicts: conflicts,
+                solution: PBOValues::new(
+                    PBSValues::new(self.parse_solution(solution_model_line)),
+                    objective_min_result
+                        .ok_or_else(|| {
+                            ExternalProgramError::new(
+                                self.get_name(),
+                                "Error while parsing minimum objective value".to_string(),
+                                ErrorKind::OutputParsingError,
+                            )
+                        })?
+                        .into(),
+                ),
+            },
             _ => SolverStatus::Unknown,
         };
-        Ok(SolverResultPBO::new(status, conflicts))
+        Ok(status)
     }
 
     fn extract_pbs_result_from_output(
@@ -135,13 +140,16 @@ impl Roundingsat {
             }
         }
         let status = match status_line {
-            "s UNSATISFIABLE" => SolverStatus::Unsat,
-            "s SATISFIABLE" | "s OPTIMUM FOUND" => {
-                SolverStatus::Sat(PBSValues::new(self.parse_solution(solution_model_line)))
-            }
+            "s UNSATISFIABLE" => SolverStatus::Unsat {
+                conflicts: conflicts,
+            },
+            "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat {
+                conflicts: conflicts,
+                solution: PBSValues::new(self.parse_solution(solution_model_line)),
+            },
             _ => SolverStatus::Unknown,
         };
-        Ok(SolverResultPBS::new(status, conflicts))
+        Ok(status)
     }
 
     fn parse_solution(&self, solution_model_line: &str) -> HashSet<AtomIdent> {
