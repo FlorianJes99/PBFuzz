@@ -7,7 +7,7 @@ use crate::fuzzer::{
 use itertools::Itertools;
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
+use std::{fmt::Display, time::Instant};
 
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -254,6 +254,7 @@ impl PBSGenerator {
     }
 
     fn random_grammar(&mut self) -> PBGrammar {
+        let start = Instant::now();
         let cancel_condition = self.settings.cancel_condition;
         let mut constraints: Vec<Box<dyn Constraint>> = vec![];
         let mut unsat_assignments = Option::None;
@@ -308,6 +309,7 @@ impl PBSGenerator {
             distinct_atom_ids.len() as u32,
             constraints,
             min_constraint,
+            start.elapsed(),
         )
     }
 }

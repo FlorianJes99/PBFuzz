@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use std::fmt::Display;
 use std::io::Result;
 use std::io::Write;
+use std::time::Duration;
+use std::time::Instant;
 
 use itertools::Itertools;
 use log::info;
@@ -44,6 +46,7 @@ pub struct PBGrammar {
     amount_unsat_assignments: Option<u64>,
     constraints: Vec<Box<dyn Constraint>>,
     min_constraint: Option<MinFunction>,
+    generation_time: Duration,
 }
 
 impl PBGrammar {
@@ -53,6 +56,7 @@ impl PBGrammar {
         amount_distinct_vars: u32,
         constraints: Vec<Box<dyn Constraint>>,
         min_constraint: Option<MinFunction>,
+        generation_time: Duration,
     ) -> Self {
         let amount_constraints = constraints
             .len()
@@ -65,9 +69,11 @@ impl PBGrammar {
             amount_unsat_assignments,
             constraints,
             min_constraint,
+            generation_time,
         }
     }
-    pub fn produce<W: Write>(&mut self, writer: &mut W) -> Result<()> {
+    pub fn produce<W: Write>(&mut self, writer: &mut W) -> Result<Duration> {
+        let start = Instant::now();
         info!(
             "Generated random grammar PBS grammar with {} vars and {} constraints.",
             self.amount_vars, self.amount_constraints
@@ -94,7 +100,8 @@ impl PBGrammar {
         for constraint in &self.constraints {
             writeln!(writer, "{}", constraint)?;
         }
-        writer.flush()
+        writer.flush()?;
+        Ok(start.elapsed())
     }
 
     pub fn get_statistics(&self) -> GrammarStatistics {
@@ -133,6 +140,7 @@ impl PBGrammar {
             max_occurence: max.expect("There should always be a var which occurs the most"),
             min_occurence: min.expect("There should always be a var which occurs the least"),
             average_occurence: average,
+            generation_time: self.generation_time,
         }
     }
 
@@ -169,6 +177,13 @@ pub struct GrammarStatistics {
     max_occurence: OccurenceWithId,
     min_occurence: OccurenceWithId,
     average_occurence: f32,
+    generation_time: Duration,
+}
+
+impl GrammarStatistics {
+    pub fn get_generation_time(&self) -> &Duration {
+        &self.generation_time
+    }
 }
 
 impl Display for GrammarStatistics {
@@ -185,10 +200,15 @@ impl Display for GrammarStatistics {
         )?;
         writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
         writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
-        write!(
+        writeln!(
             f,
             "* Average occurences of vars: {}",
             self.average_occurence
+        )?;
+        write!(
+            f,
+            "* Generation time: {}ms",
+            self.generation_time.as_millis()
         )
     }
 }
@@ -238,7 +258,14 @@ mod test {
             .into_iter()
             .map(|a| Box::new(a) as Box<dyn Constraint>)
             .collect();
-        let grammar = PBGrammar::new(42, unsat_assignments, 4, constraints, Option::None);
+        let grammar = PBGrammar::new(
+            42,
+            unsat_assignments,
+            4,
+            constraints,
+            Option::None,
+            Duration::from_secs(0),
+        );
         let stats = grammar.get_statistics();
         assert_eq!(stats.amount_vars, 4);
         assert_eq!(stats.amount_constraints, 3);

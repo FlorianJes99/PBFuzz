@@ -1,6 +1,9 @@
-use crate::fuzzer::{
-    grammar::PBKind,
-    helpers::{get_hms_parts, move_file},
+use crate::{
+    fuzzer::{
+        grammar::PBKind,
+        helpers::{RunningAverage, get_hms_parts, move_file},
+    },
+    orchestrator::external_program::ExternalProgramError,
 };
 use std::{
     fmt::Display,
@@ -12,12 +15,13 @@ use std::{
 };
 
 use itertools::Itertools;
+use log::{error, info};
 use rand::{self, Rng};
 use ron::ser::PrettyConfig;
 
 use crate::{
     fuzzer::{
-        helpers::{compute_running_average, print_block},
+        helpers::print_block,
         pbs_generator::{GeneratorSettings, PBSGenerator},
     },
     orchestrator::external_program::{
@@ -58,14 +62,22 @@ where
         let (h, m, s) = get_hms_parts(&elapsed_time);
         print_block(
             "",
-            format!("Iteration {counter}\nTime elapsed {}h {}m {}s", h, m, s),
+            format!("Iteration {counter}\nTime elapsed: {}h {}m {}s", h, m, s),
         );
         println!("Running Fuzzer with seed {seed}...");
         let mut grammar = PBSGenerator::create_grammar(seed, settings);
-        let _ok = File::create(&output_file)
+        let duration_write_to_file = File::create(&output_file)
             .map(|file| BufWriter::new(file))
-            .map(|mut buf_writer| grammar.produce(&mut buf_writer))
+            .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
             .map_err(|e| e.to_string())?;
+        let grammar_statistics = grammar.get_statistics();
+        let output_generation_duration =
+            *grammar_statistics.get_generation_time() + duration_write_to_file;
+        info!(
+            "Created problem in: {:.3}ms",
+            (output_generation_duration.as_nanos() as f64 / 1_000_000.0)
+        );
+        stats.update_average_input_generation_time(&output_generation_duration);
 
         match settings.get_problem_kind() {
             PBKind::PBS => {
@@ -215,6 +227,32 @@ where
     Ok(())
 }
 
+enum IterationOutcome {
+    Sat {
+        file_path: PathBuf,
+    },
+    Unsat {
+        file_path: PathBuf,
+    },
+    Unknown {
+        file_path: PathBuf,
+    },
+    Bug {
+        file_path: PathBuf,
+        reason: BugReason,
+    },
+    Error {
+        file_path: PathBuf,
+        error: ExternalProgramError,
+    },
+}
+
+enum BugReason {
+    InvalidSolution,
+    DifferentObjectives,
+    OutputStatusDiffers,
+}
+
 /// Iterator, which additionally keeps track of elapsed time during iterations
 ///
 /// Depending on the stop condition, this iterator will stop producing values
@@ -324,7 +362,8 @@ struct Stats {
     amount_sat: u32,
     amount_unsat: u32,
     amount_unknown: u32,
-    average_conflicts: f32,
+    average_conflicts: RunningAverage,
+    average_problem_generation_time: RunningAverage,
     bugs_found: u32,
     start: Instant,
 }
@@ -335,16 +374,25 @@ impl Stats {
             amount_sat: 0,
             amount_unsat: 0,
             amount_unknown: 0,
-            average_conflicts: 0.0,
+            average_conflicts: RunningAverage::default(),
+            average_problem_generation_time: RunningAverage::default(),
             bugs_found: 0,
             start: Instant::now(),
         }
     }
+
+    fn update_average_input_generation_time(&mut self, output_generation_duration: &Duration) {
+        match output_generation_duration.as_nanos().try_into() {
+            Ok(millis) => self.average_problem_generation_time.update(millis),
+            Err(err) => error!(
+                "Could not update average problem generation!\nError: {}",
+                err
+            ),
+        }
+    }
     fn update<M>(&mut self, result: &SolverResult<M>) {
         // running average
-        let n = self.amount_runs();
-        self.average_conflicts =
-            compute_running_average(self.average_conflicts, result.get_conflicts(), n);
+        self.average_conflicts.update(result.get_conflicts());
         match result.get_status() {
             SolverStatus::Sat(_) => self.amount_sat += 1,
             SolverStatus::Unsat => self.amount_unsat += 1,
@@ -402,14 +450,14 @@ impl Display for Stats {
         writeln!(
             f,
             "Average conficts to solve                : {}",
-            self.average_conflicts
+            self.average_conflicts.get_average()
         )?;
         writeln!(
             f,
             "Bugs found                               : {}",
             self.bugs_found
         )?;
-        let program_duration = Instant::now().duration_since(self.start);
+        let program_duration = self.start.elapsed();
         let avg_time_per_instance = if self.amount_runs() == 0 {
             Duration::new(0, 0)
         } else {
@@ -421,11 +469,16 @@ impl Display for Stats {
             avg_time_per_instance.as_secs(),
             avg_time_per_instance.subsec_millis()
         )?;
+        writeln!(
+            f,
+            "Average time for problem generation      : {:.3}ms",
+            self.average_problem_generation_time.get_average() / 1_000_000.0
+        )?;
+        let (h, m, s) = get_hms_parts(&program_duration);
         write!(
             f,
-            "Duration of program                      : {}.{:.3}s",
-            program_duration.as_secs(),
-            program_duration.subsec_millis()
+            "Duration of program                      : {}h {}m {}s",
+            h, m, s
         )
     }
 }
@@ -469,7 +522,7 @@ mod tests {
         assert_eq!(1, stats.amount_sat);
         assert_eq!(0, stats.amount_unsat);
         assert_eq!(0, stats.amount_unknown);
-        float_equals(4.0, stats.average_conflicts, 0.0001);
+        float_equals(4.0, stats.average_conflicts.get_average(), 0.0001);
 
         let res = SolverResultPBS::new(SolverStatus::Unsat, 3);
 
@@ -478,7 +531,7 @@ mod tests {
         assert_eq!(1, stats.amount_sat);
         assert_eq!(1, stats.amount_unsat);
         assert_eq!(0, stats.amount_unknown);
-        float_equals(3.5, stats.average_conflicts, 0.0001);
+        float_equals(3.5, stats.average_conflicts.get_average(), 0.0001);
     }
 
     #[test]
@@ -505,7 +558,7 @@ mod tests {
         use std::thread;
         let wait_time = 1;
         for (i, elapsed) in duration_iter {
-            assert!(elapsed >= Duration::from_millis((i as u64 -1) * wait_time));
+            assert!(elapsed >= Duration::from_millis((i - 1) as u64 * wait_time));
             thread::sleep(Duration::from_millis(wait_time));
         }
     }

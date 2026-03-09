@@ -1,5 +1,6 @@
 use std::{fmt::Display, path::PathBuf, time::Duration};
 
+/// Wrap a printable Item in a block of equal-signs and a header
 pub fn print_block<T: Display>(heading: &str, item: T) {
     let amount_signs = 40;
     let len_heading = heading.chars().count();
@@ -54,6 +55,35 @@ pub fn compute_running_average(current_average: f32, sample: u32, total_runs: u3
     return (total_runs as f32 * current_average + sample as f32) / (total_runs + 1) as f32;
 }
 
+/// Encapsulates logic of computing average such that there is no need for manually counting the
+/// total runs until point x.
+///
+/// When updating the average with a new value the struct automatically updates the sample_count as
+/// well
+#[derive(Default)]
+pub struct RunningAverage {
+    average: f32,
+    sample_count: u32,
+}
+
+impl RunningAverage {
+    pub fn new(average: f32, sample_count: u32) -> Self {
+        RunningAverage {
+            average,
+            sample_count,
+        }
+    }
+    pub fn update(&mut self, sample: u32) {
+        self.average = (self.sample_count as f32 * self.average + sample as f32)
+            / (self.sample_count + 1) as f32;
+        self.sample_count += 1;
+    }
+
+    pub fn get_average(&self) -> f32 {
+        self.average
+    }
+}
+
 /// Moves a file from the specified source to a new destination
 ///
 /// This operation calls the rename function of the std crate and is just a simple wrapper
@@ -106,10 +136,23 @@ mod tests {
         let new_average = compute_running_average(current_average, sample, total_runs);
         let expected_average = (2 + 3 + sample) as f32 / 3.0;
         assert!(
-            float_equals(expected_average, new_average, 0.0001,),
+            float_equals(expected_average, new_average, 0.00001),
             "Expected: {}\nActual: {}",
             expected_average,
             new_average
-        )
+        );
+
+        let mut ra = RunningAverage::default();
+        assert_eq!(0, ra.sample_count);
+        assert_eq!(0.0, ra.average);
+        ra.update(2);
+        ra.update(3);
+        ra.update(5);
+        assert!(
+            float_equals(expected_average, ra.get_average(), 0.00001),
+            "Expected: {}\nActual: {}",
+            expected_average,
+            ra.get_average()
+        );
     }
 }
