@@ -19,8 +19,10 @@ use log::Level;
 fn main() {
     let args = OrchestratorArgs::parse();
     init_logger(args.log);
-    let rounding_sat = Roundingsat::new("roundingsat".into());
-    let scip = Scip::new("software/scip".into());
+    let roundingsat_bin = args.roundingsat_bin.unwrap_or("roundingsat".into());
+    let scip_bin = args.scip_bin.unwrap_or("scip".into());
+    let rounding_sat = Roundingsat::new(roundingsat_bin);
+    let scip = Scip::new(scip_bin);
     let mut settings = match args.settings_file {
         Some(file) => load_settings(file).unwrap_or_else(|e| {
             println!("Error occured while loading settings: {}", e);
@@ -104,4 +106,16 @@ struct OrchestratorArgs {
     /// used for the next run.
     #[arg(long)]
     settings_file: Option<PathBuf>,
+
+    /// Specify custom path to the `roundingsat` binary
+    ///
+    /// If nothing is provided the program expects to find the binary in the $PATH.
+    #[arg(long)]
+    roundingsat_bin: Option<PathBuf>,
+
+    /// Specify custom path to the `scip` binary
+    ///
+    /// If nothing is provided the program expects to find the binary in the $PATH.
+    #[arg(long)]
+    scip_bin: Option<PathBuf>,
 }

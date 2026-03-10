@@ -14,4 +14,4 @@ function handle_sigint() {
 
 echo "Building release executable..."
 cargo build --release
-target/release/fuzzer_orchestrator -l info -o out/ -t 1 --settings-file configuration/settings.ron
+target/release/fuzzer_orchestrator -l info -o out/ -t 1 --settings-file configuration/settings.ron --scip-bin software/scip
