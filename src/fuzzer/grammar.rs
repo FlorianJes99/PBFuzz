@@ -207,8 +207,8 @@ impl Display for GrammarStatistics {
         )?;
         write!(
             f,
-            "* Generation time: {}ms",
-            self.generation_time.as_millis()
+            "* Generation time: {:.3}ms",
+            self.generation_time.as_nanos() as f64 / 1_000_000.0
         )
     }
 }

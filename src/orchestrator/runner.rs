@@ -3,8 +3,9 @@ use crate::{
         grammar::PBKind,
         helpers::{RunningAverage, get_hms_parts, move_file},
     },
-    orchestrator::external_program::IterationOutcome,
+    orchestrator::{external_program::IterationOutcome, folders::prepare_output_folder},
 };
+use std::path::Path;
 use std::{
     fmt::Display,
     fs::File,
@@ -32,6 +33,9 @@ where
     T: SolverRunner + PBOProcessor + PBSProcessor,
     U: SolverRunner + PBOProcessor + PBSProcessor,
 {
+    prepare_output_folder(&input.fuzzer_output_dir)
+        .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
+
     let output_file = input.fuzzer_output_dir.join("test.opb");
     println!("Writing fuzzer output into {}", &output_file.display());
 
@@ -367,7 +371,7 @@ impl Display for Stats {
 
 fn save_settings(
     settings: &GeneratorSettings,
-    dir: &PathBuf,
+    dir: &Path,
     stats_opt: Option<&Stats>,
 ) -> std::io::Result<()> {
     let data = ron::ser::to_string_pretty(settings, PrettyConfig::default())
@@ -395,7 +399,7 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut stats = Stats::new();
-        let res = IterationOutcome::Sat {conflicts: 0};
+        let res = IterationOutcome::Sat { conflicts: 0 };
 
         stats.update(&res);
         assert_eq!(1, stats.amount_runs());
@@ -404,7 +408,7 @@ mod tests {
         assert_eq!(0, stats.amount_unknown);
         float_equals(4.0, stats.average_conflicts.get_average(), 0.0001);
 
-        let res = IterationOutcome::Unsat {conflicts: 1};
+        let res = IterationOutcome::Unsat { conflicts: 1 };
 
         stats.update(&res);
         assert_eq!(2, stats.amount_runs());

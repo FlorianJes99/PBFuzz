@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf, time::Duration};
+use std::{fmt::Display, path::Path, time::Duration};
 
 /// Wrap a printable Item in a block of equal-signs and a header
 pub fn print_block<T: Display>(heading: &str, item: T) {
@@ -88,7 +88,7 @@ impl RunningAverage {
 ///
 /// This operation calls the rename function of the std crate and is just a simple wrapper
 /// and formats the error value to a string.
-pub fn move_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
+pub fn move_file(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::rename(&src, &dst).map_err(|e| {
         format!(
             "Could not move file from {} to {}\n Error: {}",

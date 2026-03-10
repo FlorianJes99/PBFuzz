@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Output},
 };
 
@@ -20,7 +20,7 @@ pub struct Roundingsat {
 }
 
 impl SolverRunner for Roundingsat {
-    fn run(&self, file_path: &PathBuf) -> Result<Output, ExternalProgramError> {
+    fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
         Command::new(self.binary.as_os_str())
             // If solution is SAT print found model
             // needed for verification of the found result

@@ -1,8 +1,11 @@
-use std::{collections::HashSet, fmt::Display, path::PathBuf, process::Output};
+use std::{collections::HashSet, fmt::Display, path::Path, process::Output};
 
-use crate::fuzzer::{
-    domain::{AtomIdent, MinObjectiveValue},
-    grammar::PBGrammar,
+use crate::{
+    fuzzer::{
+        domain::{AtomIdent, MinObjectiveValue},
+        grammar::PBGrammar,
+    },
+    orchestrator::folders::{BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER},
 };
 
 /// Shared behavior in order to run an external program and extract the output printed to console
@@ -11,7 +14,7 @@ pub trait SolverRunner {
     ///
     /// file_path: the PBS or PBO file, we want to solve.
     /// returns: the raw console output or some error while executing the program
-    fn run(&self, file_path: &PathBuf) -> Result<Output, ExternalProgramError>;
+    fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError>;
     /// Simply the name of the binary/program we are running
     fn get_name(&self) -> String;
 }
@@ -29,7 +32,7 @@ pub trait PBSProcessor {
 ///
 /// Provide implementations for running an external program and extracting a result from
 /// the output
-pub fn run_pbs<P>(program: &P, file_path: &PathBuf) -> Result<SolverResultPBS, ExternalProgramError>
+pub fn run_pbs<P>(program: &P, file_path: &Path) -> Result<SolverResultPBS, ExternalProgramError>
 where
     P: SolverRunner + PBSProcessor,
 {
@@ -50,7 +53,7 @@ pub trait PBOProcessor {
 ///
 /// Provide implementations for running an external program and extracting a result from
 /// the output
-pub fn run_pbo<P>(program: &P, file_path: &PathBuf) -> Result<SolverResultPBO, ExternalProgramError>
+pub fn run_pbo<P>(program: &P, file_path: &Path) -> Result<SolverResultPBO, ExternalProgramError>
 where
     P: SolverRunner + PBOProcessor,
 {
@@ -187,11 +190,11 @@ pub enum IterationOutcome {
 impl IterationOutcome {
     pub fn get_folder_name(&self) -> &str {
         match self {
-            IterationOutcome::Sat { .. } => "sat",
-            IterationOutcome::Unsat { .. } => "unsat",
-            IterationOutcome::Unknown => "unknown",
-            IterationOutcome::Bug { .. } => "bug",
-            IterationOutcome::Error { .. } => "error",
+            IterationOutcome::Sat { .. } => SAT_FOLDER.name,
+            IterationOutcome::Unsat { .. } => UNSAT_FOLDER.name,
+            IterationOutcome::Unknown => UNKNOWN_FOLDER.name,
+            IterationOutcome::Bug { .. } => BUG_FOLDER.name,
+            IterationOutcome::Error { .. } => ERROR_FOLDER.name,
         }
     }
     pub fn get_file_name_prefix(&self) -> &str {
