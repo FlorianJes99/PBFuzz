@@ -3,7 +3,11 @@ use crate::{
         grammar::PBKind,
         helpers::{RunningAverage, get_hms_parts, move_file},
     },
-    orchestrator::{external_program::IterationOutcome, folders::prepare_output_folder},
+    orchestrator::{
+        csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_CSV},
+        external_program::IterationOutcome,
+        folders::{DATA_FOLDER, prepare_output_folder},
+    },
 };
 use std::path::Path;
 use std::{
@@ -35,6 +39,12 @@ where
 {
     prepare_output_folder(&input.fuzzer_output_dir)
         .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
+    let csv_file_path = &input
+        .fuzzer_output_dir
+        .join(DATA_FOLDER.name)
+        .join(ORCHESTRATOR_DATA_FILE_CSV);
+    let mut csv_writer = csv::Writer::from_path(csv_file_path)
+        .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
 
     let output_file = input.fuzzer_output_dir.join("test.opb");
     println!("Writing fuzzer output into {}", &output_file.display());
@@ -48,6 +58,7 @@ where
     let mut rng = rand::rng();
     let timed_iter = input.stop_condition.into_timed_iterator();
     for (counter, elapsed_time) in timed_iter {
+        let start_iteration = Instant::now();
         if counter == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
             // Terminate early if amount sat instances not in range
             // and more than 1000 iterations are scheduled
@@ -125,6 +136,26 @@ where
         if let Err(err) = move_result {
             error!("Could not move file into specific folder\nError: {}", err);
         }
+        let iteration_record = IterationRecord {
+            iteration: counter,
+            result: outcome.get_status_as_string(),
+            duration_ms: start_iteration.elapsed().as_secs_f32() * 1000.0,
+            seed,
+        };
+        let result = csv_writer.serialize(iteration_record);
+        if let Err(err) = result {
+            error!("Could not write record into csv\nError: {}", err);
+        }
+        if counter % 1000 == 0 {
+            let result = csv_writer.flush();
+            if let Err(err) = result {
+                error!("Could not flush to file\n Error: {}", err);
+            }
+        }
+    }
+    let result = csv_writer.flush();
+    if let Err(err) = result {
+        error!("Could not flush to file\n Error: {}", err);
     }
 
     save_settings(&settings, &input.fuzzer_output_dir, Some(&stats))
@@ -286,7 +317,7 @@ impl Stats {
             }
             IterationOutcome::Unknown => self.amount_unknown += 1,
             IterationOutcome::Bug { .. } => self.bugs_found += 1,
-            // do nothing in case of error
+            // Do nothing in case of error
             IterationOutcome::Error { .. } => (),
         }
     }

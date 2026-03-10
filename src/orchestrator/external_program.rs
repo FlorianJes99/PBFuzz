@@ -188,7 +188,7 @@ pub enum IterationOutcome {
 }
 
 impl IterationOutcome {
-    pub fn get_folder_name(&self) -> &str {
+    pub fn get_folder_name(&self) -> &'static str {
         match self {
             IterationOutcome::Sat { .. } => SAT_FOLDER.name,
             IterationOutcome::Unsat { .. } => UNSAT_FOLDER.name,
@@ -197,7 +197,11 @@ impl IterationOutcome {
             IterationOutcome::Error { .. } => ERROR_FOLDER.name,
         }
     }
-    pub fn get_file_name_prefix(&self) -> &str {
+    pub fn get_file_name_prefix(&self) -> &'static str {
+        self.get_status_as_string()
+    }
+
+    pub fn get_status_as_string(&self) -> &'static str {
         match self {
             IterationOutcome::Sat { .. } => "sat",
             IterationOutcome::Unsat { .. } => "unsat",
