@@ -230,6 +230,20 @@ pub enum BugReason {
     OutputStatusDiffers,
 }
 
+impl Display for BugReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                BugReason::InvalidSolution => "Invalid solution",
+                BugReason::DifferentObjectives => "Different objectives founds",
+                BugReason::OutputStatusDiffers => "Output status differs",
+            }
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct ExternalProgramError {
     program_name: String,

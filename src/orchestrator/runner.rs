@@ -140,6 +140,9 @@ where
 
         if let IterationOutcome::Error { error: err } = outcome {
             error!("Some error occured in iteration!\nError: {}", err);
+        } 
+        if let IterationOutcome::Bug { reason } = outcome {
+            println!("Found bug!\nBug: {}", reason)
         }
         stats.update(outcome);
         let new_file_location = &input.fuzzer_output_dir.join(format!(
