@@ -36,6 +36,7 @@ pub fn run_pbs<P>(program: &P, file_path: &Path) -> Result<SolverResultPBS, Exte
 where
     P: SolverRunner + PBSProcessor,
 {
+    println!("Solving generated instance with {}", program.get_name());
     program
         .run(file_path)
         .and_then(|output| program.extract_result_from_output(output))
@@ -57,6 +58,7 @@ pub fn run_pbo<P>(program: &P, file_path: &Path) -> Result<SolverResultPBO, Exte
 where
     P: SolverRunner + PBOProcessor,
 {
+    println!("Solving generated instance with {}", program.get_name());
     program
         .run(file_path)
         .and_then(|output| program.extract_result_from_output(output))
@@ -208,6 +210,16 @@ impl IterationOutcome {
             IterationOutcome::Unknown => "unknown",
             IterationOutcome::Bug { .. } => "bug",
             IterationOutcome::Error { .. } => "error",
+        }
+    }
+
+    pub fn get_conflicts(&self) -> u32 {
+        match self {
+            IterationOutcome::Sat { conflicts } => *conflicts,
+            IterationOutcome::Unsat { conflicts } => *conflicts,
+            IterationOutcome::Unknown => 0,
+            IterationOutcome::Bug { .. } => 0,
+            IterationOutcome::Error { .. } => 0,
         }
     }
 }

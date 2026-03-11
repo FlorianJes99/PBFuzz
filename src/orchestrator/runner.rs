@@ -4,7 +4,7 @@ use crate::{
         helpers::{RunningAverage, get_hms_parts, move_file},
     },
     orchestrator::{
-        csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_CSV},
+        csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         external_program::IterationOutcome,
         folders::{DATA_FOLDER, prepare_output_folder},
     },
@@ -29,7 +29,7 @@ use crate::{
         helpers::print_block,
         pbs_generator::{GeneratorSettings, PBSGenerator},
     },
-    orchestrator::external_program::{PBOProcessor, PBSProcessor, SolverRunner, run_pbo, run_pbs},
+    orchestrator::external_program::{PBOProcessor, PBSProcessor, SolverRunner},
 };
 
 pub fn run_orchestrator<U, T>(input: OrchestratorInput<T, U>) -> Result<(), String>
@@ -39,10 +39,11 @@ where
 {
     prepare_output_folder(&input.fuzzer_output_dir)
         .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
-    let csv_file_path = &input
-        .fuzzer_output_dir
-        .join(DATA_FOLDER.name)
-        .join(ORCHESTRATOR_DATA_FILE_CSV);
+    let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let csv_file_path = &input.fuzzer_output_dir.join(DATA_FOLDER.name).join(format!(
+        "{}_{}.csv",
+        ORCHESTRATOR_DATA_FILE_PREFIX, program_start
+    ));
     let mut csv_writer = csv::Writer::from_path(csv_file_path)
         .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
 
@@ -88,43 +89,59 @@ where
             *grammar_statistics.get_generation_time() + duration_write_to_file;
         info!(
             "Created problem in: {:.3}ms",
-            (output_generation_duration.as_nanos() as f64 / 1_000_000.0)
+            (output_generation_duration.as_secs_f32() * 1000.0)
         );
         stats.update_average_input_generation_time(&output_generation_duration);
-
+        println!(
+            "Solving generated instance with {}",
+            input.command1.get_name()
+        );
+        let start_bin1 = Instant::now();
+        let output_bin1 = input.command1.run(&output_file);
+        let time_bin1 = start_bin1.elapsed();
+        println!(
+            "Solving generated instance with {}",
+            input.command2.get_name()
+        );
+        let start_bin2 = Instant::now();
+        let output_bin2 = input.command2.run(&output_file);
+        let time_bin2 = start_bin2.elapsed();
+        println!("Parsing output of both binaries to extract results");
+        let start_output_extraciton = Instant::now();
         let outcome = match settings.get_problem_kind() {
             PBKind::PBS => {
-                println!(
-                    "Solving generated instance with {}",
-                    input.command1.get_name()
-                );
-                let res_program1 =
-                    run_pbs(&input.command1, &output_file).map_err(|e| e.to_string())?;
-                println!(
-                    "Solving generated instance with {}",
-                    input.command2.get_name()
-                );
-                let res_program2 =
-                    run_pbs(&input.command2, &output_file).map_err(|e| e.to_string())?;
-                &res_program1.compare_status(&res_program2, &grammar)
+                let res_program1 = output_bin1.and_then(|output| {
+                    PBSProcessor::extract_result_from_output(&input.command1, output)
+                });
+                let res_program2 = output_bin2.and_then(|output| {
+                    PBSProcessor::extract_result_from_output(&input.command2, output)
+                });
+                match (res_program1, res_program2) {
+                    (Ok(status1), Ok(status2)) => &status1.compare_status(&status2, &grammar),
+                    (Err(err), _) => &IterationOutcome::Error { error: err },
+                    (_, Err(err)) => &IterationOutcome::Error { error: err },
+                }
             }
             PBKind::PBO => {
-                println!(
-                    "Solving generated instance with {}",
-                    input.command1.get_name()
-                );
-                let res_program1 =
-                    run_pbo(&input.command1, &output_file).map_err(|e| e.to_string())?;
-                println!(
-                    "Solving generated instance with {}",
-                    input.command2.get_name()
-                );
-                let res_program2 =
-                    run_pbo(&input.command2, &output_file).map_err(|e| e.to_string())?;
-                &res_program1.compare_status(&res_program2, &grammar)
+                let res_program1 = output_bin1.and_then(|output| {
+                    PBOProcessor::extract_result_from_output(&input.command1, output)
+                });
+                let res_program2 = output_bin2.and_then(|output| {
+                    PBOProcessor::extract_result_from_output(&input.command2, output)
+                });
+                match (res_program1, res_program2) {
+                    (Ok(status1), Ok(status2)) => &status1.compare_status(&status2, &grammar),
+                    (Err(err), _) => &IterationOutcome::Error { error: err },
+                    (_, Err(err)) => &IterationOutcome::Error { error: err },
+                }
             }
         };
-        stats.update(&outcome);
+        let time_output_extraction = start_output_extraciton.elapsed();
+
+        if let IterationOutcome::Error { error: err } = outcome {
+            error!("Some error occured in iteration!\nError: {}", err);
+        }
+        stats.update(outcome);
         let new_file_location = &input.fuzzer_output_dir.join(format!(
             "{}/{}_{}_{}.opb",
             outcome.get_folder_name(),
@@ -139,7 +156,12 @@ where
         let iteration_record = IterationRecord {
             iteration: counter,
             result: outcome.get_status_as_string(),
-            duration_ms: start_iteration.elapsed().as_secs_f32() * 1000.0,
+            duration_iteration_ms: start_iteration.elapsed().as_secs_f32() * 1000.0,
+            problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
+            problem_solving_duration_roundingsat_ms: time_bin1.as_secs_f32() * 1000.0,
+            problem_solving_duration_scip_ms: time_bin2.as_secs_f32() * 1000.0,
+            problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
+            conflicts: outcome.get_conflicts(),
             seed,
         };
         let result = csv_writer.serialize(iteration_record);

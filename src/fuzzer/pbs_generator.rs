@@ -302,7 +302,6 @@ impl PBSGenerator {
             ),
         };
 
-        info!("Generated {} constraints!", constraints.len());
         PBGrammar::new(
             self.seed,
             unsat_assignments,

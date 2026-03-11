@@ -41,7 +41,7 @@ pub fn prepare_output_folder(output_path: &Path) -> io::Result<()> {
             let folder = output_path.join(folder_config.name);
             if !folder.exists() {
                 create_dir(folder)?;
-            } else {
+            } else if folder_config.should_delete {
                 delete_files_in_folder(&folder)?;
             }
         }
