@@ -187,8 +187,12 @@ where
         error!("Could not flush to file\n Error: {}", err);
     }
 
-    save_settings(&settings, &input.fuzzer_output_dir, Some(&stats))
-        .map_err(|e| format!("Could not save settings!\n Error: {}", e))?;
+    save_settings(
+        &settings,
+        &input.fuzzer_output_dir.join(DATA_FOLDER.name),
+        Some(&stats),
+    )
+    .map_err(|e| format!("Could not save settings!\n Error: {}", e))?;
     // print out settings
     print_block("Settings", settings);
     // print out stats
@@ -439,7 +443,8 @@ fn save_settings(
 ) -> std::io::Result<()> {
     let data = ron::ser::to_string_pretty(settings, PrettyConfig::default())
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
-    let file_name = dir.join("settings.ron");
+    let time_stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let file_name = dir.join(format!("settings_{}.ron", time_stamp));
     let mut file = File::create(file_name)?;
     file.write_all(data.as_bytes())?;
     file.write_all("\n".as_bytes())?;
