@@ -49,6 +49,7 @@ fn main() {
         settings.build(),
         rounding_sat,
         scip,
+        args.save_all_files
     ));
     if res.is_err() {
         println!("{}", res.unwrap_err())
@@ -118,4 +119,10 @@ struct OrchestratorArgs {
     /// If nothing is provided the program expects to find the binary in the $PATH.
     #[arg(long)]
     scip_bin: Option<PathBuf>,
+
+    /// Set to true if `valid` results should be saved as well
+    ///
+    /// A valid result is considered to be SAT or UNSAT
+    #[arg(long, default_value_t=false)]
+    save_all_files: bool,
 }

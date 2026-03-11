@@ -149,7 +149,14 @@ where
             seed,
             counter
         ));
-        let move_result = move_file(&output_file, &new_file_location);
+        let move_result = match outcome {
+            // Only save the file if bug or error occurred
+            IterationOutcome::Bug { .. }
+            | IterationOutcome::Error { .. }
+            | IterationOutcome::Unknown => move_file(&output_file, new_file_location),
+            _ if input.save_all_files => move_file(&output_file, new_file_location),
+            _ => Ok(()),
+        };
         if let Err(err) = move_result {
             error!("Could not move file into specific folder\nError: {}", err);
         }
@@ -270,6 +277,7 @@ where
     generator_settings: GeneratorSettings,
     command1: T,
     command2: U,
+    save_all_files: bool,
 }
 
 impl<T, U> OrchestratorInput<T, U>
@@ -283,6 +291,7 @@ where
         generator_settings: GeneratorSettings,
         command1: T,
         command2: U,
+        save_all_files: bool,
     ) -> Self {
         Self {
             stop_condition,
@@ -290,6 +299,7 @@ where
             generator_settings,
             command1,
             command2,
+            save_all_files,
         }
     }
 }
