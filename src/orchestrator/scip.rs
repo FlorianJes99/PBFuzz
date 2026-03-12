@@ -103,15 +103,7 @@ impl Scip {
                         format!("Expteced at least one word in line: {line}"),
                         ErrorKind::OutputParsingError,
                     ))
-                    .and_then(|w| {
-                        w.trim().parse::<i32>().map_err(|e| {
-                            ExternalProgramError::new(
-                                self.get_name(),
-                                format!("Failed to parse integer: {e}"),
-                                ErrorKind::OutputParsingError,
-                            )
-                        })
-                    });
+                    .and_then(|w| self.parse_as_i32(w.trim()));
             }
             if line.starts_with("x") {
                 if let Some(ident) = line.split_whitespace().next()
@@ -174,6 +166,35 @@ impl Scip {
             })
         } else {
             Ok(SolverStatus::Unknown)
+        }
+    }
+    /// Scip sometime returns floats, which actually should be integers. This method will check for
+    /// this type of inconsistency in Scip and will still parse the value correctly.
+    fn parse_as_i32(&self, s: &str) -> Result<i32, ExternalProgramError> {
+        let parsed: f64 = s.parse().map_err(|e| {
+            ExternalProgramError::new(
+                self.get_name(),
+                format!("Failed to parse integer: {e}"),
+                ErrorKind::OutputParsingError,
+            )
+        })?;
+        let rounded = parsed.round();
+
+        // Only convert if it's close to an integer and non-negative
+        let epsilon = 1e-5;
+        if (parsed - rounded).abs() < epsilon
+            && rounded >= i32::MIN as f64
+            && rounded <= i32::MAX as f64
+        {
+            Ok(rounded as i32)
+        } else {
+            Err(ExternalProgramError::new(
+                self.get_name(),
+                format!(
+                    "Floating point number is not close enough to the expected integer.\nMax derivation: {epsilon}, Exptected: {rounded}, Actual: {parsed}"
+                ),
+                ErrorKind::OutputParsingError,
+            ))
         }
     }
 }
