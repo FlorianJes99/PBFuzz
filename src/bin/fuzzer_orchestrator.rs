@@ -10,7 +10,7 @@ use fuzzer_pseudo_bool::{
     fuzzer::{grammar::PBKind, pbs_generator::GeneratorSettingsBuilder},
     orchestrator::{
         roundingsat::Roundingsat,
-        runner::{Orchestrator, StopCondition},
+        runner::{StopCondition, run_orchestrator},
         scip::Scip,
     },
 };
@@ -43,14 +43,14 @@ fn main() {
         println!("{}", cancel.as_ref().unwrap_err());
     }
     println!("Workspace set to: {}", &args.ouput_dir.display());
-    let res = Orchestrator::new(
+    let res = run_orchestrator(
         args.ouput_dir,
         settings.build(),
         rounding_sat,
         scip,
         args.save_all_files,
-    )
-    .run(cancel.expect("Error handled already"));
+        cancel.expect("Error handled already"),
+    );
     if res.is_err() {
         println!("{}", res.unwrap_err())
     }

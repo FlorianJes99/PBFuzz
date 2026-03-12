@@ -33,13 +33,79 @@ use crate::{
     orchestrator::external_program::{PBOProcessor, PBSProcessor, SolverRunner},
 };
 
-pub struct Orchestrator<T, U> {
+/// Entry point for the orchestrator to run fuzzer and external programs until a stop condition is
+/// met.
+///
+/// The workflow here goes as follows:
+/// - prepare the output folder
+///   - create output folder, if not yet exist
+///   - clean up subdirectories, if needed to
+/// - create the csv writer, which writes stats of each iteration into a file
+/// - create the actual orchestrator struct
+/// - run iterations until:
+///   - elapsed time > StopCondition(duration)
+///   - iteration_count > StopCondition(MaxIterations)
+///
+/// One Iterations consists of the following two blocks.
+///
+/// Block 1:
+/// - Create a fuzzing output (`*.opb` file)
+/// - Solve file with binary 1
+/// - Solve file with binary 2
+/// - Return output of both binaries as well as some time benchmarks and other needed information
+///
+/// Block 2:
+/// - Extract result from both outputs
+///   - Verify found model for each program, if SAT
+///   - Verify found minimum objective for each program, if SAT and PBO
+/// - Compare if both programs output the same result
+/// - Update stats for the orchestrator
+/// - write relevant datapoints to the csv file
+pub fn run_orchestrator<T, U>(
     fuzzer_output_dir: PathBuf,
     generator_settings: GeneratorSettings,
     command1: T,
     command2: U,
+    save_all_files: bool,
+    stop_condition: StopCondition,
+) -> Result<(), String>
+where
+    T: SolverRunner + PBOProcessor + PBSProcessor,
+    U: SolverRunner + PBOProcessor + PBSProcessor,
+{
+    prepare_output_folder(&fuzzer_output_dir)
+        .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
+    let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let csv_file_path = &fuzzer_output_dir.join(DATA_FOLDER.name).join(format!(
+        "{}_{}.csv",
+        ORCHESTRATOR_DATA_FILE_PREFIX, program_start
+    ));
+    let csv_writer = csv::Writer::from_path(csv_file_path)
+        .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
+    print_block("Settings to use", &generator_settings);
+
+    Orchestrator {
+        fuzzer_output_dir,
+        generator_settings,
+        command1,
+        command2,
+        csv_writer,
+        stats: Stats::new(),
+        save_all_files,
+        orchestrator_start: Instant::now(),
+    }
+    .run(stop_condition)
+}
+
+pub struct Orchestrator<T, U> {
+    fuzzer_output_dir: PathBuf,
+    generator_settings: GeneratorSettings,
     stats: Stats,
     save_all_files: bool,
+    orchestrator_start: Instant,
+    command1: T,
+    command2: U,
+    csv_writer: Writer<File>,
 }
 
 impl<T, U> Orchestrator<T, U>
@@ -47,70 +113,44 @@ where
     T: SolverRunner + PBOProcessor + PBSProcessor,
     U: SolverRunner + PBOProcessor + PBSProcessor,
 {
-    pub fn new(
-        fuzzer_output_dir: PathBuf,
-        generator_settings: GeneratorSettings,
-        command1: T,
-        command2: U,
-        save_all_files: bool,
-    ) -> Self {
-        Self {
-            fuzzer_output_dir,
-            generator_settings,
-            command1,
-            command2,
-            stats: Stats::new(),
-            save_all_files,
-        }
-    }
-
     pub fn run(&mut self, stop_condition: StopCondition) -> Result<(), String> {
-        prepare_output_folder(&self.fuzzer_output_dir)
-            .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
-        let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-        let csv_file_path = &self.fuzzer_output_dir.join(DATA_FOLDER.name).join(format!(
-            "{}_{}.csv",
-            ORCHESTRATOR_DATA_FILE_PREFIX, program_start
-        ));
-        let mut csv_writer = csv::Writer::from_path(csv_file_path)
-            .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
-
-        let settings = self.generator_settings;
-        print_block("Settings to use", &settings);
-
-        let percentage_range_sat = 0.25..0.7;
-        let timed_iter = stop_condition.into_timed_iterator();
-        for (counter, elapsed_time) in timed_iter {
-            if counter == 1001 && !self.stats.is_sat_percentage_in_range(&percentage_range_sat) {
-                // Terminate early if amount sat instances not in range
-                // and more than 1000 iterations are scheduled
-                println!("Terminating early!");
-                println!(
-                    "Percentage SAT Instances not in range ({}..{})",
-                    percentage_range_sat.start, percentage_range_sat.end
-                );
-                break;
+        match stop_condition {
+            StopCondition::MaxIterations(max) => {
+                for iteration in 1..=max {
+                    match work_iteration(
+                        &self.fuzzer_output_dir,
+                        self.generator_settings,
+                        &self.command1,
+                        &self.command2,
+                    ) {
+                        Err(err) => error!("{err}"),
+                        Ok(work_result) => {
+                            self.process_result(work_result, iteration)
+                                .map_err(|e| e.0)?;
+                        }
+                    }
+                }
             }
-
-            let (h, m, s) = get_hms_parts(&elapsed_time);
-            print_block(
-                "",
-                format!("Iteration {counter}\nTime elapsed: {}h {}m {}s", h, m, s),
-            );
-            println!("Parsing output of both binaries to extract results");
-            match work_iteration(
-                &self.fuzzer_output_dir,
-                settings,
-                &self.command1,
-                &self.command2,
-            ) {
-                Err(err) => error!("{err}"),
-                Ok(work_result) => {
-                    self.process_result(work_result, counter, &mut csv_writer);
+            StopCondition::MaxDuration(duration) => {
+                let mut iteration = 1;
+                while self.orchestrator_start.elapsed() < duration {
+                    match work_iteration(
+                        &self.fuzzer_output_dir,
+                        self.generator_settings,
+                        &self.command1,
+                        &self.command2,
+                    ) {
+                        Err(err) => error!("{err}"),
+                        Ok(work_result) => {
+                            self.process_result(work_result, iteration)
+                                .map_err(|e| e.0)?;
+                            iteration += 1;
+                        }
+                    }
                 }
             }
         }
-        let result = csv_writer.flush();
+        let result = &mut self.csv_writer.flush();
         if let Err(err) = result {
             error!("Could not flush to file\n Error: {}", err);
         }
@@ -118,7 +158,7 @@ where
         self.save_settings()
             .map_err(|e| format!("Could not save settings!\n Error: {}", e))?;
         // print out settings
-        print_block("Settings", settings);
+        print_block("Settings", &self.generator_settings);
         // print out stats
         print_block("Run Statistics", &self.stats);
         Ok(())
@@ -128,8 +168,27 @@ where
         &mut self,
         work_result: WorkerResult,
         iteration: u32,
-        csv_writer: &mut Writer<File>,
-    ) {
+    ) -> Result<(), TerminateProgram> {
+        let percentage_range_sat = 0.25..0.7;
+        if iteration == 1001 && !self.stats.is_sat_percentage_in_range(&percentage_range_sat) {
+            // Terminate early if amount sat instances not in range
+            // and more than 1000 iterations are scheduled
+            println!("Terminating early!");
+            println!(
+                "Percentage SAT Instances not in range ({}..{})",
+                percentage_range_sat.start, percentage_range_sat.end
+            );
+            return Err(TerminateProgram(format!(
+                "Percentage SAT Instances not in range ({}..{})",
+                percentage_range_sat.start, percentage_range_sat.end
+            )));
+        }
+
+        let (h, m, s) = get_hms_parts(&self.orchestrator_start.elapsed());
+        print_block(
+            "",
+            format!("Iteration {iteration}\nTime elapsed: {}h {}m {}s", h, m, s),
+        );
         let ResultWithDuration(output_bin1, duration_bin1) = work_result.output_bin1;
         let ResultWithDuration(output_bin2, duration_bin2) = work_result.output_bin2;
         let start_output_extraction = Instant::now();
@@ -204,16 +263,17 @@ where
             conflicts: outcome.get_conflicts(),
             seed: work_result.seed,
         };
-        let result = csv_writer.serialize(iteration_record);
+        let result = self.csv_writer.serialize(iteration_record);
         if let Err(err) = result {
             error!("Could not write record into csv\nError: {}", err);
         }
         if iteration % 1000 == 0 {
-            let result = csv_writer.flush();
+            let result = self.csv_writer.flush();
             if let Err(err) = result {
                 error!("Could not flush to file\n Error: {}", err);
             }
         }
+        Ok(())
     }
 
     fn save_settings(&self) -> std::io::Result<()> {
@@ -234,6 +294,9 @@ where
         file.write_all(commented_stats.as_bytes())
     }
 }
+
+// Marker struct to signal if we want to end fuzzer early
+struct TerminateProgram(String);
 
 fn get_seed() -> u64 {
     rand::rng().random()
@@ -291,35 +354,6 @@ struct WorkerResult {
 /// Data wrapper to provide the duration of the computation alongside the explicit result
 struct ResultWithDuration<T>(T, Duration);
 
-/// Iterator, which additionally keeps track of elapsed time during iterations
-///
-/// Depending on the stop condition, this iterator will stop producing values
-/// after reaching the maximum iterations or a maximum duration is elapsed
-struct TimedIterator {
-    start: Instant,
-    stop_condition: StopCondition,
-    current: u32,
-}
-
-impl Iterator for TimedIterator {
-    type Item = (u32, Duration);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.stop_condition {
-            StopCondition::MaxIterations(iter) if self.current > iter => return None,
-            StopCondition::MaxDuration(duration) if self.start.elapsed() >= duration => {
-                return None;
-            }
-            _ => {
-                // Clone the current value for returning before incrementing
-                let result = Some((self.current.clone(), self.start.elapsed()));
-                self.current += 1;
-                result
-            }
-        }
-    }
-}
-
 /// Cancel iterations of fuzzing runs
 ///
 /// Stop either after n iterations or after time t is passed
@@ -349,15 +383,6 @@ impl StopCondition {
             (Some(_), Some(_)) => {
                 Err("Expected one cancelation method, but provided two".to_string())
             }
-        }
-    }
-
-    fn into_timed_iterator(self) -> TimedIterator {
-        TimedIterator {
-            start: Instant::now(),
-            stop_condition: self,
-            // start at index one
-            current: 1,
         }
     }
 }
@@ -525,24 +550,5 @@ mod tests {
         assert!(err.is_err());
         let err = StopCondition::new(Some(0), None);
         assert!(err.is_err());
-        let count_iter = StopCondition::new(Some(3), None)
-            .unwrap()
-            .into_timed_iterator();
-        let vec: Vec<u32> = count_iter.into_iter().map(|t| t.0).sorted().collect();
-        assert_eq!(vec![1, 2, 3], vec);
-        let count_iter = StopCondition::new(Some(1), None)
-            .unwrap()
-            .into_timed_iterator();
-        let vec: Vec<u32> = count_iter.into_iter().map(|t| t.0).sorted().collect();
-        assert_eq!(vec![1], vec);
-        let duration_iter = StopCondition::new(None, Some(Duration::from_millis(10)))
-            .unwrap()
-            .into_timed_iterator();
-        use std::thread;
-        let wait_time = 1;
-        for (i, elapsed) in duration_iter {
-            assert!(elapsed >= Duration::from_millis((i - 1) as u64 * wait_time));
-            thread::sleep(Duration::from_millis(wait_time));
-        }
     }
 }
