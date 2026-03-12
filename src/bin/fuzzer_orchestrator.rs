@@ -10,7 +10,7 @@ use fuzzer_pseudo_bool::{
     fuzzer::{grammar::PBKind, pbs_generator::GeneratorSettingsBuilder},
     orchestrator::{
         roundingsat::Roundingsat,
-        runner::{OrchestratorInput, StopCondition, run_orchestrator},
+        runner::{Orchestrator, StopCondition},
         scip::Scip,
     },
 };
@@ -43,14 +43,14 @@ fn main() {
         println!("{}", cancel.as_ref().unwrap_err());
     }
     println!("Workspace set to: {}", &args.ouput_dir.display());
-    let res = run_orchestrator(OrchestratorInput::new(
-        cancel.expect("Error handled already"),
+    let res = Orchestrator::new(
         args.ouput_dir,
         settings.build(),
         rounding_sat,
         scip,
-        args.save_all_files
-    ));
+        args.save_all_files,
+    )
+    .run(cancel.expect("Error handled already"));
     if res.is_err() {
         println!("{}", res.unwrap_err())
     }
@@ -123,6 +123,6 @@ struct OrchestratorArgs {
     /// Set to true if `valid` results should be saved as well
     ///
     /// A valid result is considered to be SAT or UNSAT
-    #[arg(long, default_value_t=false)]
+    #[arg(long, default_value_t = false)]
     save_all_files: bool,
 }

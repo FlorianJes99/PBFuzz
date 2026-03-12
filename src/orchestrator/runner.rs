@@ -1,6 +1,6 @@
 use crate::{
     fuzzer::{
-        grammar::PBKind,
+        grammar::{PBGrammar, PBKind},
         helpers::{RunningAverage, get_hms_parts, move_file},
     },
     orchestrator::{
@@ -9,7 +9,6 @@ use crate::{
         folders::{DATA_FOLDER, prepare_output_folder},
     },
 };
-use std::path::Path;
 use std::{
     fmt::Display,
     fs::File,
@@ -18,9 +17,11 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+use std::{path::Path, process::Output};
 
+use csv::Writer;
 use itertools::Itertools;
-use log::{error, info};
+use log::{debug, error};
 use rand::{self, Rng};
 use ron::ser::PrettyConfig;
 
@@ -32,176 +33,263 @@ use crate::{
     orchestrator::external_program::{PBOProcessor, PBSProcessor, SolverRunner},
 };
 
-pub fn run_orchestrator<U, T>(input: OrchestratorInput<T, U>) -> Result<(), String>
+pub struct Orchestrator<T, U> {
+    fuzzer_output_dir: PathBuf,
+    generator_settings: GeneratorSettings,
+    command1: T,
+    command2: U,
+    stats: Stats,
+    save_all_files: bool,
+}
+
+impl<T, U> Orchestrator<T, U>
 where
     T: SolverRunner + PBOProcessor + PBSProcessor,
     U: SolverRunner + PBOProcessor + PBSProcessor,
 {
-    prepare_output_folder(&input.fuzzer_output_dir)
-        .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
-    let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let csv_file_path = &input.fuzzer_output_dir.join(DATA_FOLDER.name).join(format!(
-        "{}_{}.csv",
-        ORCHESTRATOR_DATA_FILE_PREFIX, program_start
-    ));
-    let mut csv_writer = csv::Writer::from_path(csv_file_path)
-        .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
+    pub fn new(
+        fuzzer_output_dir: PathBuf,
+        generator_settings: GeneratorSettings,
+        command1: T,
+        command2: U,
+        save_all_files: bool,
+    ) -> Self {
+        Self {
+            fuzzer_output_dir,
+            generator_settings,
+            command1,
+            command2,
+            stats: Stats::new(),
+            save_all_files,
+        }
+    }
 
-    let output_file = input.fuzzer_output_dir.join("test.opb");
-    println!("Writing fuzzer output into {}", &output_file.display());
+    pub fn run(&mut self, stop_condition: StopCondition) -> Result<(), String> {
+        prepare_output_folder(&self.fuzzer_output_dir)
+            .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
+        let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+        let csv_file_path = &self.fuzzer_output_dir.join(DATA_FOLDER.name).join(format!(
+            "{}_{}.csv",
+            ORCHESTRATOR_DATA_FILE_PREFIX, program_start
+        ));
+        let mut csv_writer = csv::Writer::from_path(csv_file_path)
+            .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
 
-    let mut stats = Stats::new();
+        let settings = self.generator_settings;
+        print_block("Settings to use", &settings);
 
-    let settings = input.generator_settings;
-    print_block("Settings to use", &settings);
+        let percentage_range_sat = 0.25..0.7;
+        let timed_iter = stop_condition.into_timed_iterator();
+        for (counter, elapsed_time) in timed_iter {
+            if counter == 1001 && !self.stats.is_sat_percentage_in_range(&percentage_range_sat) {
+                // Terminate early if amount sat instances not in range
+                // and more than 1000 iterations are scheduled
+                println!("Terminating early!");
+                println!(
+                    "Percentage SAT Instances not in range ({}..{})",
+                    percentage_range_sat.start, percentage_range_sat.end
+                );
+                break;
+            }
 
-    let percentage_range_sat = 0.25..0.7;
-    let mut rng = rand::rng();
-    let timed_iter = input.stop_condition.into_timed_iterator();
-    for (counter, elapsed_time) in timed_iter {
-        let start_iteration = Instant::now();
-        if counter == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
-            // Terminate early if amount sat instances not in range
-            // and more than 1000 iterations are scheduled
-            println!("Terminating early!");
-            println!(
-                "Percentage SAT Instances not in range ({}..{})",
-                percentage_range_sat.start, percentage_range_sat.end
+            let (h, m, s) = get_hms_parts(&elapsed_time);
+            print_block(
+                "",
+                format!("Iteration {counter}\nTime elapsed: {}h {}m {}s", h, m, s),
             );
-            break;
+            println!("Parsing output of both binaries to extract results");
+            match work_iteration(
+                &self.fuzzer_output_dir,
+                settings,
+                &self.command1,
+                &self.command2,
+            ) {
+                Err(err) => error!("{err}"),
+                Ok(work_result) => {
+                    self.process_result(work_result, counter, &mut csv_writer);
+                }
+            }
+        }
+        let result = csv_writer.flush();
+        if let Err(err) = result {
+            error!("Could not flush to file\n Error: {}", err);
         }
 
-        let seed = rng.random();
+        self.save_settings()
+            .map_err(|e| format!("Could not save settings!\n Error: {}", e))?;
+        // print out settings
+        print_block("Settings", settings);
+        // print out stats
+        print_block("Run Statistics", &self.stats);
+        Ok(())
+    }
 
-        let (h, m, s) = get_hms_parts(&elapsed_time);
-        print_block(
-            "",
-            format!("Iteration {counter}\nTime elapsed: {}h {}m {}s", h, m, s),
-        );
-        println!("Running Fuzzer with seed {seed}...");
-        let mut grammar = PBSGenerator::create_grammar(seed, settings);
-        let duration_write_to_file = File::create(&output_file)
-            .map(|file| BufWriter::new(file))
-            .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
-            .map_err(|e| e.to_string())?;
-        let grammar_statistics = grammar.get_statistics();
-        let output_generation_duration =
-            *grammar_statistics.get_generation_time() + duration_write_to_file;
-        info!(
-            "Created problem in: {:.3}ms",
-            (output_generation_duration.as_secs_f32() * 1000.0)
-        );
-        stats.update_average_input_generation_time(&output_generation_duration);
-        println!(
-            "Solving generated instance with {}",
-            input.command1.get_name()
-        );
-        let start_bin1 = Instant::now();
-        let output_bin1 = input.command1.run(&output_file);
-        let time_bin1 = start_bin1.elapsed();
-        println!(
-            "Solving generated instance with {}",
-            input.command2.get_name()
-        );
-        let start_bin2 = Instant::now();
-        let output_bin2 = input.command2.run(&output_file);
-        let time_bin2 = start_bin2.elapsed();
-        println!("Parsing output of both binaries to extract results");
-        let start_output_extraciton = Instant::now();
-        let outcome = match settings.get_problem_kind() {
+    fn process_result(
+        &mut self,
+        work_result: WorkerResult,
+        iteration: u32,
+        csv_writer: &mut Writer<File>,
+    ) {
+        let ResultWithDuration(output_bin1, duration_bin1) = work_result.output_bin1;
+        let ResultWithDuration(output_bin2, duration_bin2) = work_result.output_bin2;
+        let start_output_extraction = Instant::now();
+        let outcome = match self.generator_settings.get_problem_kind() {
             PBKind::PBS => {
-                let res_program1 = output_bin1.and_then(|output| {
-                    PBSProcessor::extract_result_from_output(&input.command1, output)
-                });
-                let res_program2 = output_bin2.and_then(|output| {
-                    PBSProcessor::extract_result_from_output(&input.command2, output)
-                });
+                let res_program1 =
+                    PBSProcessor::extract_result_from_output(&self.command1, output_bin1);
+                let res_program2 =
+                    PBSProcessor::extract_result_from_output(&self.command2, output_bin2);
                 match (res_program1, res_program2) {
-                    (Ok(status1), Ok(status2)) => &status1.compare_status(&status2, &grammar),
+                    (Ok(status1), Ok(status2)) => {
+                        &status1.compare_status(&status2, &work_result.grammar)
+                    }
                     (Err(err), _) => &IterationOutcome::Error { error: err },
                     (_, Err(err)) => &IterationOutcome::Error { error: err },
                 }
             }
             PBKind::PBO => {
-                let res_program1 = output_bin1.and_then(|output| {
-                    PBOProcessor::extract_result_from_output(&input.command1, output)
-                });
-                let res_program2 = output_bin2.and_then(|output| {
-                    PBOProcessor::extract_result_from_output(&input.command2, output)
-                });
+                let res_program1 =
+                    PBOProcessor::extract_result_from_output(&self.command1, output_bin1);
+                let res_program2 =
+                    PBOProcessor::extract_result_from_output(&self.command2, output_bin2);
                 match (res_program1, res_program2) {
-                    (Ok(status1), Ok(status2)) => &status1.compare_status(&status2, &grammar),
+                    (Ok(status1), Ok(status2)) => {
+                        &status1.compare_status(&status2, &work_result.grammar)
+                    }
                     (Err(err), _) => &IterationOutcome::Error { error: err },
                     (_, Err(err)) => &IterationOutcome::Error { error: err },
                 }
             }
         };
-        let time_output_extraction = start_output_extraciton.elapsed();
+        let time_output_extraction = start_output_extraction.elapsed();
 
         if let IterationOutcome::Error { error: err } = outcome {
             error!("Some error occured in iteration!\nError: {}", err);
-        } 
+        }
         if let IterationOutcome::Bug { reason } = outcome {
             println!("Found bug!\nBug: {}", reason)
         }
-        stats.update(outcome);
-        let new_file_location = &input.fuzzer_output_dir.join(format!(
+        let ResultWithDuration(output_file, output_generation_duration) =
+            work_result.generated_fuzz_file;
+        self.stats.update(outcome);
+        self.stats
+            .update_average_input_generation_time(&output_generation_duration);
+        let new_file_location = &self.fuzzer_output_dir.join(format!(
             "{}/{}_{}_{}.opb",
             outcome.get_folder_name(),
             outcome.get_file_name_prefix(),
-            seed,
-            counter
+            work_result.seed,
+            iteration
         ));
-        let move_result = match outcome {
-            // Only save the file if bug or error occurred
+        let file_manipulation_result = match outcome {
+            // Only save the file if bug or error or `unknown` occurred
             IterationOutcome::Bug { .. }
             | IterationOutcome::Error { .. }
             | IterationOutcome::Unknown => move_file(&output_file, new_file_location),
-            _ if input.save_all_files => move_file(&output_file, new_file_location),
-            _ => Ok(()),
+            _ if self.save_all_files => move_file(&output_file, new_file_location),
+            // Delete the generated fuzzing result if not needed anymore
+            _ => std::fs::remove_file(&output_file).map_err(|e| e.to_string()),
         };
-        if let Err(err) = move_result {
-            error!("Could not move file into specific folder\nError: {}", err);
+        if let Err(err) = file_manipulation_result {
+            error!("{err}");
         }
         let iteration_record = IterationRecord {
-            iteration: counter,
+            iteration,
             result: outcome.get_status_as_string(),
-            duration_iteration_ms: start_iteration.elapsed().as_secs_f32() * 1000.0,
+            duration_iteration_ms: work_result.start_worker.elapsed().as_secs_f32() * 1000.0,
             problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
-            problem_solving_duration_roundingsat_ms: time_bin1.as_secs_f32() * 1000.0,
-            problem_solving_duration_scip_ms: time_bin2.as_secs_f32() * 1000.0,
+            problem_solving_duration_roundingsat_ms: duration_bin1.as_secs_f32() * 1000.0,
+            problem_solving_duration_scip_ms: duration_bin2.as_secs_f32() * 1000.0,
             problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
             conflicts: outcome.get_conflicts(),
-            seed,
+            seed: work_result.seed,
         };
         let result = csv_writer.serialize(iteration_record);
         if let Err(err) = result {
             error!("Could not write record into csv\nError: {}", err);
         }
-        if counter % 1000 == 0 {
+        if iteration % 1000 == 0 {
             let result = csv_writer.flush();
             if let Err(err) = result {
                 error!("Could not flush to file\n Error: {}", err);
             }
         }
     }
-    let result = csv_writer.flush();
-    if let Err(err) = result {
-        error!("Could not flush to file\n Error: {}", err);
-    }
 
-    save_settings(
-        &settings,
-        &input.fuzzer_output_dir.join(DATA_FOLDER.name),
-        Some(&stats),
-    )
-    .map_err(|e| format!("Could not save settings!\n Error: {}", e))?;
-    // print out settings
-    print_block("Settings", settings);
-    // print out stats
-    print_block("Run Statistics", stats);
-    Ok(())
+    fn save_settings(&self) -> std::io::Result<()> {
+        let dir = self.fuzzer_output_dir.join(DATA_FOLDER.name);
+        let data = ron::ser::to_string_pretty(&self.generator_settings, PrettyConfig::default())
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let time_stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+        let file_name = dir.join(format!("settings_{}.ron", time_stamp));
+        let mut file = File::create(file_name)?;
+        file.write_all(data.as_bytes())?;
+        file.write_all("\n".as_bytes())?;
+        let commented_stats: String = self
+            .stats
+            .to_string()
+            .lines()
+            .map(|line| format!("// {}", line))
+            .join("\n");
+        file.write_all(commented_stats.as_bytes())
+    }
 }
+
+fn get_seed() -> u64 {
+    rand::rng().random()
+}
+
+fn work_iteration(
+    fuzzer_output_dir: &Path,
+    settings: GeneratorSettings,
+    command1: &impl SolverRunner,
+    command2: &impl SolverRunner,
+) -> Result<WorkerResult, String> {
+    let start_worker = Instant::now();
+    let seed = get_seed();
+    let output_file = fuzzer_output_dir.join(format!("test_{seed}.opb"));
+    debug!("Running Fuzzer with seed {seed}...");
+    let mut grammar = PBSGenerator::create_grammar(seed, settings);
+    let duration_write_to_file = File::create(&output_file)
+        .map(|file| BufWriter::new(file))
+        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
+        .map_err(|e| e.to_string())?;
+    let grammar_statistics = grammar.get_statistics();
+    let output_generation_duration =
+        *grammar_statistics.get_generation_time() + duration_write_to_file;
+    debug!(
+        "Created problem in: {:.3}ms",
+        (output_generation_duration.as_secs_f32() * 1000.0)
+    );
+    debug!("Solving generated instance with {}", command1.get_name());
+    let start_bin1 = Instant::now();
+    let output_bin1 = command1.run(&output_file).map_err(|err| err.to_string())?;
+    let time_bin1 = start_bin1.elapsed();
+    debug!("Solving generated instance with {}", command2.get_name());
+    let start_bin2 = Instant::now();
+    let output_bin2 = command2.run(&output_file).map_err(|err| err.to_string())?;
+    let time_bin2 = start_bin2.elapsed();
+    Ok(WorkerResult {
+        seed,
+        start_worker,
+        grammar,
+        generated_fuzz_file: ResultWithDuration(output_file, output_generation_duration),
+        output_bin1: ResultWithDuration(output_bin1, time_bin1),
+        output_bin2: ResultWithDuration(output_bin2, time_bin2),
+    })
+}
+
+struct WorkerResult {
+    seed: u64,
+    start_worker: Instant,
+    grammar: PBGrammar,
+    generated_fuzz_file: ResultWithDuration<PathBuf>,
+    output_bin1: ResultWithDuration<Output>,
+    output_bin2: ResultWithDuration<Output>,
+}
+
+/// Data wrapper to provide the duration of the computation alongside the explicit result
+struct ResultWithDuration<T>(T, Duration);
 
 /// Iterator, which additionally keeps track of elapsed time during iterations
 ///
@@ -270,43 +358,6 @@ impl StopCondition {
             stop_condition: self,
             // start at index one
             current: 1,
-        }
-    }
-}
-
-pub struct OrchestratorInput<T, U>
-where
-    T: SolverRunner + PBOProcessor + PBSProcessor,
-    U: SolverRunner + PBOProcessor + PBSProcessor,
-{
-    stop_condition: StopCondition,
-    fuzzer_output_dir: PathBuf,
-    generator_settings: GeneratorSettings,
-    command1: T,
-    command2: U,
-    save_all_files: bool,
-}
-
-impl<T, U> OrchestratorInput<T, U>
-where
-    T: SolverRunner + PBOProcessor + PBSProcessor,
-    U: SolverRunner + PBOProcessor + PBSProcessor,
-{
-    pub fn new(
-        stop_condition: StopCondition,
-        fuzzer_output_dir: PathBuf,
-        generator_settings: GeneratorSettings,
-        command1: T,
-        command2: U,
-        save_all_files: bool,
-    ) -> Self {
-        Self {
-            stop_condition,
-            fuzzer_output_dir,
-            generator_settings,
-            command1,
-            command2,
-            save_all_files,
         }
     }
 }
@@ -437,29 +488,6 @@ impl Display for Stats {
             h, m, s
         )
     }
-}
-
-fn save_settings(
-    settings: &GeneratorSettings,
-    dir: &Path,
-    stats_opt: Option<&Stats>,
-) -> std::io::Result<()> {
-    let data = ron::ser::to_string_pretty(settings, PrettyConfig::default())
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
-    let time_stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let file_name = dir.join(format!("settings_{}.ron", time_stamp));
-    let mut file = File::create(file_name)?;
-    file.write_all(data.as_bytes())?;
-    file.write_all("\n".as_bytes())?;
-    if let Some(stats) = stats_opt {
-        let commented_stats: String = stats
-            .to_string()
-            .lines()
-            .map(|line| format!("// {}", line))
-            .join("\n");
-        file.write_all(commented_stats.as_bytes())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
