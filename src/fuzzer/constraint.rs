@@ -15,7 +15,7 @@ use std::fmt::Display;
 ///
 /// The degree should always be in bound of the atoms max and min assignment.
 /// Otherwise, a Constraint itself makes the problem instantly unsat.
-pub trait Constraint: Display {
+pub trait Constraint: Display + Send {
     fn atoms(&self) -> &[Atom];
     fn comparison(&self) -> &Comparison;
     fn degree(&self) -> i64;

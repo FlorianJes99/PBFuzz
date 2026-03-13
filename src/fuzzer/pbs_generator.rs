@@ -256,7 +256,7 @@ impl PBSGenerator {
     fn random_grammar(&mut self) -> PBGrammar {
         let start = Instant::now();
         let cancel_condition = self.settings.cancel_condition;
-        let mut constraints: Vec<Box<dyn Constraint>> = vec![];
+        let mut constraints: Vec<Box<dyn Constraint + Send>> = vec![];
         let mut unsat_assignments = Option::None;
         match cancel_condition {
             CancelCondition::CountUnsat {
