@@ -116,45 +116,21 @@ where
         let mut stats = Stats::new();
         let (sender, receiver) = channel::<WorkerResult>();
         thread::scope(|s| {
-            s.spawn(|| match stop_condition {
-                StopCondition::MaxIterations(max) => {
-                    (1..=max).into_par_iter().for_each_with(
-                        sender,
-                        |sender, _| match work_iteration(
-                            &self.fuzzer_output_dir,
-                            self.generator_settings,
-                            &self.command1,
-                            &self.command2,
-                        ) {
-                            Err(err) => error!("{err}"),
-                            Ok(work_result) => {
-                                if let Err(e) = sender.send(work_result) {
-                                    error!("{e}");
-                                }
-                            }
+            s.spawn(|| {
+                stop_condition
+                    .into_iter(Instant::now())
+                    .par_bridge()
+                    .for_each_with(sender, |sender, _| match work_iteration(
+                        &self.fuzzer_output_dir,
+                        self.generator_settings,
+                        &self.command1,
+                        &self.command2
+                    ){
+                        Ok(work_result) => if let Err(e) = sender.send(work_result) {
+                            error!("{e}");
                         },
-                    );
-                }
-                StopCondition::MaxDuration(duration) => {
-                    let deadline = self.orchestrator_start + duration;
-                    iterate_until_deadline(&deadline)
-                        .par_bridge()
-                        .for_each_with(sender, |sender, _| {
-                            match work_iteration(
-                                &self.fuzzer_output_dir,
-                                self.generator_settings,
-                                &self.command1,
-                                &self.command2,
-                            ) {
-                                Err(err) => error!("{err}"),
-                                Ok(work_result) => {
-                                    if let Err(e) = sender.send(work_result) {
-                                        error!("{e}");
-                                    }
-                                }
-                            }
-                        })
-                }
+                        Err(e) => error!("{e}"),
+                    });
             });
             for (iteration, work_result) in receiver.iter().enumerate() {
                 let percentage_range_sat = 0.25..0.7;
@@ -310,16 +286,6 @@ fn get_seed() -> u64 {
     rand::rng().random()
 }
 
-fn iterate_until_deadline(deadline: &Instant) -> impl Iterator<Item = ()> {
-    std::iter::from_fn(|| {
-        if Instant::now() >= *deadline {
-            None
-        } else {
-            Some(())
-        }
-    })
-}
-
 fn work_iteration<T, U>(
     fuzzer_output_dir: &Path,
     settings: GeneratorSettings,
@@ -411,6 +377,25 @@ impl StopCondition {
                 Err("Expected one cancelation method, but provided two".to_string())
             }
         }
+    }
+
+    fn into_iter(self, start: Instant) -> impl Iterator<Item = ()> {
+        let mut count = 0u32;
+        std::iter::from_fn(move || match self {
+            StopCondition::MaxIterations(max) => {
+                if count >= max {
+                    return None;
+                }
+                count += 1;
+                Some(())
+            }
+            StopCondition::MaxDuration(duration) => {
+                if start.elapsed() >= duration {
+                    return None;
+                }
+                Some(())
+            }
+        })
     }
 }
 
