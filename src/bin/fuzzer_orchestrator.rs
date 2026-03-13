@@ -14,11 +14,22 @@ use fuzzer_pseudo_bool::{
         scip::Scip,
     },
 };
-use log::Level;
+use log::{Level};
+use rayon::ThreadPoolBuilder;
 
 fn main() {
     let args = OrchestratorArgs::parse();
     init_logger(args.log);
+    if let Some(t) = args.thread_count {
+        ThreadPoolBuilder::new()
+            .num_threads(t)
+            .build_global()
+            .expect("Global rayon thread pool should only be initialized once!");
+    }
+    println!(
+        "Using {} threads for computing fuzzing runs in parallel",
+        rayon::current_num_threads()
+    );
     let roundingsat_bin = args.roundingsat_bin.unwrap_or("roundingsat".into());
     let scip_bin = args.scip_bin.unwrap_or("scip".into());
     let rounding_sat = Roundingsat::new(roundingsat_bin);
@@ -125,4 +136,11 @@ struct OrchestratorArgs {
     /// A valid result is considered to be SAT or UNSAT
     #[arg(long, default_value_t = false)]
     save_all_files: bool,
+
+    /// Provide number of threads used to run parallel fuzzing runs
+    ///
+    /// If nothing is provided, the program will use up all available threads
+    /// See: [Rayon FAQ](https://github.com/rayon-rs/rayon/blob/main/FAQ.md)
+    #[arg(long)]
+    thread_count: Option<usize>,
 }

@@ -347,29 +347,25 @@ where
         "Created problem in: {:.3}ms",
         (output_generation_duration.as_secs_f32() * 1000.0)
     );
-    let (result_output_bin1, result_output_bin2) = rayon::join(
-        || -> Result<ResultWithDuration<Output>, String> {
-            debug!("Solving generated instance with {}", command1.get_name());
-            let start_bin1 = Instant::now();
-            let output_bin1 = command1.run(&output_file).map_err(|err| err.to_string())?;
-            let time_bin1 = start_bin1.elapsed();
-            Ok(ResultWithDuration(output_bin1, time_bin1))
-        },
-        || -> Result<ResultWithDuration<Output>, String> {
-            debug!("Solving generated instance with {}", command2.get_name());
-            let start_bin2 = Instant::now();
-            let output_bin2 = command2.run(&output_file).map_err(|err| err.to_string())?;
-            let time_bin2 = start_bin2.elapsed();
-            Ok(ResultWithDuration(output_bin2, time_bin2))
-        },
-    );
+
+    debug!("Solving generated instance with {}", command1.get_name());
+    let start_bin1 = Instant::now();
+    let output_bin1 = command1.run(&output_file).map_err(|err| err.to_string())?;
+    let time_bin1 = start_bin1.elapsed();
+    let result_output_bin1 = ResultWithDuration(output_bin1, time_bin1);
+
+    debug!("Solving generated instance with {}", command2.get_name());
+    let start_bin2 = Instant::now();
+    let output_bin2 = command2.run(&output_file).map_err(|err| err.to_string())?;
+    let time_bin2 = start_bin2.elapsed();
+    let result_output_bin2 = ResultWithDuration(output_bin2, time_bin2);
     Ok(WorkerResult {
         seed,
         start_worker,
         grammar,
         generated_fuzz_file: ResultWithDuration(output_file, output_generation_duration),
-        output_bin1: result_output_bin1?,
-        output_bin2: result_output_bin2?,
+        output_bin1: result_output_bin1,
+        output_bin2: result_output_bin2,
     })
 }
 
