@@ -1,7 +1,8 @@
 target/
 out/
 important_findings/
-configuration/
+configuration/*
+!configuration/default_settings.ron
 software/
 good_settings/
 

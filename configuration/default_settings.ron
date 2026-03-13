@@ -1,0 +1,12 @@
+(
+    max_vars: 70,
+    cancel_condition: CountConstraints(
+        max_constraints: 100,
+    ),
+    grammar_kind: PBO,
+    amount_atoms_per_constraint: 50,
+    max_unsat_for_single_constraint: 3,
+    coeff_range: 200,
+    lower_bound_degree: 0.3,
+    upper_bound_degree: 0.5,
+)

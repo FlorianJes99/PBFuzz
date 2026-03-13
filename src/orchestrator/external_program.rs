@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Shared behavior in order to run an external program and extract the output printed to console
-pub trait SolverRunner {
+pub trait SolverRunner : Send + Sync {
     /// This method should execute a program and return the console output
     ///
     /// file_path: the PBS or PBO file, we want to solve.

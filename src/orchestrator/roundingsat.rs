@@ -99,7 +99,7 @@ impl Roundingsat {
             "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat {
                 conflicts: conflicts,
                 solution: PBOValues::new(
-                    PBSValues::new(self.parse_solution(solution_model_line)),
+                    PBSValues::new(self.parse_solution(solution_model_line)?),
                     objective_min_result
                         .ok_or_else(|| {
                             ExternalProgramError::new(
@@ -145,20 +145,24 @@ impl Roundingsat {
             },
             "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat {
                 conflicts: conflicts,
-                solution: PBSValues::new(self.parse_solution(solution_model_line)),
+                solution: PBSValues::new(self.parse_solution(solution_model_line)?),
             },
             _ => SolverStatus::Unknown,
         };
         Ok(status)
     }
 
-    fn parse_solution(&self, solution_model_line: &str) -> HashSet<AtomIdent> {
+    fn parse_solution(&self, solution_model_line: &str) -> Result<HashSet<AtomIdent>, ExternalProgramError> {
         solution_model_line
             .split_whitespace()
             .filter(|w| w.starts_with("x"))
             .map(|w| {
-                w.parse::<AtomIdent>()
-                    .expect("Roundingsat should output valid model. Probable parsing error!")
+                w.parse::<AtomIdent>().map_err(|err| ExternalProgramError::new(
+                        self.get_name(),
+                        format!("Could not parse provided rounding sat solution into atom ident: {}\nError: {}", w, err),
+                        ErrorKind::OutputParsingError
+                ))
+                    
             })
             .collect()
     }

@@ -115,13 +115,10 @@ impl Scip {
         }
 
         if is_sat {
-            match min_objective_result {
-                Ok(objective_result) => Ok(SolverStatus::Sat {
-                    conflicts: conflict_count,
-                    solution: PBOValues::new(PBSValues::new(true_vars), objective_result.into()),
-                }),
-                Err(e) => Err(e),
-            }
+            min_objective_result.map(|objective_result| SolverStatus::Sat {
+                conflicts: conflict_count,
+                solution: PBOValues::new(PBSValues::new(true_vars), objective_result.into()),
+            })
         } else {
             Ok(SolverStatus::Unknown)
         }

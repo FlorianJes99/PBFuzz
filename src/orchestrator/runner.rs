@@ -9,7 +9,7 @@ use crate::{
         folders::{DATA_FOLDER, prepare_output_folder},
     },
 };
-use rayon::prelude::*;
+use rayon::{current_thread_index, prelude::*};
 use std::{
     fmt::Display,
     fs::File,
@@ -43,7 +43,7 @@ use crate::{
 /// - prepare the output folder
 ///   - create output folder, if not yet exist
 ///   - clean up subdirectories, if needed to
-/// - create the csv writer, which writes stats of each iteration into a file
+/// - create the CSV writer, which writes stats of each iteration into a file
 /// - create the actual orchestrator struct
 /// - run iterations until:
 ///   - elapsed time > StopCondition(duration)
@@ -63,7 +63,7 @@ use crate::{
 ///   - Verify found minimum objective for each program, if SAT and PBO
 /// - Compare if both programs output the same result
 /// - Update stats for the orchestrator
-/// - write relevant datapoints to the csv file
+/// - write relevant data points to the CSV file
 pub fn run_orchestrator<T, U>(
     fuzzer_output_dir: PathBuf,
     generator_settings: GeneratorSettings,
@@ -73,8 +73,8 @@ pub fn run_orchestrator<T, U>(
     stop_condition: StopCondition,
 ) -> Result<(), String>
 where
-    T: SolverRunner + PBOProcessor + PBSProcessor + Send + Sync,
-    U: SolverRunner + PBOProcessor + PBSProcessor + Send + Sync,
+    T: SolverRunner + PBOProcessor + PBSProcessor,
+    U: SolverRunner + PBOProcessor + PBSProcessor,
 {
     prepare_output_folder(&fuzzer_output_dir)
         .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
@@ -102,8 +102,8 @@ pub struct Orchestrator<T, U> {
 
 impl<T, U> Orchestrator<T, U>
 where
-    T: SolverRunner + PBOProcessor + PBSProcessor + Send + Sync,
-    U: SolverRunner + PBOProcessor + PBSProcessor + Send + Sync,
+    T: SolverRunner + PBOProcessor + PBSProcessor,
+    U: SolverRunner + PBOProcessor + PBSProcessor,
 {
     pub fn run(&self, stop_condition: StopCondition) -> Result<(), String> {
         let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
@@ -113,11 +113,6 @@ where
         ));
         let mut csv_writer = csv::Writer::from_path(csv_file_path)
             .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
-        let command1 = &self.command1;
-        let command2 = &self.command2;
-        let fuzzer_output_dir = self.fuzzer_output_dir.clone();
-        let generator_settings = self.generator_settings;
-        let orchestrator_start = self.orchestrator_start;
         let mut stats = Stats::new();
         let (sender, receiver) = channel::<WorkerResult>();
         thread::scope(|s| {
@@ -126,10 +121,10 @@ where
                     (1..=max).into_par_iter().for_each_with(
                         sender,
                         |sender, _| match work_iteration(
-                            &fuzzer_output_dir,
-                            generator_settings,
-                            command1,
-                            command2,
+                            &self.fuzzer_output_dir,
+                            self.generator_settings,
+                            &self.command1,
+                            &self.command2,
                         ) {
                             Err(err) => error!("{err}"),
                             Ok(work_result) => {
@@ -141,29 +136,25 @@ where
                     );
                 }
                 StopCondition::MaxDuration(duration) => {
-let deadline = orchestrator_start + duration;
-    std::iter::from_fn(|| {
-        if Instant::now() >= deadline { None } else { Some(()) }
-    })
-    .par_bridge()
-    .for_each_with(sender, |sender, _|
-{
-                        match work_iteration(
-                            &fuzzer_output_dir,
-                            generator_settings,
-                            command1,
-                            command2,
-                        ) {
-                            Err(err) => error!("{err}"),
-                            Ok(work_result) => {
-                                if let Err(e) = sender.send(work_result) {
-                                    error!("{e}");
+                    let deadline = self.orchestrator_start + duration;
+                    iterate_until_deadline(&deadline)
+                        .par_bridge()
+                        .for_each_with(sender, |sender, _| {
+                            match work_iteration(
+                                &self.fuzzer_output_dir,
+                                self.generator_settings,
+                                &self.command1,
+                                &self.command2,
+                            ) {
+                                Err(err) => error!("{err}"),
+                                Ok(work_result) => {
+                                    if let Err(e) = sender.send(work_result) {
+                                        error!("{e}");
+                                    }
                                 }
                             }
-                        }
-                    })
+                        })
                 }
-                
             });
             for (iteration, work_result) in receiver.iter().enumerate() {
                 let percentage_range_sat = 0.25..0.7;
@@ -202,10 +193,15 @@ let deadline = orchestrator_start + duration;
         csv_writer: &mut Writer<File>,
         stats: &mut Stats,
     ) {
-        let (h, m, s) = get_hms_parts(&self.orchestrator_start.elapsed());
+        let elapsed_since_start = self.orchestrator_start.elapsed();
+        let (h, m, s) = get_hms_parts(&elapsed_since_start);
+        let throughput = iteration as f64 / elapsed_since_start.as_secs_f64();
         print_block(
-            "",
-            format!("Iteration {iteration}\nTime elapsed: {}h {}m {}s", h, m, s),
+            &format!("Iteration {iteration}"),
+            format!(
+                "Throughput: {:.3} Iterations/s\nTime elapsed: {}h {}m {}s",
+                throughput, h, m, s
+            ),
         );
         let ResultWithDuration(output_bin1, duration_bin1) = work_result.output_bin1;
         let ResultWithDuration(output_bin2, duration_bin2) = work_result.output_bin2;
@@ -314,6 +310,16 @@ fn get_seed() -> u64 {
     rand::rng().random()
 }
 
+fn iterate_until_deadline(deadline: &Instant) -> impl Iterator<Item = ()> {
+    std::iter::from_fn(|| {
+        if Instant::now() >= *deadline {
+            None
+        } else {
+            Some(())
+        }
+    })
+}
+
 fn work_iteration<T, U>(
     fuzzer_output_dir: &Path,
     settings: GeneratorSettings,
@@ -321,12 +327,13 @@ fn work_iteration<T, U>(
     command2: &U,
 ) -> Result<WorkerResult, String>
 where
-    T: SolverRunner + Send + Sync,
-    U: SolverRunner + Send + Sync,
+    T: SolverRunner,
+    U: SolverRunner,
 {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let output_file = fuzzer_output_dir.join(format!("test_{seed}.opb"));
+    let worker_thread = current_thread_index().unwrap_or(1);
+    let output_file = fuzzer_output_dir.join(format!("{worker_thread}_test_{seed}.opb"));
     debug!("Running Fuzzer with seed {seed}...");
     let mut grammar = PBSGenerator::create_grammar(seed, settings);
     let duration_write_to_file = File::create(&output_file)
@@ -418,6 +425,7 @@ struct Stats {
     average_conflicts: RunningAverage,
     average_problem_generation_time: RunningAverage,
     bugs_found: u32,
+    errors: u32,
     start: Instant,
 }
 
@@ -430,6 +438,7 @@ impl Stats {
             average_conflicts: RunningAverage::default(),
             average_problem_generation_time: RunningAverage::default(),
             bugs_found: 0,
+            errors: 0,
             start: Instant::now(),
         }
     }
@@ -457,7 +466,7 @@ impl Stats {
             IterationOutcome::Unknown => self.amount_unknown += 1,
             IterationOutcome::Bug { .. } => self.bugs_found += 1,
             // Do nothing in case of error
-            IterationOutcome::Error { .. } => (),
+            IterationOutcome::Error { .. } => self.errors += 1,
         }
     }
     fn amount_runs(&self) -> u32 {
@@ -512,6 +521,11 @@ impl Display for Stats {
             f,
             "Bugs found                               : {}",
             self.bugs_found
+        )?;
+        writeln!(
+            f,
+            "Errors occured                           : {}",
+            self.errors
         )?;
         let program_duration = self.start.elapsed();
         let avg_time_per_instance = if self.amount_runs() == 0 {
