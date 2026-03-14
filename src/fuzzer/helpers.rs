@@ -84,6 +84,23 @@ impl RunningAverage {
     }
 }
 
+#[derive(Default)]
+pub struct RunningAverageDuration {
+    average: Duration,
+    sample_count: u32,
+}
+
+impl RunningAverageDuration {
+    pub fn update(&mut self, sample: &Duration) {
+        self.average = (self.sample_count * self.average + *sample) / (self.sample_count + 1);
+        self.sample_count += 1;
+    }
+
+    pub fn get_average(&self) -> Duration {
+        self.average
+    }
+}
+
 /// Moves a file from the specified source to a new destination
 ///
 /// This operation calls the rename function of the std crate and is just a simple wrapper
@@ -153,6 +170,25 @@ mod tests {
             "Expected: {}\nActual: {}",
             expected_average,
             ra.get_average()
+        );
+    }
+
+    #[test]
+    fn test_running_average_duration() {
+        let sample = 5;
+        let expected_average = (2 + 3 + sample) as f32 / 3.0;
+
+        let mut ra = RunningAverageDuration::default();
+        assert_eq!(0, ra.sample_count);
+        assert_eq!(Duration::ZERO, ra.average);
+        ra.update(Duration::from_secs(2));
+        ra.update(Duration::from_secs(3));
+        ra.update(Duration::from_secs(5));
+        assert!(
+            float_equals(expected_average, ra.average.as_secs_f32(), 0.00001),
+            "Expected: {}\nActual: {}",
+            expected_average,
+            ra.get_average().as_secs_f32()
         );
     }
 }

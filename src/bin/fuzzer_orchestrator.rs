@@ -131,7 +131,7 @@ struct OrchestratorArgs {
     #[arg(long)]
     scip_bin: Option<PathBuf>,
 
-    /// Set to true if `valid` results should be saved as well
+    /// Set to true if `valid` results should be saved as well (default: false)
     ///
     /// A valid result is considered to be SAT or UNSAT
     #[arg(long, default_value_t = false)]

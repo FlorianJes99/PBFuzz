@@ -1,7 +1,7 @@
 use crate::{
     fuzzer::{
         grammar::{PBGrammar, PBKind},
-        helpers::{RunningAverage, get_hms_parts, move_file},
+        helpers::{RunningAverage, RunningAverageDuration, get_hms_parts, move_file},
     },
     orchestrator::{
         csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
@@ -178,13 +178,12 @@ where
         let elapsed_since_start = self.orchestrator_start.elapsed();
         let (h, m, s) = get_hms_parts(&elapsed_since_start);
         let throughput = iteration as f64 / elapsed_since_start.as_secs_f64();
-        print_block(
-            &format!("Iteration {iteration}"),
-            format!(
-                "Throughput: {:.3} Iterations/s\nTime elapsed: {}h {}m {}s",
-                throughput, h, m, s
-            ),
-        );
+        #[rustfmt::skip]
+        let body = [
+            format!("Throughput: {:.3} Iterations/s ({} threads)", throughput, rayon::current_num_threads()),
+            format!("Time elapsed: {}h {}m {}s", h, m, s),
+        ].join("\n");
+        print_block(&format!("Iteration {iteration}"), body);
         let ResultWithDuration(output_bin1, duration_bin1) = work_result.output_bin1;
         let ResultWithDuration(output_bin2, duration_bin2) = work_result.output_bin2;
         let start_output_extraction = Instant::now();
@@ -226,8 +225,6 @@ where
         }
         let ResultWithDuration(output_file, output_generation_duration) =
             work_result.generated_fuzz_file;
-        stats.update(outcome);
-        stats.update_average_input_generation_time(&output_generation_duration);
         let new_file_location = &self.fuzzer_output_dir.join(format!(
             "{}/{}_{}_{}.opb",
             outcome.get_folder_name(),
@@ -247,10 +244,14 @@ where
         if let Err(err) = file_manipulation_result {
             error!("{err}");
         }
+        let duration_iteration_ms = work_result.start_worker.elapsed();
+        stats.update(outcome);
+        stats.update_average_fuzzer_output_generation(&output_generation_duration);
+        stats.update_iteration_duration(&duration_iteration_ms);
         let iteration_record = IterationRecord {
             iteration,
             result: outcome.get_status_as_string(),
-            duration_iteration_ms: work_result.start_worker.elapsed().as_secs_f32() * 1000.0,
+            duration_iteration_ms: duration_iteration_ms.as_secs_f32() * 1000.0,
             problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
             problem_solving_duration_roundingsat_ms: duration_bin1.as_secs_f32() * 1000.0,
             problem_solving_duration_scip_ms: duration_bin2.as_secs_f32() * 1000.0,
@@ -263,6 +264,7 @@ where
             error!("Could not write record into csv\nError: {}", err);
         }
         if iteration % 1000 == 0 {
+            // flush every 1000 iterations to file
             let result = csv_writer.flush();
             if let Err(err) = result {
                 error!("Could not flush to file\n Error: {}", err);
@@ -410,7 +412,8 @@ struct Stats {
     amount_unsat: u32,
     amount_unknown: u32,
     average_conflicts: RunningAverage,
-    average_problem_generation_time: RunningAverage,
+    average_problem_generation_time: RunningAverageDuration,
+    average_iteration_duration: RunningAverageDuration,
     bugs_found: u32,
     errors: u32,
     start: Instant,
@@ -423,21 +426,21 @@ impl Stats {
             amount_unsat: 0,
             amount_unknown: 0,
             average_conflicts: RunningAverage::default(),
-            average_problem_generation_time: RunningAverage::default(),
+            average_problem_generation_time: RunningAverageDuration::default(),
+            average_iteration_duration: RunningAverageDuration::default(),
             bugs_found: 0,
             errors: 0,
             start: Instant::now(),
         }
     }
 
-    fn update_average_input_generation_time(&mut self, output_generation_duration: &Duration) {
-        match output_generation_duration.as_nanos().try_into() {
-            Ok(millis) => self.average_problem_generation_time.update(millis),
-            Err(err) => error!(
-                "Could not update average problem generation!\nError: {}",
-                err
-            ),
-        }
+    fn update_average_fuzzer_output_generation(&mut self, output_generation_duration: &Duration) {
+        self.average_problem_generation_time
+            .update(output_generation_duration);
+    }
+
+    fn update_iteration_duration(&mut self, iteration_duration: &Duration) {
+        self.average_iteration_duration.update(iteration_duration);
     }
 
     fn update(&mut self, outcome: &IterationOutcome) {
@@ -514,23 +517,20 @@ impl Display for Stats {
             "Errors occured                           : {}",
             self.errors
         )?;
-        let program_duration = self.start.elapsed();
-        let avg_time_per_instance = if self.amount_runs() == 0 {
-            Duration::new(0, 0)
-        } else {
-            program_duration / self.amount_runs()
-        };
         writeln!(
             f,
-            "Average Time per Instance                : {}.{:.3}s",
-            avg_time_per_instance.as_secs(),
-            avg_time_per_instance.subsec_millis()
+            "Average Time per Instance                : {:.3}ms",
+            self.average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
         )?;
         writeln!(
             f,
             "Average time for problem generation      : {:.3}ms",
-            self.average_problem_generation_time.get_average() / 1_000_000.0
+            self.average_problem_generation_time
+                .get_average()
+                .as_secs_f32()
+                * 1_000.0
         )?;
+        let program_duration = self.start.elapsed();
         let (h, m, s) = get_hms_parts(&program_duration);
         write!(
             f,
