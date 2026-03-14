@@ -26,6 +26,15 @@ pub enum PBKind {
     PBO,
 }
 
+impl PBKind {
+    pub fn get_short_str(&self) -> &str {
+        match self {
+            PBKind::PBS => "PBS",
+            PBKind::PBO => "PBO",
+        }
+    }
+}
+
 impl Display for PBKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

@@ -108,8 +108,10 @@ where
     pub fn run(&self, stop_condition: StopCondition) -> Result<(), String> {
         let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
         let csv_file_path = &self.fuzzer_output_dir.join(DATA_FOLDER.name).join(format!(
-            "{}_{}.csv",
-            ORCHESTRATOR_DATA_FILE_PREFIX, program_start
+            "{}_{}_{}.csv",
+            ORCHESTRATOR_DATA_FILE_PREFIX,
+            self.generator_settings.get_problem_kind().get_short_str(),
+            program_start
         ));
         let mut csv_writer = csv::Writer::from_path(csv_file_path)
             .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
@@ -120,16 +122,20 @@ where
                 stop_condition
                     .into_iter(Instant::now())
                     .par_bridge()
-                    .for_each_with(sender, |sender, _| match work_iteration(
-                        &self.fuzzer_output_dir,
-                        self.generator_settings,
-                        &self.command1,
-                        &self.command2
-                    ){
-                        Ok(work_result) => if let Err(e) = sender.send(work_result) {
-                            error!("{e}");
-                        },
-                        Err(e) => error!("{e}"),
+                    .for_each_with(sender, |sender, _| {
+                        match work_iteration(
+                            &self.fuzzer_output_dir,
+                            self.generator_settings,
+                            &self.command1,
+                            &self.command2,
+                        ) {
+                            Ok(work_result) => {
+                                if let Err(e) = sender.send(work_result) {
+                                    error!("{e}");
+                                }
+                            }
+                            Err(e) => error!("{e}"),
+                        }
                     });
             });
             for (iteration, work_result) in receiver.iter().enumerate() {
