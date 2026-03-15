@@ -7,7 +7,8 @@ use crate::fuzzer::{
 use itertools::Itertools;
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, time::Instant};
+use std::io;
+use std::{fmt::Display, path::Path, time::Instant};
 
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -173,6 +174,13 @@ impl GeneratorSettingsBuilder {
             lower_bound_degree,
             upper_bound_degree,
         }
+    }
+
+    pub fn load_from_file(file: &Path) -> io::Result<Self> {
+        let data = std::fs::read_to_string(file)?;
+        ron::from_str(&data)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map(|settings| GeneratorSettingsBuilder::from_settings(settings))
     }
 
     pub fn from_settings(settings: GeneratorSettings) -> Self {

@@ -1,9 +1,4 @@
-use std::{
-    fs,
-    io::{Error, ErrorKind},
-    path::PathBuf,
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 use clap::Parser;
 use fuzzer_pseudo_bool::{
@@ -14,7 +9,7 @@ use fuzzer_pseudo_bool::{
         scip::Scip,
     },
 };
-use log::{Level};
+use log::Level;
 use rayon::ThreadPoolBuilder;
 
 fn main() {
@@ -35,7 +30,7 @@ fn main() {
     let rounding_sat = Roundingsat::new(roundingsat_bin);
     let scip = Scip::new(scip_bin);
     let mut settings = match args.settings_file {
-        Some(file) => load_settings(file).unwrap_or_else(|e| {
+        Some(file) => GeneratorSettingsBuilder::load_from_file(&file).unwrap_or_else(|e| {
             println!("Error occured while loading settings: {}", e);
             println!("Using default settings...");
             GeneratorSettingsBuilder::default()
@@ -73,14 +68,6 @@ fn init_logger(level: Option<Level>) {
         .init();
 }
 
-fn load_settings(file: PathBuf) -> std::io::Result<GeneratorSettingsBuilder> {
-    let data = fs::read_to_string(file)?;
-    let settings_builder = ron::from_str(&data)
-        .map_err(|e| Error::new(ErrorKind::Other, e))
-        .map(|settings| GeneratorSettingsBuilder::from_settings(settings))?;
-    Ok(settings_builder)
-}
-
 /// Arguments that can be passed to the orchestration pipeline for testing multiple solvers against
 /// there outputs.
 /// IMPORTANT: if both settings file and parameters are provided, then parameters will override
@@ -105,7 +92,7 @@ struct OrchestratorArgs {
     /// Terminate orchestrator after n elapsed minutes. Conflicts with the iterations flag.
     #[arg(short, long, conflicts_with = "iterations")]
     timeout_min: Option<u32>,
-    /// Choose mode for Fuzzer (default: pbs)
+    /// Choose mode for Fuzzer (default: PBS)
     #[arg(long, value_enum)]
     mode: Option<PBKind>,
     /// Use a settings file for the fuzzer.

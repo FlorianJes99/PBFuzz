@@ -1,9 +1,9 @@
 use std::fs::File;
 use std::io::BufWriter;
+use std::path::PathBuf;
 
 use fuzzer_pseudo_bool::fuzzer::grammar::PBKind;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
-use fuzzer_pseudo_bool::fuzzer::pbs_generator::CancelCondition;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::GeneratorSettingsBuilder;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::PBSGenerator;
 use log::error;
@@ -21,20 +21,15 @@ pub struct FuzzerArgs {
     #[arg(long)]
     output_path: String,
     // Optional arguments
-    /// Amount of distinct variables used in the PB Grammar
-    #[arg(
-        long,
-        default_value_t = 10,
-        value_parser = clap::value_parser!(u32).range(1..),
-        help = "Number of variables used (must be > 0)"
-    )]
-    amount_vars: u32,
     /// Option to print statistics about a single fuzzer run
     #[arg(long, default_value_t = false)]
     print_statistics: bool,
-    /// Choose mode for Fuzzer
-    #[arg(long, value_enum, default_value_t)]
-    mode: PBKind,
+    /// Choose mode for Fuzzer (default: PBS)
+    #[arg(long, value_enum)]
+    mode: Option<PBKind>,
+    /// Specify a file with settings for the fuzzer
+    #[arg(long)]
+    settings_file: Option<PathBuf>,
 }
 
 fn main() {
@@ -44,20 +39,20 @@ fn main() {
     // start of actual program
     let args = FuzzerArgs::parse();
 
-    info!(
-        "Running fuzzer with seed {} and {} variables.",
-        args.seed, args.amount_vars
-    );
-    let settings = GeneratorSettingsBuilder::new(args.amount_vars)
-        .max_unsat_for_single_constraint(3)
-        .set_bounds(0.3, 0.6)
-        .coeff_range(6)
-        .cancel_condition(CancelCondition::CountUnsat {
-            max_unsat_assignments: 250,
-        })
-        .pb_kind(args.mode)
-        .build();
-    let mut grammar = PBSGenerator::create_grammar(args.seed, settings);
+
+    let mut settings = match args.settings_file {
+        Some(file) => GeneratorSettingsBuilder::load_from_file(&file).unwrap_or_else(|e| {
+            println!("Error occured while loading settings: {}", e);
+            println!("Using default settings...");
+            GeneratorSettingsBuilder::default()
+        }),
+        None => GeneratorSettingsBuilder::default(),
+    };
+
+    if let Some(mode) = args.mode {
+        settings = settings.pb_kind(mode);
+    }
+    let grammar = PBSGenerator::create_grammar(args.seed, settings.build());
     if args.print_statistics {
         print_block("Grammar Statistics", grammar.get_statistics());
     }
