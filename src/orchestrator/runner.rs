@@ -309,7 +309,7 @@ where
     let worker_thread = current_thread_index().unwrap_or(1);
     let output_file = fuzzer_output_dir.join(format!("{worker_thread}_test_{seed}.opb"));
     debug!("Running Fuzzer with seed {seed}...");
-    let mut grammar = PBSGenerator::create_grammar(seed, settings);
+    let grammar = PBSGenerator::create_grammar(seed, settings);
     let duration_write_to_file = File::create(&output_file)
         .map(|file| BufWriter::new(file))
         .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))

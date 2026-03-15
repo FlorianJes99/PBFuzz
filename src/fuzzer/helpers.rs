@@ -181,9 +181,9 @@ mod tests {
         let mut ra = RunningAverageDuration::default();
         assert_eq!(0, ra.sample_count);
         assert_eq!(Duration::ZERO, ra.average);
-        ra.update(Duration::from_secs(2));
-        ra.update(Duration::from_secs(3));
-        ra.update(Duration::from_secs(5));
+        ra.update(&Duration::from_secs(2));
+        ra.update(&Duration::from_secs(3));
+        ra.update(&Duration::from_secs(5));
         assert!(
             float_equals(expected_average, ra.average.as_secs_f32(), 0.00001),
             "Expected: {}\nActual: {}",

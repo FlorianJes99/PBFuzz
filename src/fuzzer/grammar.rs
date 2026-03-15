@@ -81,7 +81,10 @@ impl PBGrammar {
             generation_time,
         }
     }
-    pub fn produce<W: Write>(&mut self, writer: &mut W) -> Result<Duration> {
+    /// Writes the generated PBGrammer into a writer
+    ///
+    /// Returns the duration of writing into the buffer
+    pub fn produce<W: Write>(&self, writer: &mut W) -> Result<Duration> {
         let start = Instant::now();
         info!(
             "Generated random grammar PBS grammar with {} vars and {} constraints.",
@@ -114,38 +117,27 @@ impl PBGrammar {
     }
 
     pub fn get_statistics(&self) -> GrammarStatistics {
-        let mut occurences_per_var: HashMap<AtomIdent, u32> = HashMap::new();
-        for c in &self.constraints {
-            for a in c.atoms() {
-                occurences_per_var
-                    .entry(a.atom_id)
-                    .and_modify(|v| *v += 1)
-                    .or_insert(1);
-            }
-        }
-        let mut max: Option<OccurenceWithId> = Option::None;
-        let mut min: Option<OccurenceWithId> = Option::None;
-        let mut sum = 0;
-        for (id, occurences) in occurences_per_var.iter() {
-            if max.is_none() {
-                max = Some(OccurenceWithId::new(id.clone(), *occurences));
-            } else if max.is_some_and(|f| *occurences > f.count) {
-                max = Some(OccurenceWithId::new(id.clone(), *occurences));
-            }
-            if min.is_none() {
-                min = Some(OccurenceWithId::new(id.clone(), *occurences));
-            } else if min.is_some_and(|f| *occurences < f.count) {
-                min = Some(OccurenceWithId::new(id.clone(), *occurences));
-            }
-            sum += occurences;
-        }
+        let occurences_per_var = self
+            .constraints
+            .iter()
+            .flat_map(|c| c.atoms())
+            .counts_by(|atom| atom.atom_id);
+        let max = occurences_per_var
+            .iter()
+            .max_by(|(id_a, count_a), (id_b, count_b)| count_a.cmp(&count_b).then(id_b.cmp(&id_a)))
+            .map(|(id, occ)| OccurenceWithId::new(*id, *occ as u32));
+        let min = occurences_per_var
+            .iter()
+            .min_by(|(id_a, count_a), (id_b, count_b)| count_a.cmp(&count_b).then(id_b.cmp(&id_a)))
+            .map(|(id, occ)| OccurenceWithId::new(*id, *occ as u32));
+        let sum: usize = occurences_per_var.values().sum();
         let average = sum as f32 / occurences_per_var.len() as f32;
         let amount_constraints_by_kind = self.constraints.iter().counts_by(|v| v.kind());
         GrammarStatistics {
             amount_constraints: self.amount_constraints,
             amount_constraints_by_kind,
             amount_vars: self.amount_vars,
-            total_var_occurences: sum,
+            total_var_occurences: sum as u32,
             max_occurence: max.expect("There should always be a var which occurs the most"),
             min_occurence: min.expect("There should always be a var which occurs the least"),
             average_occurence: average,
@@ -199,7 +191,11 @@ impl Display for GrammarStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
         writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
-        for (k, v) in &self.amount_constraints_by_kind {
+        for (k, v) in self
+            .amount_constraints_by_kind
+            .iter()
+            .sorted_by_key(|&(k, _)| k)
+        {
             writeln!(f, "* Amount constraints of type {k}: {v}")?;
         }
         writeln!(

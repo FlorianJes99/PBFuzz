@@ -19,7 +19,7 @@ mod folders_config {
     pub const BUG_FOLDER: FolderConfig     = FolderConfig { name: "bug",     should_delete: false };
     pub const ERROR_FOLDER: FolderConfig   = FolderConfig { name: "error",   should_delete: false };
     pub const DATA_FOLDER: FolderConfig    = FolderConfig { name: "data",    should_delete: false };
-    pub const FOLDERS: [FolderConfig; 6] = 
+    pub(super) const FOLDERS: [FolderConfig; 6] = 
         [SAT_FOLDER, UNSAT_FOLDER, UNKNOWN_FOLDER, BUG_FOLDER, ERROR_FOLDER, DATA_FOLDER];
 }
 

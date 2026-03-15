@@ -82,7 +82,7 @@ pub trait CostraintWithUnsatAssignments: Constraint {
 
 /// Currently, these types of constraints are supported.
 ///  Mainly used for type safe generation of the different types of actual constraints
-#[derive(PartialEq, Eq, PartialOrd, Hash)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConstraintKind {
     ArbitraryLength,
     ThreeAtom,
@@ -301,7 +301,6 @@ impl CardinalityConstraint {
             .filter(|coeff| *coeff < 0)
             .sum()
     }
-
 }
 
 impl Constraint for CardinalityConstraint {
@@ -336,11 +335,7 @@ impl CostraintWithUnsatAssignments for CardinalityConstraint {
 
 fn binomial(n: u64, k: u64) -> u128 {
     let k = k.min(n - k);
-    let mut r = 1u128;
-    for i in 0..k {
-        r = r * (n - i) as u128 / (i + 1) as u128;
-    }
-    r
+    return (0..k).fold(1u128, |acc, i| acc * (n - i) as u128 / (i + 1) as u128);
 }
 
 impl Display for CardinalityConstraint {
@@ -419,5 +414,42 @@ mod test {
 
         let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]);
         assert_eq!(false, c.verify(&true_vars));
+    }
+    #[test]
+    fn test_choose_zero() {
+        assert_eq!(binomial(5, 0), 1);
+    }
+
+    #[test]
+    fn test_choose_self() {
+        assert_eq!(binomial(5, 5), 1);
+    }
+
+    #[test]
+    fn test_choose_one() {
+        assert_eq!(binomial(5, 1), 5);
+    }
+
+    #[test]
+    fn test_choose_two() {
+        assert_eq!(binomial(5, 2), 10);
+    }
+
+    #[test]
+    fn test_symmetry() {
+        // C(n, k) == C(n, n-k)
+        assert_eq!(binomial(10, 3), binomial(10, 7));
+    }
+
+    #[test]
+    fn test_pascals_identity() {
+        // C(n, k) == C(n-1, k-1) + C(n-1, k)
+        assert_eq!(binomial(10, 4), binomial(9, 3) + binomial(9, 4));
+    }
+
+    #[test]
+    fn test_known_value() {
+        // 52 choose 5 = number of poker hands
+        assert_eq!(binomial(52, 5), 2_598_960);
     }
 }
