@@ -1,6 +1,7 @@
 use std::io;
+use std::path::PathBuf;
 use std::{
-    fs::{create_dir, read_dir, remove_file},
+    fs::create_dir,
     io::{Error, ErrorKind},
     path::Path,
 };
@@ -28,49 +29,34 @@ use log::info;
 
 /// Call this function once in the beginning of a run to initialize the workspace
 ///
-/// Creates all subfolder needed for the orchestrator
-pub fn prepare_output_folder(output_path: &Path) -> io::Result<()> {
-    if !output_path.exists() {
-        info!("Creating directory: {}", output_path.display());
-        create_dir(output_path)?;
-        create_folders(output_path)
-    } else if output_path.is_dir() {
-        // clean all files in workspace
-        delete_files_in_folder(output_path)?;
-        for folder_config in FOLDERS {
-            let folder = output_path.join(folder_config.name);
-            if !folder.exists() {
-                create_dir(folder)?;
-            } else if folder_config.should_delete {
-                delete_files_in_folder(&folder)?;
-            }
-        }
-        Ok(())
-    } else {
-        Err(Error::new(
+/// Creates all subfolder needed for the orchestrator.
+/// Returns: The directory used for the current fuzzer run
+/// Args:
+/// `output_path`: base path where all runs should be saved into
+/// `time_stamp`: used to create subfolder including the timestamp of the start of the run
+/// `pb_kind`: include PB kind in directory name
+pub fn prepare_output_folder(
+    output_path: &Path,
+    time_stamp: &str,
+    pb_kind: &str,
+) -> io::Result<PathBuf> {
+    if output_path.exists() && output_path.is_file() {
+        return Err(Error::new(
             ErrorKind::NotADirectory,
             format!(
                 "Current workspace needs to be a directory, but was: {}",
                 output_path.display()
             ),
-        ))
+        ));
     }
-}
-
-fn delete_files_in_folder(path: &Path) -> io::Result<()> {
-    assert!(
-        path.exists() && path.is_dir(),
-        "Expected that output directory ({}) should already exist!",
-        path.display()
-    );
-    info!("Deleting all files in folder: {}", path.display());
-    for entry in read_dir(path)? {
-        let path = entry?.path();
-        if path.is_file() {
-            remove_file(path)?;
-        }
+    if !output_path.exists() {
+        info!("Creating base directory: {}", output_path.display());
+        create_dir(output_path)?;
     }
-    Ok(())
+    let folder_fuzzing_run = output_path.join(format!("fuzzing_run_{}_{}", pb_kind, time_stamp));
+    create_dir(&folder_fuzzing_run)?;
+    create_folders(&folder_fuzzing_run)?;
+    Ok(folder_fuzzing_run)
 }
 
 /// Simply create all folders in the current working directory which are needed for the

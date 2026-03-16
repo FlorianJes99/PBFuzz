@@ -38,6 +38,11 @@ pub fn get_hms_parts(duration: &Duration) -> (u64, u64, u64) {
     (hours, mins, secs)
 }
 
+/// Returns the current time in Year-Month-Day-Hour-Minute-Second format
+pub fn current_time_as_timestamp() -> String {
+    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
+}
+
 /// Compute the running average given a current average, a sample, and the size of already measured
 /// samples
 ///

@@ -1,7 +1,10 @@
 use crate::{
     fuzzer::{
         grammar::{PBGrammar, PBKind},
-        helpers::{RunningAverage, RunningAverageDuration, get_hms_parts, move_file},
+        helpers::{
+            RunningAverage, RunningAverageDuration, current_time_as_timestamp, get_hms_parts,
+            move_file,
+        },
     },
     orchestrator::{
         csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
@@ -65,7 +68,7 @@ use crate::{
 /// - Update stats for the orchestrator
 /// - write relevant data points to the CSV file
 pub fn run_orchestrator<T, U>(
-    fuzzer_output_dir: PathBuf,
+    output_base_folder: PathBuf,
     generator_settings: GeneratorSettings,
     command1: T,
     command2: U,
@@ -76,8 +79,12 @@ where
     T: SolverRunner + PBOProcessor + PBSProcessor,
     U: SolverRunner + PBOProcessor + PBSProcessor,
 {
-    prepare_output_folder(&fuzzer_output_dir)
-        .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
+    let fuzzer_output_dir = prepare_output_folder(
+        &output_base_folder,
+        &current_time_as_timestamp(),
+        generator_settings.get_problem_kind().get_short_str(),
+    )
+    .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
     print_block("Settings to use", &generator_settings);
 
     Orchestrator {
@@ -91,7 +98,7 @@ where
     .run(stop_condition)
 }
 
-pub struct Orchestrator<T, U> {
+struct Orchestrator<T, U> {
     fuzzer_output_dir: PathBuf,
     generator_settings: GeneratorSettings,
     save_all_files: bool,
@@ -105,14 +112,11 @@ where
     T: SolverRunner + PBOProcessor + PBSProcessor,
     U: SolverRunner + PBOProcessor + PBSProcessor,
 {
-    pub fn run(&self, stop_condition: StopCondition) -> Result<(), String> {
-        let program_start = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-        let csv_file_path = &self.fuzzer_output_dir.join(DATA_FOLDER.name).join(format!(
-            "{}_{}_{}.csv",
-            ORCHESTRATOR_DATA_FILE_PREFIX,
-            self.generator_settings.get_problem_kind().get_short_str(),
-            program_start
-        ));
+    fn run(&self, stop_condition: StopCondition) -> Result<(), String> {
+        let csv_file_path = &self
+            .fuzzer_output_dir
+            .join(DATA_FOLDER.name)
+            .join(format!("{}.csv", ORCHESTRATOR_DATA_FILE_PREFIX,));
         let mut csv_writer = csv::Writer::from_path(csv_file_path)
             .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
         let mut stats = Stats::new();
@@ -276,8 +280,7 @@ where
         let dir = self.fuzzer_output_dir.join(DATA_FOLDER.name);
         let data = ron::ser::to_string_pretty(&self.generator_settings, PrettyConfig::default())
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
-        let time_stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-        let file_name = dir.join(format!("settings_{}.ron", time_stamp));
+        let file_name = dir.join("settings.ron");
         let mut file = File::create(file_name)?;
         file.write_all(data.as_bytes())?;
         file.write_all("\n".as_bytes())?;
