@@ -31,15 +31,15 @@ impl SolverRunner for Scip {
             .output()
             .map_err(|e| {
                 ExternalProgramError::new(
-                    self.get_name(),
+                    self.get_name().to_string(),
                     e.to_string(),
                     ErrorKind::ProgramExecutionFailed,
                 )
             })
     }
 
-    fn get_name(&self) -> String {
-        "scip".to_string()
+    fn get_name(&self) -> &str {
+        "scip"
     }
 }
 
@@ -79,7 +79,7 @@ impl Scip {
         let conflict_count = 0;
         let mut min_objective_result: Result<i32, ExternalProgramError> =
             Err(ExternalProgramError::new(
-                self.get_name(),
+                self.get_name().to_string(),
                 "Objective not parsed yet".to_string(),
                 ErrorKind::OutputParsingError,
             ));
@@ -105,7 +105,7 @@ impl Scip {
                     .split_whitespace()
                     .last()
                     .ok_or(ExternalProgramError::new(
-                        self.get_name(),
+                        self.get_name().to_string(),
                         format!("Expteced at least one word in line: {line}"),
                         ErrorKind::OutputParsingError,
                     ))
@@ -181,7 +181,7 @@ impl Scip {
     fn parse_as_i32(&self, s: &str) -> Result<i32, ExternalProgramError> {
         let parsed: f64 = s.parse().map_err(|e| {
             ExternalProgramError::new(
-                self.get_name(),
+                self.get_name().to_string(),
                 format!("Failed to parse integer: {e}"),
                 ErrorKind::OutputParsingError,
             )
@@ -197,7 +197,7 @@ impl Scip {
             Ok(rounded as i32)
         } else {
             Err(ExternalProgramError::new(
-                self.get_name(),
+                self.get_name().to_string(),
                 format!(
                     "Floating point number is not close enough to the expected integer.\nMax derivation: {epsilon}, Exptected: {rounded}, Actual: {parsed}"
                 ),

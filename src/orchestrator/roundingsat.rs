@@ -30,15 +30,15 @@ impl SolverRunner for Roundingsat {
             .output()
             .map_err(|e| {
                 ExternalProgramError::new(
-                    self.get_name(),
+                    self.get_name().to_string(),
                     e.to_string(),
                     ErrorKind::ProgramExecutionFailed,
                 )
             })
     }
 
-    fn get_name(&self) -> String {
-        "roundingsat".to_string()
+    fn get_name(&self) -> &str {
+        "roundingsat"
     }
 }
 
@@ -104,7 +104,7 @@ impl Roundingsat {
                     objective_min_result
                         .ok_or_else(|| {
                             ExternalProgramError::new(
-                                self.get_name(),
+                                self.get_name().to_string(),
                                 "Error while parsing minimum objective value".to_string(),
                                 ErrorKind::OutputParsingError,
                             )
@@ -161,7 +161,7 @@ impl Roundingsat {
             .filter(|w| w.starts_with("x"))
             .map(|w| {
                 w.parse::<AtomIdent>().map_err(|err| ExternalProgramError::new(
-                        self.get_name(),
+                        self.get_name().to_string(),
                         format!("Could not parse provided rounding sat solution into atom ident: {}\nError: {}", w, err),
                         ErrorKind::OutputParsingError
                 ))

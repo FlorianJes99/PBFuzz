@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fmt::Display, path::Path, process::Output};
+use std::{
+    collections::HashSet,
+    fmt::Display,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
 
 use crate::{
     fuzzer::{
@@ -15,10 +20,43 @@ pub trait SolverRunner: Send + Sync {
     /// This method should execute a program and return the console output
     ///
     /// file_path: the PBS or PBO file, we want to solve.
-    /// returns: the raw console output or some error while executing the program
+    /// Returns: the raw console output or some error while executing the program
     fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError>;
     /// Simply the name of the binary/program we are running
-    fn get_name(&self) -> String;
+    fn get_name(&self) -> &str;
+}
+
+//TODO: move external programs unified to this struct
+pub struct ExternalProgram {
+    binary: PathBuf,
+    args: Vec<String>,
+    name: String,
+}
+
+impl ExternalProgram {
+    pub fn new(binary: PathBuf, args: Vec<String>, name: String) -> Self {
+        Self { binary, args, name }
+    }
+}
+
+impl SolverRunner for ExternalProgram {
+    fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
+        let mut command = Command::new(self.binary.as_os_str());
+        for arg in &self.args {
+            command.arg(arg);
+        }
+        command.arg(file_path).output().map_err(|e| {
+            ExternalProgramError::new(
+                self.get_name().to_string(),
+                e.to_string(),
+                ErrorKind::ProgramExecutionFailed,
+            )
+        })
+    }
+
+    fn get_name(&self) -> &str {
+        &self.name
+    }
 }
 
 /// Parsing Output and extracting stuff relevant for PBS analysis
