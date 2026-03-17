@@ -5,11 +5,13 @@ use crate::{
         domain::{AtomIdent, MinObjectiveValue},
         grammar::PBGrammar,
     },
-    orchestrator::folders::{BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER},
+    orchestrator::folders::{
+        BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
+    },
 };
 
 /// Shared behavior in order to run an external program and extract the output printed to console
-pub trait SolverRunner : Send + Sync {
+pub trait SolverRunner: Send + Sync {
     /// This method should execute a program and return the console output
     ///
     /// file_path: the PBS or PBO file, we want to solve.
@@ -133,6 +135,7 @@ pub type SolverResultPBO = SolverStatus<PBOValues>;
 pub enum SolverStatus<M> {
     Sat { conflicts: u32, solution: M },
     Unsat { conflicts: u32 },
+    TimeLimit,
     Unknown,
 }
 
@@ -174,6 +177,8 @@ impl<M: SatSolutionVerifyer> SolverStatus<M> {
                 IterationOutcome::Unsat { conflicts: *c1 }
             }
             (SolverStatus::Unknown, SolverStatus::Unknown) => IterationOutcome::Unknown,
+            (SolverStatus::TimeLimit, _) => IterationOutcome::TimeLimt,
+            (_, SolverStatus::TimeLimit) => IterationOutcome::TimeLimt,
             _ => IterationOutcome::Bug {
                 reason: BugReason::OutputStatusDiffers,
             },
@@ -185,6 +190,7 @@ pub enum IterationOutcome {
     Sat { conflicts: u32 },
     Unsat { conflicts: u32 },
     Unknown,
+    TimeLimt,
     Bug { reason: BugReason },
     Error { error: ExternalProgramError },
 }
@@ -197,6 +203,7 @@ impl IterationOutcome {
             IterationOutcome::Unknown => UNKNOWN_FOLDER.name,
             IterationOutcome::Bug { .. } => BUG_FOLDER.name,
             IterationOutcome::Error { .. } => ERROR_FOLDER.name,
+            IterationOutcome::TimeLimt => TIMEOUT_FOLDER.name,
         }
     }
     pub fn get_file_name_prefix(&self) -> &'static str {
@@ -210,6 +217,7 @@ impl IterationOutcome {
             IterationOutcome::Unknown => "unknown",
             IterationOutcome::Bug { .. } => "bug",
             IterationOutcome::Error { .. } => "error",
+            IterationOutcome::TimeLimt => "timeout",
         }
     }
 
@@ -220,6 +228,7 @@ impl IterationOutcome {
             IterationOutcome::Unknown => 0,
             IterationOutcome::Bug { .. } => 0,
             IterationOutcome::Error { .. } => 0,
+            IterationOutcome::TimeLimt => 0,
         }
     }
 }

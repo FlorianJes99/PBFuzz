@@ -25,6 +25,7 @@ impl SolverRunner for Roundingsat {
             // If solution is SAT print found model
             // needed for verification of the found result
             .arg("--print-sol=1")
+            .arg("--time-limit=60")
             .arg(file_path)
             .output()
             .map_err(|e| {
@@ -111,6 +112,7 @@ impl Roundingsat {
                         .into(),
                 ),
             },
+            "s TIMELIMIT" => SolverStatus::TimeLimit,
             _ => SolverStatus::Unknown,
         };
         Ok(status)
@@ -147,6 +149,7 @@ impl Roundingsat {
                 conflicts: conflicts,
                 solution: PBSValues::new(self.parse_solution(solution_model_line)?),
             },
+            "s TIMELIMIT" => SolverStatus::TimeLimit,
             _ => SolverStatus::Unknown,
         };
         Ok(status)

@@ -17,11 +17,12 @@ mod folders_config {
     pub const SAT_FOLDER: FolderConfig     = FolderConfig { name: "sat",     should_delete: true  };
     pub const UNSAT_FOLDER: FolderConfig   = FolderConfig { name: "unsat",   should_delete: true  };
     pub const UNKNOWN_FOLDER: FolderConfig = FolderConfig { name: "unknown", should_delete: true  };
+    pub const TIMEOUT_FOLDER: FolderConfig = FolderConfig { name: "timeout", should_delete: true  };
     pub const BUG_FOLDER: FolderConfig     = FolderConfig { name: "bug",     should_delete: false };
     pub const ERROR_FOLDER: FolderConfig   = FolderConfig { name: "error",   should_delete: false };
     pub const DATA_FOLDER: FolderConfig    = FolderConfig { name: "data",    should_delete: false };
-    pub(super) const FOLDERS: [FolderConfig; 6] = 
-        [SAT_FOLDER, UNSAT_FOLDER, UNKNOWN_FOLDER, BUG_FOLDER, ERROR_FOLDER, DATA_FOLDER];
+    pub(super) const FOLDERS: [FolderConfig; 7] = 
+        [SAT_FOLDER, UNSAT_FOLDER, UNKNOWN_FOLDER, TIMEOUT_FOLDER, BUG_FOLDER, ERROR_FOLDER, DATA_FOLDER];
 }
 
 pub use folders_config::*;

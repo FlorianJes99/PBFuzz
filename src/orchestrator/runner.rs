@@ -419,6 +419,7 @@ struct Stats {
     average_iteration_duration: RunningAverageDuration,
     bugs_found: u32,
     errors: u32,
+    timeouts: u32,
     start: Instant,
 }
 
@@ -433,6 +434,7 @@ impl Stats {
             average_iteration_duration: RunningAverageDuration::default(),
             bugs_found: 0,
             errors: 0,
+            timeouts: 0,
             start: Instant::now(),
         }
     }
@@ -458,8 +460,8 @@ impl Stats {
             }
             IterationOutcome::Unknown => self.amount_unknown += 1,
             IterationOutcome::Bug { .. } => self.bugs_found += 1,
-            // Do nothing in case of error
             IterationOutcome::Error { .. } => self.errors += 1,
+            IterationOutcome::TimeLimt => self.timeouts += 1,
         }
     }
     fn amount_runs(&self) -> u32 {
@@ -519,6 +521,11 @@ impl Display for Stats {
             f,
             "Errors occured                           : {}",
             self.errors
+        )?;
+        writeln!(
+            f,
+            "Timeouts                                 : {}",
+            self.timeouts
         )?;
         writeln!(
             f,

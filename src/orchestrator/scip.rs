@@ -23,6 +23,8 @@ pub struct Scip {
 impl SolverRunner for Scip {
     fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
         Command::new(self.binary.as_os_str())
+            .arg("-s")
+            .arg("configuration/scip.set")
             // scip expects -f flag for input file
             .arg("-f")
             .arg(file_path)
@@ -72,6 +74,7 @@ impl Scip {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let sat_parser = Regex::new(r"\[optimal solution found\]").unwrap();
         let unsat_parser = Regex::new(r"\[infeasible\]").unwrap();
+        let time_limt_parser = Regex::new(r"\[time limit reached\]").unwrap();
         // We don't support conflict counting for scip ATM
         let conflict_count = 0;
         let mut min_objective_result: Result<i32, ExternalProgramError> =
@@ -88,6 +91,9 @@ impl Scip {
                 return Ok(SolverStatus::Unsat {
                     conflicts: conflict_count,
                 });
+            }
+            if time_limt_parser.is_match(line) {
+                return Ok(SolverStatus::TimeLimit);
             }
 
             if sat_parser.is_match(line) {
@@ -131,6 +137,7 @@ impl Scip {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let sat_parser = Regex::new(r"\[optimal solution found\]").unwrap();
         let unsat_parser = Regex::new(r"\[infeasible\]").unwrap();
+        let time_limt_parser = Regex::new(r"\[time limit reached\]").unwrap();
         // We don't support conflict counting for scip ATM
         let conflict_count = 0;
         let mut is_sat = false;
@@ -141,6 +148,10 @@ impl Scip {
                 return Ok(SolverStatus::Unsat {
                     conflicts: conflict_count,
                 });
+            }
+
+            if time_limt_parser.is_match(line) {
+                return Ok(SolverStatus::TimeLimit);
             }
 
             if sat_parser.is_match(line) {

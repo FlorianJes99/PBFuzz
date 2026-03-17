@@ -3,6 +3,7 @@ out/
 important_findings/
 configuration/*
 !configuration/default_settings.ron
+!configuration/scip.set
 software/
 good_settings/
 
