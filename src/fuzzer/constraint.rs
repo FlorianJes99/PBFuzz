@@ -36,14 +36,9 @@ pub trait Constraint: Display + Send {
         self.satisfied(
             self.atoms()
                 .iter()
-                .map(|atom| {
-                    if true_vars.contains(&atom.atom_id) {
-                        atom.coeff
-                    } else {
-                        0
-                    }
-                })
-                .sum::<i32>() as i64,
+                .filter(|a| true_vars.contains(&a.atom_id))
+                .map(|a| a.coeff as i64)
+                .sum::<i64>()
         )
     }
 

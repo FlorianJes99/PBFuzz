@@ -5,7 +5,8 @@ use rand::{
     rngs::StdRng,
     seq::{IndexedRandom, index},
 };
-use std::i64;
+use serde::{Deserialize, Serialize};
+use std::{fmt::Display, i64};
 
 use crate::fuzzer::{
     constraint::{
@@ -15,14 +16,8 @@ use crate::fuzzer::{
     domain::{AtomIdent, Comparison, MinFunction},
 };
 
-//  [ThreeAtom, Cardinality, Arbitrary]
-const CONSTRAINT_DISTR: [i32; 3] = [2, 1, 1];
-
 // Cardinality parameters
 const CARDINALITY_CONSTRAINT_LENGTH: u32 = 30;
-const CARDINALITY_RHS_LOWER_BOUND: f32 = 0.3;
-const CARDINALITY_RHS_UPPER_BOUND: f32 = 0.5;
-
 // Arbitrary Constraint parameters
 const GENERIC_CONSTRAINT_LENGTH: u32 = 30;
 
@@ -35,7 +30,7 @@ pub struct ConstraintGenerator {
 
 impl ConstraintGenerator {
     pub fn new(rand: StdRng, settings: ConstraintSettings) -> Self {
-        let dist = WeightedIndex::new(CONSTRAINT_DISTR)
+        let dist = WeightedIndex::new(settings.constraint_distribution.get_weights())
             .expect("We should only create valid distributions, when sampling constraint types");
         Self {
             rand,
@@ -168,9 +163,10 @@ impl ConstraintGenerator {
         }
         assert!(atoms.len() as u32 == length);
         let distance = upper_max - lower_max;
-        let lower_bound = lower_max + (CARDINALITY_RHS_LOWER_BOUND * distance as f32).ceil() as i32;
+        let lower_bound =
+            lower_max + (self.settings.lower_bound_degree * distance as f64).ceil() as i32;
         let upper_bound =
-            lower_max + (CARDINALITY_RHS_UPPER_BOUND * distance as f32).floor() as i32;
+            lower_max + (self.settings.upper_bound_degree * distance as f64).floor() as i32;
         let degree = self
             .rand
             .random_range(lower_bound..upper_bound)
@@ -291,6 +287,49 @@ pub struct ConstraintSettings {
     /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then
     ///       highest possible degree (RHS) can be 6
     upper_bound_degree: f64,
+    /// Specifies the weights of each constraint type.
+    ///
+    /// According to these weights, the constraints are proportionally sampled
+    /// E.g.:: (2,1,1) will lead to three_atom constraint taking up 50% of the samples,
+    /// while both of the other types will be 25% each.
+    constraint_distribution: ConstraintDistribution,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct ConstraintDistribution {
+    three_atom_weight: i32,
+    cardinality_weight: i32,
+    arbitrary_weight: i32,
+}
+impl ConstraintDistribution {
+    pub fn new(three_atom_weight: i32, cardinality_weight: i32, arbitrary_weight: i32) -> Self {
+        Self {
+            three_atom_weight,
+            cardinality_weight,
+            arbitrary_weight,
+        }
+    }
+    fn get_weights(&self) -> [i32; 3] {
+        [
+            self.three_atom_weight,
+            self.cardinality_weight,
+            self.arbitrary_weight,
+        ]
+    }
+}
+
+impl Display for ConstraintDistribution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let total = self.three_atom_weight + self.cardinality_weight + self.arbitrary_weight;
+        let percentages: [f32; 3] = self
+            .get_weights()
+            .map(|part| (part as f32 / total as f32) * 100.0);
+        write!(
+            f,
+            "Constraint Proportions - Three Atom ({:.2}%), Cardinality ({:.2}%), Arbitrary ({:.2}%)",
+            percentages[0], percentages[1], percentages[2]
+        )
+    }
 }
 
 impl ConstraintSettings {
@@ -300,6 +339,7 @@ impl ConstraintSettings {
         coeff_range: i32,
         lower_bound_degree: f64,
         upper_bound_degree: f64,
+        constraint_distribution: ConstraintDistribution,
     ) -> Self {
         Self {
             max_vars,
@@ -307,6 +347,7 @@ impl ConstraintSettings {
             coeff_range,
             lower_bound_degree,
             upper_bound_degree,
+            constraint_distribution,
         }
     }
 }

@@ -9,4 +9,9 @@
     coeff_range: 200,
     lower_bound_degree: 0.3,
     upper_bound_degree: 0.5,
+    constraint_distribution: (
+        three_atom_weight: 2,
+        cardinality_weight: 1,
+        arbitrary_weight: 1,
+    ),
 )

@@ -222,7 +222,7 @@ where
         let time_output_extraction = start_output_extraction.elapsed();
 
         if let IterationOutcome::Error { error: err } = outcome {
-            error!("Some error occured in iteration!\nError: {}", err);
+            error!("Some error occured in iteration for seed {})!\nError: {}", work_result.seed, err);
         }
         if let IterationOutcome::Bug { reason } = outcome {
             println!("Found bug!\nBug: {}", reason)

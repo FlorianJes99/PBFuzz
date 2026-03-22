@@ -1,6 +1,6 @@
 use crate::fuzzer::{
     constraint::Constraint,
-    constraint_generator::{ConstraintGenerator, ConstraintSettings},
+    constraint_generator::{ConstraintDistribution, ConstraintGenerator, ConstraintSettings},
     domain::AtomIdent,
     grammar::{PBGrammar, PBKind},
 };
@@ -69,6 +69,7 @@ pub struct GeneratorSettings {
     /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then
     ///       highest possible degree (RHS) can be 6
     upper_bound_degree: f64,
+    constraint_distribution: ConstraintDistribution,
 }
 
 impl GeneratorSettings {
@@ -111,10 +112,15 @@ impl Display for GeneratorSettings {
             "Lower bound for RHS of constraint            : {}",
             self.lower_bound_degree
         )?;
-        write!(
+        writeln!(
             f,
             "Upper bound for RHS of constraint            : {}",
             self.upper_bound_degree
+        )?;
+        write!(
+            f,
+            "Upper bound for RHS of constraint            : {}",
+            self.constraint_distribution
         )
     }
 }
@@ -138,6 +144,7 @@ pub struct GeneratorSettingsBuilder {
     amount_atoms_per_constraint: u32,
     lower_bound_degree: f64,
     upper_bound_degree: f64,
+    constraint_distribution: ConstraintDistribution,
 }
 
 impl Default for GeneratorSettingsBuilder {
@@ -163,6 +170,7 @@ impl GeneratorSettingsBuilder {
             max_unsat_assignments: (max_vars as f32 * 2.4).floor() as u64,
         };
         let grammar_kind = PBKind::PBS;
+        let constraint_distribution = ConstraintDistribution::new(2,1,1);
         // assignment combinations
         Self {
             max_vars,
@@ -173,6 +181,7 @@ impl GeneratorSettingsBuilder {
             amount_atoms_per_constraint,
             lower_bound_degree,
             upper_bound_degree,
+            constraint_distribution
         }
     }
 
@@ -193,6 +202,7 @@ impl GeneratorSettingsBuilder {
             amount_atoms_per_constraint: settings.amount_atoms_per_constraint,
             lower_bound_degree: settings.lower_bound_degree,
             upper_bound_degree: settings.upper_bound_degree,
+            constraint_distribution: settings.constraint_distribution,
         }
     }
 
@@ -224,6 +234,11 @@ impl GeneratorSettingsBuilder {
         self
     }
 
+    pub fn set_constraint_distribution(mut self, constraint_distribution: ConstraintDistribution) -> Self {
+        self.constraint_distribution = constraint_distribution;
+        self
+    }
+
     pub fn build(self) -> GeneratorSettings {
         GeneratorSettings {
             max_vars: self.max_vars,
@@ -234,6 +249,7 @@ impl GeneratorSettingsBuilder {
             amount_atoms_per_constraint: self.amount_atoms_per_constraint,
             lower_bound_degree: self.lower_bound_degree,
             upper_bound_degree: self.upper_bound_degree,
+            constraint_distribution: self.constraint_distribution
         }
     }
 }
@@ -248,6 +264,7 @@ impl PBSGenerator {
                 settings.coeff_range as i32,
                 settings.lower_bound_degree,
                 settings.upper_bound_degree,
+                settings.constraint_distribution
             ),
         );
         Self {

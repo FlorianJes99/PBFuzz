@@ -73,7 +73,12 @@ impl Roundingsat {
     ) -> Result<SolverResultPBO, ExternalProgramError> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut conflicts = 0;
-        let mut objective_min_result: Option<i32> = Option::None;
+        let mut objective_min_result: Result<i32, ExternalProgramError> =
+            Err(ExternalProgramError::new(
+                self.get_name().to_string(),
+                "Field not parsed yet".to_string(),
+                ErrorKind::OutputParsingError,
+            ));
         let mut status_line = "";
         let mut solution_model_line = "";
         for line in stdout.lines() {
@@ -90,7 +95,18 @@ impl Roundingsat {
             } else if line.starts_with("v ") {
                 solution_model_line = line
             } else if line.starts_with("o ") {
-                objective_min_result = line.split_whitespace().last().and_then(|n| n.parse().ok())
+                if let Some(n) = line.split_whitespace().last() {
+                    objective_min_result = n.parse().map_err(|err| {
+                        ExternalProgramError::new(
+                            self.get_name().to_string(),
+                            format!(
+                                "Error while parsing minimum objective value from: {}\n Err: {}",
+                                solution_model_line, err
+                            ),
+                            ErrorKind::OutputParsingError,
+                        )
+                    })
+                }
             }
         }
         let status = match status_line {
@@ -101,15 +117,7 @@ impl Roundingsat {
                 conflicts: conflicts,
                 solution: PBOValues::new(
                     PBSValues::new(self.parse_solution(solution_model_line)?),
-                    objective_min_result
-                        .ok_or_else(|| {
-                            ExternalProgramError::new(
-                                self.get_name().to_string(),
-                                "Error while parsing minimum objective value".to_string(),
-                                ErrorKind::OutputParsingError,
-                            )
-                        })?
-                        .into(),
+                    objective_min_result?.into(),
                 ),
             },
             "s TIMELIMIT" => SolverStatus::TimeLimit,
@@ -155,7 +163,10 @@ impl Roundingsat {
         Ok(status)
     }
 
-    fn parse_solution(&self, solution_model_line: &str) -> Result<HashSet<AtomIdent>, ExternalProgramError> {
+    fn parse_solution(
+        &self,
+        solution_model_line: &str,
+    ) -> Result<HashSet<AtomIdent>, ExternalProgramError> {
         solution_model_line
             .split_whitespace()
             .filter(|w| w.starts_with("x"))
@@ -165,7 +176,6 @@ impl Roundingsat {
                         format!("Could not parse provided rounding sat solution into atom ident: {}\nError: {}", w, err),
                         ErrorKind::OutputParsingError
                 ))
-                    
             })
             .collect()
     }
