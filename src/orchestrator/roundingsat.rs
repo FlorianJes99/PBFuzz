@@ -95,8 +95,8 @@ impl Roundingsat {
             } else if line.starts_with("v ") {
                 solution_model_line = line
             } else if line.starts_with("o ") {
-                if let Some(n) = line.split_whitespace().last() {
-                    objective_min_result = n.parse().map_err(|err| {
+                objective_min_result = match line.split_whitespace().last() {
+                    Some(n) => n.parse().map_err(|err| {
                         ExternalProgramError::new(
                             self.get_name().to_string(),
                             format!(
@@ -105,7 +105,12 @@ impl Roundingsat {
                             ),
                             ErrorKind::OutputParsingError,
                         )
-                    })
+                    }),
+                    None => Err(ExternalProgramError::new(
+                        self.get_name().to_string(),
+                        format!("Invalid line: {}", line),
+                        ErrorKind::OutputParsingError,
+                    )),
                 }
             }
         }
@@ -113,13 +118,16 @@ impl Roundingsat {
             "s UNSATISFIABLE" => SolverStatus::Unsat {
                 conflicts: conflicts,
             },
-            "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat {
+            "s OPTIMUM FOUND" => SolverStatus::Sat {
                 conflicts: conflicts,
                 solution: PBOValues::new(
                     PBSValues::new(self.parse_solution(solution_model_line)?),
                     objective_min_result?.into(),
                 ),
             },
+            // For PBO this means we run into time limit to find the BEST solution
+            // TODO: maybe some better representation for this case
+            "s SATISFIABLE" => SolverStatus::TimeLimit,
             "s TIMELIMIT" => SolverStatus::TimeLimit,
             _ => SolverStatus::Unknown,
         };

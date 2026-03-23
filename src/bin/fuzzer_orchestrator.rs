@@ -1,8 +1,11 @@
-use std::{path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 
 use clap::Parser;
 use fuzzer_pseudo_bool::{
-    fuzzer::{grammar::PBKind, pbs_generator::GeneratorSettingsBuilder},
+    fuzzer::{
+        grammar::PBKind, helpers::current_time_as_timestamp,
+        pbs_generator::GeneratorSettingsBuilder,
+    },
     orchestrator::{
         roundingsat::Roundingsat,
         runner::{StopCondition, run_orchestrator},
@@ -14,7 +17,11 @@ use rayon::ThreadPoolBuilder;
 
 fn main() {
     let args = OrchestratorArgs::parse();
-    init_logger(args.log);
+    let start_as_str = current_time_as_timestamp();
+    if let Err(e) = init_logger(args.log, &start_as_str) {
+        println!("Logger initalization failed\nError: {}", e);
+        return;
+    }
     if let Some(t) = args.thread_count {
         ThreadPoolBuilder::new()
             .num_threads(t)
@@ -52,6 +59,7 @@ fn main() {
     println!("Workspace set to: {}", &output_dir.display());
     let res = run_orchestrator(
         output_dir,
+        &start_as_str,
         settings.build(),
         rounding_sat,
         scip,
@@ -63,10 +71,23 @@ fn main() {
     }
 }
 
-fn init_logger(level: Option<Level>) {
-    env_logger::Builder::new()
-        .filter_level(level.unwrap_or(Level::Error).to_level_filter())
-        .init();
+fn init_logger(level: Option<Level>, timestamp: &str) -> Result<(), fern::InitError> {
+    fs::create_dir("logs")?;
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {} {}] {}",
+                current_time_as_timestamp(),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(level.unwrap_or(Level::Error).to_level_filter())
+        .chain(std::io::stdout())
+        .chain(fern::log_file(format!("logs/{}_output.log", timestamp))?)
+        .apply()?;
+    Ok(())
 }
 
 /// Arguments that can be passed to the orchestration pipeline for testing multiple solvers against

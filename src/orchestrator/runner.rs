@@ -1,10 +1,7 @@
 use crate::{
     fuzzer::{
         grammar::{PBGrammar, PBKind},
-        helpers::{
-            RunningAverage, RunningAverageDuration, current_time_as_timestamp, get_hms_parts,
-            move_file,
-        },
+        helpers::{RunningAverage, RunningAverageDuration, get_hms_parts, move_file},
     },
     orchestrator::{
         csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
@@ -69,6 +66,7 @@ use crate::{
 /// - write relevant data points to the CSV file
 pub fn run_orchestrator<T, U>(
     output_base_folder: PathBuf,
+    time_stamp_as_str: &str,
     generator_settings: GeneratorSettings,
     command1: T,
     command2: U,
@@ -81,7 +79,7 @@ where
 {
     let fuzzer_output_dir = prepare_output_folder(
         &output_base_folder,
-        &current_time_as_timestamp(),
+        time_stamp_as_str,
         generator_settings.get_problem_kind().get_short_str(),
     )
     .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
@@ -222,7 +220,10 @@ where
         let time_output_extraction = start_output_extraction.elapsed();
 
         if let IterationOutcome::Error { error: err } = outcome {
-            error!("Some error occured in iteration for seed {})!\nError: {}", work_result.seed, err);
+            error!(
+                "Some error occured in iteration for seed {})!\nError: {}",
+                work_result.seed, err
+            );
         }
         if let IterationOutcome::Bug { reason } = outcome {
             println!("Found bug!\nBug: {}", reason)

@@ -4,7 +4,7 @@
         max_constraints: 100,
     ),
     grammar_kind: PBO,
-    amount_atoms_per_constraint: 50,
+    amount_atoms_per_constraint: 30,
     max_unsat_for_single_constraint: 3,
     coeff_range: 200,
     lower_bound_degree: 0.3,

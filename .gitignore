@@ -1,5 +1,6 @@
 target/
 out/
+logs/
 important_findings/
 configuration/*
 !configuration/default_settings.ron

@@ -3,9 +3,11 @@ use std::io::BufWriter;
 use std::path::PathBuf;
 
 use fuzzer_pseudo_bool::fuzzer::grammar::PBKind;
+use fuzzer_pseudo_bool::fuzzer::helpers::current_time_as_timestamp;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::GeneratorSettingsBuilder;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::PBSGenerator;
+use log::Level;
 use log::error;
 use log::info;
 
@@ -34,11 +36,13 @@ pub struct FuzzerArgs {
 
 fn main() {
     // initialize the logger
-    env_logger::init();
+    if let Err(e) = init_logger() {
+        println!("Logger initialization failed\n Error: {}", e);
+        return;
+    }
 
     // start of actual program
     let args = FuzzerArgs::parse();
-
 
     let mut settings = match args.settings_file {
         Some(file) => GeneratorSettingsBuilder::load_from_file(&file).unwrap_or_else(|e| {
@@ -64,4 +68,21 @@ fn main() {
         Ok(_) => info!("Wrote generated grammar into file: {}", output_path),
         Err(e) => error!("Could not write into file: {}\n Error: {}", output_path, e),
     }
+}
+
+fn init_logger() -> Result<(), fern::InitError> {
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {} {}] {}",
+                current_time_as_timestamp(),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(Level::Info.to_level_filter())
+        .chain(std::io::stdout())
+        .apply()?;
+    Ok(())
 }
