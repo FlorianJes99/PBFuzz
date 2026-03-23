@@ -317,6 +317,7 @@ impl Constraint for CardinalityConstraint {
 }
 
 impl CostraintWithUnsatAssignments for CardinalityConstraint {
+    //TODO: this is not correct anymore, because coeffs can be -1 as well now
     fn amount_unsat_assignments(&self) -> u128 {
         *self.amount_unsat.get_or_init(|| {
             let max_combinations_to_set_true = self.degree() - self.lowest_rhs_assignment() as i64;

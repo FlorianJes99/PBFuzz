@@ -72,6 +72,20 @@ pub struct GeneratorSettings {
     constraint_distribution: ConstraintDistribution,
 }
 
+impl Into<ConstraintSettings> for GeneratorSettings {
+    fn into(self) -> ConstraintSettings {
+        ConstraintSettings::new(
+            self.max_vars,
+            self.max_unsat_for_single_constraint,
+            self.amount_atoms_per_constraint,
+            self.coeff_range as i32,
+            self.lower_bound_degree,
+            self.upper_bound_degree,
+            self.constraint_distribution,
+        )
+    }
+}
+
 impl GeneratorSettings {
     pub fn get_problem_kind(&self) -> PBKind {
         self.grammar_kind
@@ -162,7 +176,7 @@ impl Default for GeneratorSettingsBuilder {
 impl GeneratorSettingsBuilder {
     pub fn new(max_vars: u32) -> Self {
         let coeff_range = 3;
-        let amount_atoms_per_constraint = 50;
+        let amount_atoms_per_constraint = 30;
         let max_unsat_for_single_constraint = 5;
         let lower_bound_degree = 0.3;
         let upper_bound_degree = 0.5;
@@ -170,7 +184,7 @@ impl GeneratorSettingsBuilder {
             max_unsat_assignments: (max_vars as f32 * 2.4).floor() as u64,
         };
         let grammar_kind = PBKind::PBS;
-        let constraint_distribution = ConstraintDistribution::new(2,1,1);
+        let constraint_distribution = ConstraintDistribution::new(2, 1, 1);
         // assignment combinations
         Self {
             max_vars,
@@ -181,7 +195,7 @@ impl GeneratorSettingsBuilder {
             amount_atoms_per_constraint,
             lower_bound_degree,
             upper_bound_degree,
-            constraint_distribution
+            constraint_distribution,
         }
     }
 
@@ -234,7 +248,10 @@ impl GeneratorSettingsBuilder {
         self
     }
 
-    pub fn set_constraint_distribution(mut self, constraint_distribution: ConstraintDistribution) -> Self {
+    pub fn set_constraint_distribution(
+        mut self,
+        constraint_distribution: ConstraintDistribution,
+    ) -> Self {
         self.constraint_distribution = constraint_distribution;
         self
     }
@@ -249,24 +266,15 @@ impl GeneratorSettingsBuilder {
             amount_atoms_per_constraint: self.amount_atoms_per_constraint,
             lower_bound_degree: self.lower_bound_degree,
             upper_bound_degree: self.upper_bound_degree,
-            constraint_distribution: self.constraint_distribution
+            constraint_distribution: self.constraint_distribution,
         }
     }
 }
 
 impl PBSGenerator {
     fn new(seed: u64, settings: GeneratorSettings) -> Self {
-        let constr_generator = ConstraintGenerator::new(
-            StdRng::seed_from_u64(seed),
-            ConstraintSettings::new(
-                settings.max_vars,
-                settings.max_unsat_for_single_constraint,
-                settings.coeff_range as i32,
-                settings.lower_bound_degree,
-                settings.upper_bound_degree,
-                settings.constraint_distribution
-            ),
-        );
+        let constr_generator =
+            ConstraintGenerator::new(StdRng::seed_from_u64(seed), settings.into());
         Self {
             seed,
             constraint_generator: constr_generator,

@@ -16,11 +16,6 @@ use crate::fuzzer::{
     domain::{AtomIdent, Comparison, MinFunction},
 };
 
-// Cardinality parameters
-const CARDINALITY_CONSTRAINT_LENGTH: u32 = 30;
-// Arbitrary Constraint parameters
-const GENERIC_CONSTRAINT_LENGTH: u32 = 30;
-
 #[derive(Debug)]
 pub struct ConstraintGenerator {
     rand: StdRng,
@@ -81,19 +76,19 @@ impl ConstraintGenerator {
                 Box::new(c)
             }
             ConstraintKind::Cardinality => {
-                let atom_len = if self.settings.max_vars <= CARDINALITY_CONSTRAINT_LENGTH {
+                let atom_len = if self.settings.max_vars <= self.settings.amount_atoms_per_constraint {
                     (self.settings.max_vars as f32 * 0.5).floor() as u32
                 } else {
-                    CARDINALITY_CONSTRAINT_LENGTH
+                    self.settings.amount_atoms_per_constraint
                 };
                 let c = self.generate_cardinality(atom_len);
                 Box::new(c)
             }
             ConstraintKind::ArbitraryLength => {
-                let atom_len = if self.settings.max_vars <= GENERIC_CONSTRAINT_LENGTH {
+                let atom_len = if self.settings.max_vars <= self.settings.amount_atoms_per_constraint {
                     (self.settings.max_vars as f32 * 0.5).floor() as u32
                 } else {
-                    GENERIC_CONSTRAINT_LENGTH
+                    self.settings.amount_atoms_per_constraint
                 };
                 let c = self.generate_generic(atom_len);
                 Box::new(c)
@@ -102,6 +97,7 @@ impl ConstraintGenerator {
     }
 
     pub fn generate_generic(&mut self, length: u32) -> ArbitraryLengthConstraint {
+        assert!(length != 0, "Length of constraint needs to be > 0");
         let ids = self.get_n_ids_sorted(length);
         let start_val = -self.settings.coeff_range;
         let end_val = self.settings.coeff_range;
@@ -143,6 +139,7 @@ impl ConstraintGenerator {
     }
 
     pub fn generate_cardinality(&mut self, length: u32) -> CardinalityConstraint {
+        assert!(length != 0, "Length of constraint needs to be > 0");
         let ids = self.get_n_ids_sorted(
             length
                 .try_into()
@@ -274,6 +271,7 @@ impl ConstraintGenerator {
 pub struct ConstraintSettings {
     max_vars: u32,
     max_unsat_for_single_constraint: u32,
+    amount_atoms_per_constraint: u32,
     /// The possible values a coefficient of an atom can be
     /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
     coeff_range: i32,
@@ -336,6 +334,7 @@ impl ConstraintSettings {
     pub fn new(
         max_vars: u32,
         max_unsat_for_single_constraint: u32,
+        amount_atoms_per_constraint: u32,
         coeff_range: i32,
         lower_bound_degree: f64,
         upper_bound_degree: f64,
@@ -344,6 +343,7 @@ impl ConstraintSettings {
         Self {
             max_vars,
             max_unsat_for_single_constraint,
+            amount_atoms_per_constraint,
             coeff_range,
             lower_bound_degree,
             upper_bound_degree,
