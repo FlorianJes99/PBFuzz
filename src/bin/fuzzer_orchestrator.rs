@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use clap::Parser;
 use fuzzer_pseudo_bool::{
@@ -72,7 +76,9 @@ fn main() {
 }
 
 fn init_logger(level: Option<Level>, timestamp: &str) -> Result<(), fern::InitError> {
-    fs::create_dir("logs")?;
+    if !Path::new("logs").exists() {
+        fs::create_dir("logs")?;
+    }
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
