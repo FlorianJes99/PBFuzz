@@ -198,6 +198,8 @@ def roundingsat_vs_scip_scatter(df: pd.DataFrame, show: bool = True, save: bool 
     ax.set_xlabel("roundingsat solving time")
     ax.set_ylabel("scip solving time")
     ax.set_title("Roundingsat vs Scip solving time")
+    ax.plot([0, roundingsat.max()], [0, roundingsat.max()], color="red", linestyle="--", linewidth=1, label="equal performance")
+    ax.legend()
     if save:
         plt.savefig("plots/roundingsat_vs_scip_scatter.pdf", format="pdf")
     if show:
