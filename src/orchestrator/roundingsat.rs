@@ -25,7 +25,7 @@ impl SolverRunner for Roundingsat {
             // If solution is SAT print found model
             // needed for verification of the found result
             .arg("--print-sol=1")
-            .arg("--time-limit=30")
+            .arg("--time-limit=15")
             .arg(file_path)
             .output()
             .map_err(|e| {

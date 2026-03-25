@@ -241,6 +241,7 @@ where
             // Only save the file if bug or error or `unknown` occurred
             IterationOutcome::Bug { .. }
             | IterationOutcome::Error { .. }
+            | IterationOutcome::TimeLimt
             | IterationOutcome::Unknown => move_file(&output_file, new_file_location),
             _ if self.save_all_files => move_file(&output_file, new_file_location),
             // Delete the generated fuzzing result if not needed anymore
