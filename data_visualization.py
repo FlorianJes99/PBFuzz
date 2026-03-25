@@ -12,6 +12,7 @@ import sys
 from matplotlib import patches
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
 # pub iteration: u32,
 # pub result: &'static str,
@@ -64,6 +65,11 @@ def plot_configs(show: bool = True, save: bool = False):
             xy=xy, width=width, height=height, linewidth=1, color="red", fill=False
         )
     )
+    legend_handles = [
+        mpatches.Patch(color="green", label="usable config"),
+        mpatches.Patch(color="red", label="not usable config"),
+    ]
+    fig.legend(handles=legend_handles)
     plt.xlabel("SAT ratio")
     plt.ylabel("Iteration duration in ms (without timeouts)")
     plt.title(label="Configurations for fuzzer (1000 iterations per run)")
@@ -115,14 +121,14 @@ def plot_violins_unsat_sat(
     col_labels = ["iteration", "pb generation", "roundingsat", "scip", "parsing"]
     data_sat = [sat_df[col].dropna() for col in columns]
     axs[0].violinplot(data_sat)
-    axs[0].set_title("Satisfied")
+    axs[0].set_title(f"Satisfied ({len(sat_df)} samples)")
     axs[0].set_xticks(range(1, len(columns) + 1))
     axs[0].set_xticklabels(col_labels, rotation=45)
 
     # Plot for unsat_df
     data_unsat = [unsat_df[col].dropna() for col in columns]
     axs[1].violinplot(data_unsat)
-    axs[1].set_title("Unsatisfied")
+    axs[1].set_title(f"Unsatisfied ({len(unsat_df)} samples)")
     axs[1].set_xticks(range(1, len(columns) + 1))
     axs[1].set_xticklabels(col_labels, rotation=45)
 
@@ -138,12 +144,65 @@ def plot_violins_unsat_sat(
     if show:
         plt.show()
 
-def scatter_conflicts_solving_time(df: pd.DataFrame, show: bool = True, save: bool = False):
 
+def scatter_conflicts_solving_time(
+    df: pd.DataFrame, show: bool = True, save: bool = False
+):
+
+    fig, axs = plt.subplots(nrows=1, ncols=2)
+
+    conflicts = df["conflicts"]
+    colors = {
+        "sat": "green",
+        "unsat": "red",
+        "timeout": "blue",
+        "error": "yellow",
+        "bug": "black",
+    }
+
+    color_list = [colors[res] for res in df["result"]]
+    roundingsat_ms = df["problem_solving_duration_roundingsat_ms"]
+
+    # roundingsat scatter
+    axs[0].scatter(x=roundingsat_ms, y=conflicts, c=color_list)
+
+    # scip scatter
+    scip_ms = df["problem_solving_duration_scip_ms"]
+    axs[1].scatter(x=scip_ms, y=conflicts, c=color_list)
+
+    # Add titles and labels
+    axs[0].set_title("Roundingsat: Conflicts vs Solving Time")
+    axs[0].set_xlabel("Solving Time (ms)")
+    axs[0].set_ylabel("Conflicts")
+
+    axs[1].set_title("SCIP: Conflicts vs Solving Time")
+    axs[1].set_xlabel("Solving Time (ms)")
+    axs[1].set_ylabel("Conflicts")
+    legend_handles = [
+        mpatches.Patch(color=color, label=result) for result, color in colors.items()
+    ]
+    fig.legend(handles=legend_handles, loc="lower center", ncol=len(colors))
+    plt.tight_layout()
     if save:
-        plt.savefig("plots/confict_vs_solving_time.pdf", format="pdf")
+        plt.savefig("plots/conflict_vs_solving_time.pdf", format="pdf")
     if show:
         plt.show()
+
+
+def roundingsat_vs_scip_scatter(df: pd.DataFrame, show: bool = True, save: bool = False):
+    roundingsat = df["problem_solving_duration_roundingsat_ms"]
+    scip = df["problem_solving_duration_scip_ms"]
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    ax.scatter(x=roundingsat, y=scip)
+    ax.set_xlabel("roundingsat solving time")
+    ax.set_ylabel("scip solving time")
+    ax.set_title("Roundingsat vs Scip solving time")
+    if save:
+        plt.savefig("plots/roundingsat_vs_scip_scatter.pdf", format="pdf")
+    if show:
+        plt.show()
+
 
 
 def main() -> None:
@@ -152,6 +211,8 @@ def main() -> None:
     df = pd.read_csv(csv_path)
     # plot_result_distribution(df)
     plot_violins_unsat_sat(df, crop=True)
+    scatter_conflicts_solving_time(df)
+    roundingsat_vs_scip_scatter(df)
 
 
 # Utility function
