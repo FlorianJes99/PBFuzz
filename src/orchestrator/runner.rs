@@ -141,7 +141,7 @@ where
                     });
             });
             for (iteration, work_result) in receiver.iter().enumerate() {
-                let percentage_range_sat = 0.25..0.7;
+                let percentage_range_sat = 0.20..0.7;
                 if iteration == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
                     // Terminate early if amount sat instances not in range
                     // and more than 1000 iterations are scheduled
@@ -471,10 +471,11 @@ impl Stats {
     }
 
     fn percentage_sat(&self) -> f32 {
-        if self.amount_runs() == 0 {
+        let sat_unsat = self.amount_sat + self.amount_unsat;
+        if sat_unsat == 0 {
             return 0.0;
         }
-        self.amount_sat as f32 / self.amount_runs() as f32
+        self.amount_sat as f32 / sat_unsat as f32
     }
 
     fn is_sat_percentage_in_range(&self, range: &Range<f32>) -> bool {

@@ -16,7 +16,7 @@ use fuzzer_pseudo_bool::{
         scip::Scip,
     },
 };
-use log::Level;
+use log::{Level, error};
 use rayon::ThreadPoolBuilder;
 
 fn main() {
@@ -39,13 +39,23 @@ fn main() {
     let roundingsat_bin = args.roundingsat_bin.unwrap_or("roundingsat".into());
     let scip_bin = args.scip_bin.unwrap_or("scip".into());
     let rounding_sat = Roundingsat::new(roundingsat_bin);
-    let scip = Scip::new(scip_bin);
+    let scip = match Scip::new(scip_bin) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("{e}");
+            println!("Terminating program...");
+            return;
+        }
+    };
     let mut settings = match args.settings_file {
-        Some(file) => GeneratorSettingsBuilder::load_from_file(&file).unwrap_or_else(|e| {
-            println!("Error occured while loading settings: {}", e);
-            println!("Using default settings...");
-            GeneratorSettingsBuilder::default()
-        }),
+        Some(file) => match GeneratorSettingsBuilder::load_from_file(&file) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("Error occured while loading settings: {}", e);
+                println!("Terminating program...");
+                return;
+            }
+        },
         None => GeneratorSettingsBuilder::default(),
     };
 

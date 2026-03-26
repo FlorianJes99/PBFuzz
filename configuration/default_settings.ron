@@ -1,17 +1,17 @@
 (
     max_vars: 70,
     cancel_condition: CountConstraints(
-        max_constraints: 100,
+        max_constraints: 88,
     ),
-    grammar_kind: PBO,
-    amount_atoms_per_constraint: 30,
+    grammar_kind: PBS,
+    amount_atoms_per_constraint: 19,
     max_unsat_for_single_constraint: 3,
-    coeff_range: 200,
-    lower_bound_degree: 0.3,
-    upper_bound_degree: 0.5,
+    coeff_range: 10,
+    lower_bound_degree: 0.4,
+    upper_bound_degree: 0.6,
     constraint_distribution: (
-        three_atom_weight: 2,
-        cardinality_weight: 1,
-        arbitrary_weight: 1,
+        three_atom_weight:7,
+        cardinality_weight: 8,
+        arbitrary_weight: 4,
     ),
 )

@@ -20,11 +20,13 @@ pub struct Scip {
     binary: PathBuf,
 }
 
+const SCIP_CONFIG: &str = "configuration/scip.set";
+
 impl SolverRunner for Scip {
     fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
         Command::new(self.binary.as_os_str())
             .arg("-s")
-            .arg("configuration/scip.set")
+            .arg(SCIP_CONFIG)
             // scip expects -f flag for input file
             .arg("-f")
             .arg(file_path)
@@ -62,10 +64,15 @@ impl PBOProcessor for Scip {
 }
 
 impl Scip {
-    pub fn new(path_to_binary: PathBuf) -> Self {
-        Scip {
-            binary: path_to_binary,
+    pub fn new(path_to_binary: PathBuf) -> Result<Self, String> {
+        if !Path::new(SCIP_CONFIG).exists() {
+            return Err(format!(
+                "Config file for scip must exist! Expected at {SCIP_CONFIG}"
+            ));
         }
+        Ok(Scip {
+            binary: path_to_binary,
+        })
     }
     fn extract_pbo_result_from_output(
         &self,
