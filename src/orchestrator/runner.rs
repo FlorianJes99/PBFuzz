@@ -467,7 +467,7 @@ impl Stats {
         }
     }
     fn amount_runs(&self) -> u32 {
-        self.amount_sat + self.amount_unsat + self.amount_unknown + self.bugs_found
+        self.amount_sat + self.amount_unsat + self.amount_unknown + self.bugs_found + self.timeouts
     }
 
     fn percentage_sat(&self) -> f32 {

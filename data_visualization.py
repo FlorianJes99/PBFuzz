@@ -8,7 +8,10 @@
 
 
 import glob
+import random
+import subprocess
 import sys
+import time
 from matplotlib import patches
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -27,13 +30,13 @@ import matplotlib.patches as mpatches
 
 def plot_configs(show: bool = True, save: bool = False):
     """Plot different configurations for fuzzer to determine the best ones for our use case."""
-    paths = glob.glob("out/fuzzing_run_PBS_*/data/orchestrator_data.csv")
+    paths = glob.glob("out/fuzzing_run_*/data/orchestrator_data.csv")
     x = []
     y = []
     color_list = []
     xy = (0.3, 300)
     width = 0.2
-    height = 500
+    height = 700
     candidates = []
 
     def is_in_bound(x_d: float, y_d: int) -> bool:
@@ -189,7 +192,9 @@ def scatter_conflicts_solving_time(
         plt.show()
 
 
-def roundingsat_vs_scip_scatter(df: pd.DataFrame, show: bool = True, save: bool = False):
+def roundingsat_vs_scip_scatter(
+    df: pd.DataFrame, show: bool = True, save: bool = False
+):
     roundingsat = df["problem_solving_duration_roundingsat_ms"]
     scip = df["problem_solving_duration_scip_ms"]
     fig = plt.figure()
@@ -198,7 +203,14 @@ def roundingsat_vs_scip_scatter(df: pd.DataFrame, show: bool = True, save: bool 
     ax.set_xlabel("roundingsat solving time")
     ax.set_ylabel("scip solving time")
     ax.set_title("Roundingsat vs Scip solving time")
-    ax.plot([0, roundingsat.max()], [0, roundingsat.max()], color="red", linestyle="--", linewidth=1, label="equal performance")
+    ax.plot(
+        [0, roundingsat.max()],
+        [0, roundingsat.max()],
+        color="red",
+        linestyle="--",
+        linewidth=1,
+        label="equal performance",
+    )
     ax.legend()
     if save:
         plt.savefig("plots/roundingsat_vs_scip_scatter.pdf", format="pdf")
@@ -206,15 +218,50 @@ def roundingsat_vs_scip_scatter(df: pd.DataFrame, show: bool = True, save: bool 
         plt.show()
 
 
+def fuzzer_bench(
+    fuzz_bin: str, num_runs: int = 1000, show: bool = True, save: bool = False
+):
+    times = []
+    for i in range(num_runs):
+        seed = random.randint(0, 2**32)
+
+        start = time.perf_counter()
+        subprocess.run(
+            [
+                fuzz_bin,
+                "--seed",
+                str(seed),
+                "--settings-file",
+                "configuration/large_problems_settings.ron",
+                "--output-path",
+                "out/fuzzer_bench/test.opb"
+            ]
+        )
+        elapsed = time.perf_counter() - start
+        elapsed = elapsed * 1000
+        times.append(elapsed)
+        print(f"{i+1}/{num_runs}")
+
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    ax.violinplot(times, showmedians=True, showextrema=True)
+    ax.set_ylabel("wall clock time fuzzer (ms)")
+    ax.set_title(f"Benchmarks for fuzzer problem generations ({num_runs} iterations)")
+    if save:
+        plt.savefig("plots/benchmark_fuzzer.pdf", format="pdf")
+    if show:
+        plt.show()
+
 
 def main() -> None:
     # plot_configs()
     csv_path = sys.argv[1]
     df = pd.read_csv(csv_path)
-    # plot_result_distribution(df)
+    plot_result_distribution(df)
     plot_violins_unsat_sat(df, crop=True)
     scatter_conflicts_solving_time(df)
     roundingsat_vs_scip_scatter(df)
+    # fuzzer_bench("target/release/fuzzer", save=True)
 
 
 # Utility function
