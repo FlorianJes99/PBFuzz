@@ -2,6 +2,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #     "matplotlib>=3.10.8",
+#     "numpy>=2.4.3",
 #     "pandas>=3.0.1",
 # ]
 # ///
@@ -13,9 +14,11 @@ import subprocess
 import sys
 import time
 from matplotlib import patches
+from matplotlib.axes import Axes
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 
 # pub iteration: u32,
 # pub result: &'static str,
@@ -100,14 +103,13 @@ def plot_violins_unsat_sat(
     df: pd.DataFrame, show: bool = True, save: bool = False, crop: bool = False
 ):
     columns = [
-        "duration_iteration_ms",
         "problem_generation_ms",
         "problem_solving_duration_roundingsat_ms",
         "problem_solving_duration_scip_ms",
         "problem_parsing_duration_ms",
     ]
 
-    crop_max = 2000
+    crop_max = 7000
 
     def crop_vals(df: pd.DataFrame) -> pd.DataFrame:
         for col in columns:
@@ -121,21 +123,23 @@ def plot_violins_unsat_sat(
     fig, axs = plt.subplots(nrows=1, ncols=2)
 
     # Plot for sat_df
-    col_labels = ["iteration", "pb generation", "roundingsat", "scip", "parsing"]
+    col_labels = ["pb generation", "roundingsat", "scip", "parsing"]
     data_sat = [sat_df[col].dropna() for col in columns]
-    axs[0].violinplot(data_sat)
+    axs[0].violinplot(data_sat, showmedians=True)
     axs[0].set_title(f"Satisfied ({len(sat_df)} samples)")
     axs[0].set_xticks(range(1, len(columns) + 1))
     axs[0].set_xticklabels(col_labels, rotation=45)
+    axs[0].set_yscale("log")
 
     # Plot for unsat_df
     data_unsat = [unsat_df[col].dropna() for col in columns]
-    axs[1].violinplot(data_unsat)
+    axs[1].violinplot(data_unsat, showmedians=True)
     axs[1].set_title(f"Unsatisfied ({len(unsat_df)} samples)")
     axs[1].set_xticks(range(1, len(columns) + 1))
     axs[1].set_xticklabels(col_labels, rotation=45)
+    axs[1].set_yscale("log")
 
-    plt.ylabel("ms")
+    plt.ylabel("log scale - duration (ms)")
     plt.tight_layout()
     if save:
         path = (
@@ -152,26 +156,25 @@ def scatter_conflicts_solving_time(
     df: pd.DataFrame, show: bool = True, save: bool = False
 ):
 
+    df = df[df["result"].isin(["sat", "unsat"])]
+    axs: list[Axes]
     fig, axs = plt.subplots(nrows=1, ncols=2)
 
     conflicts = df["conflicts"]
     colors = {
         "sat": "green",
         "unsat": "red",
-        "timeout": "blue",
-        "error": "yellow",
-        "bug": "black",
     }
 
     color_list = [colors[res] for res in df["result"]]
     roundingsat_ms = df["problem_solving_duration_roundingsat_ms"]
 
     # roundingsat scatter
-    axs[0].scatter(x=roundingsat_ms, y=conflicts, c=color_list)
+    axs[0].scatter(x=roundingsat_ms, y=conflicts, c=color_list, alpha=0.3)
 
     # scip scatter
     scip_ms = df["problem_solving_duration_scip_ms"]
-    axs[1].scatter(x=scip_ms, y=conflicts, c=color_list)
+    axs[1].scatter(x=scip_ms, y=conflicts, c=color_list, alpha=0.3)
 
     # Add titles and labels
     axs[0].set_title("Roundingsat: Conflicts vs Solving Time")
@@ -184,10 +187,10 @@ def scatter_conflicts_solving_time(
     legend_handles = [
         mpatches.Patch(color=color, label=result) for result, color in colors.items()
     ]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=len(colors))
+    fig.legend(handles=legend_handles, loc="lower center", ncol=len(colors), fontsize=7, markerscale=0.7)
     plt.tight_layout()
     if save:
-        plt.savefig("plots/conflict_vs_solving_time.pdf", format="pdf")
+        plt.savefig("plots/conflict_vs_solving_time.png", format="png", dpi=300, bbox_inches="tight")
     if show:
         plt.show()
 
@@ -195,25 +198,50 @@ def scatter_conflicts_solving_time(
 def roundingsat_vs_scip_scatter(
     df: pd.DataFrame, show: bool = True, save: bool = False
 ):
+    colors = {
+        "sat": "green",
+        "unsat": "red",
+        "timeout": "blue",
+        "error": "yellow",
+        "bug": "black",
+    }
+
+    color_list = df["result"].map(lambda x: colors[x])
     roundingsat = df["problem_solving_duration_roundingsat_ms"]
     scip = df["problem_solving_duration_scip_ms"]
     fig = plt.figure()
     ax = fig.add_subplot()
-    ax.scatter(x=roundingsat, y=scip)
+    ax.scatter(x=roundingsat, y=scip, c=color_list, alpha=0.3, s=2)
     ax.set_xlabel("roundingsat solving time")
     ax.set_ylabel("scip solving time")
     ax.set_title("Roundingsat vs Scip solving time")
+    legend_handles = [
+        mpatches.Patch(color=color, label=result) for result, color in colors.items()
+    ]
+    legend_handles.append(
+        mlines.Line2D(
+            [],
+            [],
+            color="black",
+            linestyle="--",
+            linewidth=1,
+            label="equal performance",
+        )
+    )
     ax.plot(
         [0, roundingsat.max()],
         [0, roundingsat.max()],
-        color="red",
+        color="black",
         linestyle="--",
         linewidth=1,
         label="equal performance",
     )
-    ax.legend()
+    ax.legend(handles=legend_handles, loc="upper left", ncol=3, fontsize=7, markerscale=0.7)
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
+    plt.tight_layout()
     if save:
-        plt.savefig("plots/roundingsat_vs_scip_scatter.pdf", format="pdf")
+        plt.savefig("plots/roundingsat_vs_scip_scatter.png", format="png", dpi=300, bbox_inches="tight")
     if show:
         plt.show()
 
@@ -234,17 +262,18 @@ def fuzzer_bench(
                 "--settings-file",
                 "configuration/large_problems_settings.ron",
                 "--output-path",
-                "out/fuzzer_bench/test.opb"
+                "out/fuzzer_bench/test.opb",
             ]
         )
         elapsed = time.perf_counter() - start
         elapsed = elapsed * 1000
         times.append(elapsed)
-        print(f"{i+1}/{num_runs}")
+        print(f"{i + 1}/{num_runs}")
 
     fig = plt.figure()
     ax = fig.add_subplot()
     ax.violinplot(times, showmedians=True, showextrema=True)
+    ax.set_xticks([])
     ax.set_ylabel("wall clock time fuzzer (ms)")
     ax.set_title(f"Benchmarks for fuzzer problem generations ({num_runs} iterations)")
     if save:
@@ -255,13 +284,14 @@ def fuzzer_bench(
 
 def main() -> None:
     # plot_configs()
+    save = True
     csv_path = sys.argv[1]
     df = pd.read_csv(csv_path)
-    plot_result_distribution(df)
-    plot_violins_unsat_sat(df, crop=True)
-    scatter_conflicts_solving_time(df)
-    roundingsat_vs_scip_scatter(df)
-    # fuzzer_bench("target/release/fuzzer", save=True)
+    plot_result_distribution(df, save=save)
+    plot_violins_unsat_sat(df, save=save)
+    scatter_conflicts_solving_time(df, save=save)
+    roundingsat_vs_scip_scatter(df, save=save)
+    # fuzzer_bench("target/release/fuzzer", num_runs=10000, save=True)
 
 
 # Utility function
