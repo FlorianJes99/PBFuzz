@@ -38,7 +38,7 @@ pub trait Constraint: Display + Send {
                 .iter()
                 .filter(|a| true_vars.contains(&a.atom_id))
                 .map(|a| a.coeff as i64)
-                .sum::<i64>()
+                .sum::<i64>(),
         )
     }
 
@@ -200,11 +200,9 @@ impl Constraint for ThreeAtomConstraint {
 
 impl CostraintWithUnsatAssignments for ThreeAtomConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
-        *self.amount_unsat.get_or_init(|| {
-            self.unsat_count_three_atoms()
-                .try_into()
-                .expect("Should able to widen u32 into u128")
-        })
+        *self
+            .amount_unsat
+            .get_or_init(|| self.unsat_count_three_atoms().into())
     }
 }
 
@@ -331,7 +329,7 @@ impl CostraintWithUnsatAssignments for CardinalityConstraint {
 
 fn binomial(n: u64, k: u64) -> u128 {
     let k = k.min(n - k);
-    return (0..k).fold(1u128, |acc, i| acc * (n - i) as u128 / (i + 1) as u128);
+    (0..k).fold(1u128, |acc, i| acc * (n - i) as u128 / (i + 1) as u128)
 }
 
 impl Display for CardinalityConstraint {
@@ -398,7 +396,7 @@ mod test {
         let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]);
         assert!(c.verify(&true_vars));
         let true_vars = HashSet::from([AtomIdent::new(3)]);
-        assert_eq!(false, c.verify(&true_vars));
+        assert!(!c.verify(&true_vars));
 
         let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
         let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 0).expect("Test method");
@@ -406,10 +404,10 @@ mod test {
         assert!(c.verify(&true_vars));
 
         let true_vars = HashSet::from([AtomIdent::new(1)]);
-        assert_eq!(false, c.verify(&true_vars));
+        assert!(!c.verify(&true_vars));
 
         let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]);
-        assert_eq!(false, c.verify(&true_vars));
+        assert!(!c.verify(&true_vars));
     }
     #[test]
     fn test_choose_zero() {

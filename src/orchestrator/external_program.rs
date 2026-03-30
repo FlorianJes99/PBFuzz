@@ -204,11 +204,11 @@ impl<M: SatSolutionVerifyer> SolverStatus<M> {
                     };
                 }
                 if s1.has_same_min_objective(s2) {
-                    return IterationOutcome::Sat { conflicts: *c1 };
+                    IterationOutcome::Sat { conflicts: *c1 }
                 } else {
-                    return IterationOutcome::Bug {
+                    IterationOutcome::Bug {
                         reason: BugReason::DifferentObjectives,
-                    };
+                    }
                 }
             }
             (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: _ }) => {

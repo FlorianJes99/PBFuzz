@@ -66,8 +66,8 @@ fn main() {
         args.iterations,
         args.timeout_min.map(|v| Duration::from_mins(v as u64)),
     );
-    if cancel.is_err() {
-        println!("{}", cancel.as_ref().unwrap_err());
+    if let Err(e) = &cancel {
+        println!("{}", e);
     }
     let output_dir = args.output_dir.unwrap_or("out/".into());
     println!("Workspace set to: {}", &output_dir.display());
@@ -80,8 +80,8 @@ fn main() {
         args.save_all_files,
         cancel.expect("Error handled already"),
     );
-    if res.is_err() {
-        println!("{}", res.unwrap_err())
+    if let Err(e) = res {
+        println!("{}", e)
     }
 }
 

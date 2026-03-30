@@ -124,11 +124,11 @@ impl PBGrammar {
             .counts_by(|atom| atom.atom_id);
         let max = occurences_per_var
             .iter()
-            .max_by(|(id_a, count_a), (id_b, count_b)| count_a.cmp(&count_b).then(id_b.cmp(&id_a)))
+            .max_by(|(id_a, count_a), (id_b, count_b)| count_a.cmp(count_b).then(id_b.cmp(id_a)))
             .map(|(id, occ)| OccurenceWithId::new(*id, *occ as u32));
         let min = occurences_per_var
             .iter()
-            .min_by(|(id_a, count_a), (id_b, count_b)| count_a.cmp(&count_b).then(id_b.cmp(&id_a)))
+            .min_by(|(id_a, count_a), (id_b, count_b)| count_a.cmp(count_b).then(id_b.cmp(id_a)))
             .map(|(id, occ)| OccurenceWithId::new(*id, *occ as u32));
         let sum: usize = occurences_per_var.values().sum();
         let average = sum as f32 / occurences_per_var.len() as f32;
@@ -146,7 +146,7 @@ impl PBGrammar {
     }
 
     pub fn verify_solution(&self, true_vars: &HashSet<AtomIdent>) -> bool {
-        self.constraints.iter().all(|c| c.verify(&true_vars))
+        self.constraints.iter().all(|c| c.verify(true_vars))
     }
 
     pub fn verify_min_constraint(

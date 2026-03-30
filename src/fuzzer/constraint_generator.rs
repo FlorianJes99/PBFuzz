@@ -6,7 +6,7 @@ use rand::{
     seq::{IndexedRandom, index},
 };
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, i64};
+use std::fmt::Display;
 
 use crate::fuzzer::{
     constraint::{
@@ -76,20 +76,22 @@ impl ConstraintGenerator {
                 Box::new(c)
             }
             ConstraintKind::Cardinality => {
-                let atom_len = if self.settings.max_vars <= self.settings.amount_atoms_per_constraint {
-                    (self.settings.max_vars as f32 * 0.5).floor() as u32
-                } else {
-                    self.settings.amount_atoms_per_constraint
-                };
+                let atom_len =
+                    if self.settings.max_vars <= self.settings.amount_atoms_per_constraint {
+                        (self.settings.max_vars as f32 * 0.5).floor() as u32
+                    } else {
+                        self.settings.amount_atoms_per_constraint
+                    };
                 let c = self.generate_cardinality(atom_len);
                 Box::new(c)
             }
             ConstraintKind::ArbitraryLength => {
-                let atom_len = if self.settings.max_vars <= self.settings.amount_atoms_per_constraint {
-                    (self.settings.max_vars as f32 * 0.5).floor() as u32
-                } else {
-                    self.settings.amount_atoms_per_constraint
-                };
+                let atom_len =
+                    if self.settings.max_vars <= self.settings.amount_atoms_per_constraint {
+                        (self.settings.max_vars as f32 * 0.5).floor() as u32
+                    } else {
+                        self.settings.amount_atoms_per_constraint
+                    };
                 let c = self.generate_generic(atom_len);
                 Box::new(c)
             }
@@ -140,11 +142,7 @@ impl ConstraintGenerator {
 
     pub fn generate_cardinality(&mut self, length: u32) -> CardinalityConstraint {
         assert!(length != 0, "Length of constraint needs to be > 0");
-        let ids = self.get_n_ids_sorted(
-            length
-                .try_into()
-                .expect("Failure while converting u32 to usize"),
-        );
+        let ids = self.get_n_ids_sorted(length);
         assert!(ids.len() as u32 == length);
         let mut atoms = vec![];
         let mut lower_max: i32 = 0;
@@ -164,11 +162,7 @@ impl ConstraintGenerator {
             lower_max + (self.settings.lower_bound_degree * distance as f64).ceil() as i32;
         let upper_bound =
             lower_max + (self.settings.upper_bound_degree * distance as f64).floor() as i32;
-        let degree = self
-            .rand
-            .random_range(lower_bound..upper_bound)
-            .try_into()
-            .expect("Length of constraint should always fit into i64");
+        let degree = self.rand.random_range(lower_bound..upper_bound).into();
         CardinalityConstraint::new(atoms, Comparison::GrEqual, degree)
             .expect("Builder should ensure correct constraint initalisation")
     }
@@ -249,7 +243,7 @@ impl ConstraintGenerator {
                     .try_into()
                     .expect("Error while converting usize to u32 for atom identifier")
             })
-            .map(|i| AtomIdent::new(i))
+            .map(AtomIdent::new)
             .sorted()
             .collect()
     }
@@ -261,7 +255,7 @@ impl ConstraintGenerator {
                 .expect("Invalid config for sampling. Constraint length > max_vars")
                 // Add +1 because we want ids from 1..=len and sample are from 0..len
                 .map(|x| x as u32 + 1)
-                .map(|x| AtomIdent::new(x));
+                .map(AtomIdent::new);
         ids.sort();
         ids
     }

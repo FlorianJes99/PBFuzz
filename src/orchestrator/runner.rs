@@ -13,7 +13,7 @@ use rayon::{current_thread_index, prelude::*};
 use std::{
     fmt::Display,
     fs::File,
-    io::{BufWriter, Error, ErrorKind, Write},
+    io::{BufWriter, Error, Write},
     ops::Range,
     path::PathBuf,
     sync::mpsc::channel,
@@ -83,7 +83,7 @@ where
         generator_settings.get_problem_kind().get_short_str(),
     )
     .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
-    print_block("Settings to use", &generator_settings);
+    print_block("Settings to use", generator_settings);
 
     Orchestrator {
         fuzzer_output_dir,
@@ -163,7 +163,7 @@ where
                 error!("{e}");
             }
             // print out settings
-            print_block("Settings", &self.generator_settings);
+            print_block("Settings", self.generator_settings);
             // print out stats
             print_block("Run Statistics", &stats);
         });
@@ -269,7 +269,7 @@ where
         if let Err(err) = result {
             error!("Could not write record into csv\nError: {}", err);
         }
-        if iteration % 1000 == 0 {
+        if iteration.is_multiple_of(1000) {
             // flush every 1000 iterations to file
             let result = csv_writer.flush();
             if let Err(err) = result {
@@ -281,7 +281,7 @@ where
     fn save_settings(&self, stats: &Stats) -> std::io::Result<()> {
         let dir = self.fuzzer_output_dir.join(DATA_FOLDER.name);
         let data = ron::ser::to_string_pretty(&self.generator_settings, PrettyConfig::default())
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+            .map_err(Error::other)?;
         let file_name = dir.join("settings.ron");
         let mut file = File::create(file_name)?;
         file.write_all(data.as_bytes())?;
@@ -316,7 +316,7 @@ where
     debug!("Running Fuzzer with seed {seed}...");
     let grammar = PBSGenerator::create_grammar(seed, settings);
     let duration_write_to_file = File::create(&output_file)
-        .map(|file| BufWriter::new(file))
+        .map(BufWriter::new)
         .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
         .map_err(|e| e.to_string())?;
     let grammar_statistics = grammar.get_statistics();

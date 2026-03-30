@@ -54,7 +54,7 @@ impl std::str::FromStr for AtomIdent {
         let num_str = &s[1..];
         num_str
             .parse::<u32>()
-            .map(|n| AtomIdent::new(n))
+            .map(AtomIdent::new)
             .map_err(|e| format!("Failed to parse number: {}", e))
     }
 }

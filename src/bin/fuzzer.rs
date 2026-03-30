@@ -62,7 +62,7 @@ fn main() {
     }
     let output_path = &args.output_path;
     let write_result = File::create(output_path)
-        .map(|file| BufWriter::new(file))
+        .map(BufWriter::new)
         .map(|mut buf_writer| grammar.produce(&mut buf_writer));
     match write_result {
         Ok(_) => info!("Wrote generated grammar into file: {}", output_path),

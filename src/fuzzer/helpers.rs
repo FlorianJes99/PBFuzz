@@ -6,7 +6,7 @@ pub fn print_block<T: Display>(heading: &str, item: T) {
     let len_heading = heading.chars().count();
     let remaining_signs = amount_signs - len_heading;
     let halved: f32 = remaining_signs as f32 / 2_f32;
-    println!("");
+    println!();
     println!(
         "{}{heading}{}",
         "=".repeat(halved.floor() as usize),
@@ -14,7 +14,7 @@ pub fn print_block<T: Display>(heading: &str, item: T) {
     );
     println!("{item}");
     println!("{}", "=".repeat(amount_signs));
-    println!("")
+    println!()
 }
 
 /// Returns the parts of a duration in the format (hours, minutes, seconds)
@@ -57,7 +57,7 @@ pub fn current_time_as_timestamp() -> String {
 /// ````
 /// This is expected to return the same like just computing `(2+3+5) / 3`
 pub fn compute_running_average(current_average: f32, sample: u32, total_runs: u32) -> f32 {
-    return (total_runs as f32 * current_average + sample as f32) / (total_runs + 1) as f32;
+    (total_runs as f32 * current_average + sample as f32) / (total_runs + 1) as f32
 }
 
 /// Encapsulates logic of computing average such that there is no need for manually counting the
@@ -111,7 +111,7 @@ impl RunningAverageDuration {
 /// This operation calls the rename function of the std crate and is just a simple wrapper
 /// and formats the error value to a string.
 pub fn move_file(src: &Path, dst: &Path) -> Result<(), String> {
-    std::fs::rename(&src, &dst).map_err(|e| {
+    std::fs::rename(src, dst).map_err(|e| {
         format!(
             "Could not move file from {} to {}\n Error: {}",
             &src.display(),

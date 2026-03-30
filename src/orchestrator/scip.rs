@@ -118,12 +118,11 @@ impl Scip {
                     ))
                     .and_then(|w| self.parse_as_i32(w.trim()));
             }
-            if line.starts_with("x") {
-                if let Some(ident) = line.split_whitespace().next()
-                    && let Ok(parsed_ident) = ident.parse::<AtomIdent>()
-                {
-                    true_vars.insert(parsed_ident);
-                }
+            if line.starts_with("x")
+                && let Some(ident) = line.split_whitespace().next()
+                && let Ok(parsed_ident) = ident.parse::<AtomIdent>()
+            {
+                true_vars.insert(parsed_ident);
             }
         }
 
@@ -165,12 +164,11 @@ impl Scip {
                 is_sat = true;
             }
 
-            if line.starts_with("x") {
-                if let Some(ident) = line.split_whitespace().next()
-                    && let Ok(parsed_ident) = ident.parse::<AtomIdent>()
-                {
-                    true_vars.insert(parsed_ident);
-                }
+            if line.starts_with("x")
+                && let Some(ident) = line.split_whitespace().next()
+                && let Ok(parsed_ident) = ident.parse::<AtomIdent>()
+            {
+                true_vars.insert(parsed_ident);
             }
         }
 

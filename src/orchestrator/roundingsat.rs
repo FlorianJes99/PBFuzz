@@ -115,11 +115,9 @@ impl Roundingsat {
             }
         }
         let status = match status_line {
-            "s UNSATISFIABLE" => SolverStatus::Unsat {
-                conflicts: conflicts,
-            },
+            "s UNSATISFIABLE" => SolverStatus::Unsat { conflicts },
             "s OPTIMUM FOUND" => SolverStatus::Sat {
-                conflicts: conflicts,
+                conflicts,
                 solution: PBOValues::new(
                     PBSValues::new(self.parse_solution(solution_model_line)?),
                     objective_min_result?.into(),
@@ -158,11 +156,9 @@ impl Roundingsat {
             }
         }
         let status = match status_line {
-            "s UNSATISFIABLE" => SolverStatus::Unsat {
-                conflicts: conflicts,
-            },
+            "s UNSATISFIABLE" => SolverStatus::Unsat { conflicts },
             "s SATISFIABLE" | "s OPTIMUM FOUND" => SolverStatus::Sat {
-                conflicts: conflicts,
+                conflicts,
                 solution: PBSValues::new(self.parse_solution(solution_model_line)?),
             },
             "s TIMELIMIT" => SolverStatus::TimeLimit,

@@ -72,16 +72,16 @@ pub struct GeneratorSettings {
     constraint_distribution: ConstraintDistribution,
 }
 
-impl Into<ConstraintSettings> for GeneratorSettings {
-    fn into(self) -> ConstraintSettings {
+impl From<GeneratorSettings> for ConstraintSettings {
+    fn from(val: GeneratorSettings) -> Self {
         ConstraintSettings::new(
-            self.max_vars,
-            self.max_unsat_for_single_constraint,
-            self.amount_atoms_per_constraint,
-            self.coeff_range as i32,
-            self.lower_bound_degree,
-            self.upper_bound_degree,
-            self.constraint_distribution,
+            val.max_vars,
+            val.max_unsat_for_single_constraint,
+            val.amount_atoms_per_constraint,
+            val.coeff_range as i32,
+            val.lower_bound_degree,
+            val.upper_bound_degree,
+            val.constraint_distribution,
         )
     }
 }
@@ -202,8 +202,8 @@ impl GeneratorSettingsBuilder {
     pub fn load_from_file(file: &Path) -> io::Result<Self> {
         let data = std::fs::read_to_string(file)?;
         ron::from_str(&data)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-            .map(|settings| GeneratorSettingsBuilder::from_settings(settings))
+            .map_err(io::Error::other)
+            .map(GeneratorSettingsBuilder::from_settings)
     }
 
     pub fn from_settings(settings: GeneratorSettings) -> Self {
