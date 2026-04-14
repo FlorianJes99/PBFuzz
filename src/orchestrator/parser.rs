@@ -1,0 +1,110 @@
+use std::{collections::HashSet, process::Output};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    fuzzer::domain::AtomIdent,
+    orchestrator::external_program::{
+        ErrorKind, ExternalProgramError, PBOValues, PBSValues, SolverResultPBO, SolverResultPBS,
+    },
+};
+
+#[derive(Default, Serialize, Deserialize)]
+pub enum ParserKind {
+    #[default]
+    Default,
+    Scip,
+}
+
+pub trait Parser: Sync {
+    /// return the name of the parser
+    fn name(&self) -> &str;
+
+    /// Parse a single line of a solver output into one of the expected representations
+    fn parse_line(&self, line: &str) -> StatusLine;
+
+    /// Folds all the collected information into an aggregated result
+    fn scan(&self, output: Output) -> Result<ScannedResult, ExternalProgramError> {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .lines()
+            .map(str::trim)
+            .map(|l| self.parse_line(l))
+            .try_fold(ScannedResult::default(), |mut acc, line| {
+                match line {
+                    StatusLine::Status(s) => acc.status = Some(s),
+                    StatusLine::Solution(s) => acc.solution.extend(s?),
+                    StatusLine::Objective(o) => acc.objective = Some(o?),
+                    StatusLine::Conflicts(c) => acc.conflicts = Some(c),
+                    StatusLine::Ignored => {}
+                };
+                Ok(acc)
+            })
+    }
+
+    /// helper for creating errors related to parsing
+    fn error(&self, message: String) -> ExternalProgramError {
+        ExternalProgramError::new(self.name().into(), message, ErrorKind::OutputParsingError)
+    }
+
+    fn parse_pbs(&self, output: Output) -> Result<SolverResultPBS, ExternalProgramError> {
+        let result = self.scan(output)?;
+        match result.status {
+            Some(s) => match s {
+                StatusKind::Sat => Ok(SolverResultPBS::Sat {
+                    conflicts: result.conflicts.unwrap_or(0),
+                    solution: PBSValues::new(result.solution),
+                }),
+                StatusKind::Unsat => Ok(SolverResultPBS::Unsat {
+                    conflicts: result.conflicts.unwrap_or(0),
+                }),
+                StatusKind::TimeLimit => Ok(SolverResultPBS::TimeLimit),
+                StatusKind::Unknown => Ok(SolverResultPBS::Unknown),
+            },
+            None => Err(self.error("Status wasn't parsed".to_string())),
+        }
+    }
+    fn parse_pbo(&self, output: Output) -> Result<SolverResultPBO, ExternalProgramError> {
+        let result = self.scan(output)?;
+        match result.status {
+            Some(s) => match s {
+                StatusKind::Sat => match result.objective {
+                    Some(o) => Ok(SolverResultPBO::Sat {
+                        conflicts: result.conflicts.unwrap_or(0),
+                        solution: PBOValues::new(PBSValues::new(result.solution), o.into()),
+                    }),
+                    None => Ok(SolverResultPBO::TimeLimit),
+                },
+                StatusKind::Unsat => Ok(SolverResultPBO::Unsat {
+                    conflicts: result.conflicts.unwrap_or(0),
+                }),
+                StatusKind::TimeLimit => Ok(SolverResultPBO::TimeLimit),
+                StatusKind::Unknown => Ok(SolverResultPBO::Unknown),
+            },
+            None => Err(self.error("Status wasn't parsed".to_string())),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ScannedResult {
+    status: Option<StatusKind>,
+    solution: HashSet<AtomIdent>,
+    objective: Option<i32>,
+    conflicts: Option<u32>,
+}
+
+pub enum StatusKind {
+    Sat,
+    Unsat,
+    TimeLimit,
+    Unknown,
+}
+
+pub enum StatusLine {
+    Status(StatusKind),
+    Solution(Result<HashSet<AtomIdent>, ExternalProgramError>),
+    Objective(Result<i32, ExternalProgramError>),
+    Conflicts(u32),
+    Ignored,
+}

@@ -11,9 +11,8 @@ use fuzzer_pseudo_bool::{
         pbs_generator::GeneratorSettingsBuilder,
     },
     orchestrator::{
-        roundingsat::Roundingsat,
+        external_program::ExternalProgram,
         runner::{StopCondition, run_orchestrator},
-        scip::Scip,
     },
 };
 use log::{Level, error};
@@ -36,14 +35,17 @@ fn main() {
         "Using {} threads for computing fuzzing runs in parallel",
         rayon::current_num_threads()
     );
-    let roundingsat_bin = args.roundingsat_bin.unwrap_or("roundingsat".into());
-    let scip_bin = args.scip_bin.unwrap_or("scip".into());
-    let rounding_sat = Roundingsat::new(roundingsat_bin);
-    let scip = match Scip::new(scip_bin) {
-        Ok(s) => s,
-        Err(e) => {
-            error!("{e}");
-            println!("Terminating program...");
+    let program1 = match ExternalProgram::load_from_file(args.program_config1) {
+        Ok(p) => p,
+        Err(err) => {
+            error!("{err}");
+            return;
+        }
+    };
+    let program2 = match ExternalProgram::load_from_file(args.program_config2) {
+        Ok(p) => p,
+        Err(err) => {
+            error!("{err}");
             return;
         }
     };
@@ -51,8 +53,8 @@ fn main() {
         Some(file) => match GeneratorSettingsBuilder::load_from_file(&file) {
             Ok(s) => s,
             Err(e) => {
-                println!("Error occured while loading settings: {}", e);
-                println!("Terminating program...");
+                error!("Error occured while loading settings: {}", e);
+                error!("Terminating program...");
                 return;
             }
         },
@@ -67,7 +69,7 @@ fn main() {
         args.timeout_min.map(|v| Duration::from_mins(v as u64)),
     );
     if let Err(e) = &cancel {
-        println!("{}", e);
+        error!("{}", e);
     }
     let output_dir = args.output_dir.unwrap_or("out/".into());
     println!("Workspace set to: {}", &output_dir.display());
@@ -75,13 +77,13 @@ fn main() {
         output_dir,
         &start_as_str,
         settings.build(),
-        rounding_sat,
-        scip,
+        program1,
+        program2,
         args.save_all_files,
         cancel.expect("Error handled already"),
     );
     if let Err(e) = res {
-        println!("{}", e)
+        error!("{}", e)
     }
 }
 
@@ -147,17 +149,13 @@ struct OrchestratorArgs {
     #[arg(long)]
     settings_file: Option<PathBuf>,
 
-    /// Specify custom path to the `roundingsat` binary
-    ///
-    /// If nothing is provided the program expects to find the binary in the $PATH.
+    /// Specify the config file in toml format for program 1
     #[arg(long)]
-    roundingsat_bin: Option<PathBuf>,
+    program_config1: PathBuf,
 
-    /// Specify custom path to the `scip` binary
-    ///
-    /// If nothing is provided the program expects to find the binary in the $PATH.
+    /// Specify the config file in toml format for program 2
     #[arg(long)]
-    scip_bin: Option<PathBuf>,
+    program_config2: PathBuf,
 
     /// Set to true if `valid` results should be saved as well (default: false)
     ///

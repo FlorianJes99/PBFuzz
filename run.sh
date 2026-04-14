@@ -13,6 +13,7 @@ function handle_sigint() {
 echo "Building release executable..."
 cargo build --release
 target/release/fuzzer_orchestrator \
-  -i 100000 \
+  -i 100 \
   --settings-file configuration/default_settings.ron \
-  --scip-bin software/scip \
+  --program-config1 external_programs/roundingsat.toml \
+  --program-config2 external_programs/scip.toml

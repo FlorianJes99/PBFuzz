@@ -1,9 +1,11 @@
+/* @[crate::fuzzer::pbs_generator::GeneratorSettings]*/
+
 (
     max_vars: 70,
     cancel_condition: CountConstraints(
         max_constraints: 88,
     ),
-    grammar_kind: PBS,
+    grammar_kind: PBO,
     amount_atoms_per_constraint: 19,
     max_unsat_for_single_constraint: 3,
     coeff_range: 10,

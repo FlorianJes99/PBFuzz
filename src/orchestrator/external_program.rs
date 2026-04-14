@@ -5,42 +5,54 @@ use std::{
     process::{Command, Output},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     fuzzer::{
         domain::{AtomIdent, MinObjectiveValue},
         grammar::PBGrammar,
     },
-    orchestrator::folders::{
-        BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
+    orchestrator::{
+        default_parser::DefaultParser,
+        folders::{
+            BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
+        },
+        parser::{Parser, ParserKind},
+        scip_parser::ScipParser,
     },
 };
 
-/// Shared behavior in order to run an external program and extract the output printed to console
-pub trait SolverRunner: Send + Sync {
-    /// This method should execute a program and return the console output
-    ///
-    /// file_path: the PBS or PBO file, we want to solve.
-    /// Returns: the raw console output or some error while executing the program
-    fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError>;
-    /// Simply the name of the binary/program we are running
-    fn get_name(&self) -> &str;
-}
-
-//TODO: move external programs unified to this struct
+#[derive(Serialize, Deserialize)]
 pub struct ExternalProgram {
     binary: PathBuf,
     args: Vec<String>,
     name: String,
+    parser_kind: ParserKind,
 }
 
 impl ExternalProgram {
-    pub fn new(binary: PathBuf, args: Vec<String>, name: String) -> Self {
-        Self { binary, args, name }
+    pub fn new(binary: PathBuf, args: Vec<String>, name: String, kind: ParserKind) -> Self {
+        Self {
+            binary,
+            args,
+            name,
+            parser_kind: kind,
+        }
     }
-}
 
-impl SolverRunner for ExternalProgram {
-    fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
+    pub fn load_from_file(path: PathBuf) -> std::io::Result<Self> {
+        let s = std::fs::read_to_string(path)?;
+        toml::from_str(&s).map_err(std::io::Error::other)
+    }
+
+    pub fn get_parser(&self) -> Box<dyn Parser> {
+        match self.parser_kind {
+            ParserKind::Default => Box::new(DefaultParser::new(self.name.clone())),
+            ParserKind::Scip => Box::new(ScipParser::new(self.name.clone())),
+        }
+    }
+
+    pub fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
             command.arg(arg);
@@ -54,7 +66,7 @@ impl SolverRunner for ExternalProgram {
         })
     }
 
-    fn get_name(&self) -> &str {
+    pub fn get_name(&self) -> &str {
         &self.name
     }
 }
@@ -68,40 +80,12 @@ pub trait PBSProcessor {
     ) -> Result<SolverResultPBS, ExternalProgramError>;
 }
 
-/// Glue code for conveniently running program and extracting output
-///
-/// Provide implementations for running an external program and extracting a result from
-/// the output
-pub fn run_pbs<P>(program: &P, file_path: &Path) -> Result<SolverResultPBS, ExternalProgramError>
-where
-    P: SolverRunner + PBSProcessor,
-{
-    println!("Solving generated instance with {}", program.get_name());
-    program
-        .run(file_path)
-        .and_then(|output| program.extract_result_from_output(output))
-}
-
 /// Parsing Output and extracting stuff relevant for BPO analysis
 pub trait PBOProcessor {
     fn extract_result_from_output(
         &self,
         output: Output,
     ) -> Result<SolverResultPBO, ExternalProgramError>;
-}
-///
-/// Glue code for conveniently running program and extracting output
-///
-/// Provide implementations for running an external program and extracting a result from
-/// the output
-pub fn run_pbo<P>(program: &P, file_path: &Path) -> Result<SolverResultPBO, ExternalProgramError>
-where
-    P: SolverRunner + PBOProcessor,
-{
-    println!("Solving generated instance with {}", program.get_name());
-    program
-        .run(file_path)
-        .and_then(|output| program.extract_result_from_output(output))
 }
 
 pub struct PBSValues {
@@ -292,6 +276,12 @@ impl Display for BugReason {
 }
 
 #[derive(Debug)]
+pub enum ErrorKind {
+    ProgramExecutionFailed,
+    OutputParsingError,
+}
+
+#[derive(Debug)]
 pub struct ExternalProgramError {
     program_name: String,
     error_message: String,
@@ -314,12 +304,6 @@ impl Display for ExternalProgramError {
         writeln!(f, "Error reason: {}", self.error_kind)?;
         writeln!(f, "Error message: {}", self.error_message)
     }
-}
-
-#[derive(Debug)]
-pub enum ErrorKind {
-    ProgramExecutionFailed,
-    OutputParsingError,
 }
 
 impl Display for ErrorKind {

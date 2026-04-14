@@ -5,7 +5,7 @@ use crate::{
     },
     orchestrator::{
         csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        external_program::IterationOutcome,
+        external_program::{ExternalProgram, IterationOutcome},
         folders::{DATA_FOLDER, prepare_output_folder},
     },
 };
@@ -28,12 +28,9 @@ use log::{debug, error};
 use rand::{self, Rng};
 use ron::ser::PrettyConfig;
 
-use crate::{
-    fuzzer::{
-        helpers::print_block,
-        pbs_generator::{GeneratorSettings, PBSGenerator},
-    },
-    orchestrator::external_program::{PBOProcessor, PBSProcessor, SolverRunner},
+use crate::fuzzer::{
+    helpers::print_block,
+    pbs_generator::{GeneratorSettings, PBSGenerator},
 };
 
 /// Entry point for the orchestrator to run fuzzer and external programs until a stop condition is
@@ -64,19 +61,15 @@ use crate::{
 /// - Compare if both programs output the same result
 /// - Update stats for the orchestrator
 /// - write relevant data points to the CSV file
-pub fn run_orchestrator<T, U>(
+pub fn run_orchestrator(
     output_base_folder: PathBuf,
     time_stamp_as_str: &str,
     generator_settings: GeneratorSettings,
-    command1: T,
-    command2: U,
+    command1: ExternalProgram,
+    command2: ExternalProgram,
     save_all_files: bool,
     stop_condition: StopCondition,
-) -> Result<(), String>
-where
-    T: SolverRunner + PBOProcessor + PBSProcessor,
-    U: SolverRunner + PBOProcessor + PBSProcessor,
-{
+) -> Result<(), String> {
     let fuzzer_output_dir = prepare_output_folder(
         &output_base_folder,
         time_stamp_as_str,
@@ -96,20 +89,16 @@ where
     .run(stop_condition)
 }
 
-struct Orchestrator<T, U> {
+struct Orchestrator {
     fuzzer_output_dir: PathBuf,
     generator_settings: GeneratorSettings,
     save_all_files: bool,
     orchestrator_start: Instant,
-    command1: T,
-    command2: U,
+    command1: ExternalProgram,
+    command2: ExternalProgram,
 }
 
-impl<T, U> Orchestrator<T, U>
-where
-    T: SolverRunner + PBOProcessor + PBSProcessor,
-    U: SolverRunner + PBOProcessor + PBSProcessor,
-{
+impl Orchestrator {
     fn run(&self, stop_condition: StopCondition) -> Result<(), String> {
         let csv_file_path = &self
             .fuzzer_output_dir
@@ -191,10 +180,8 @@ where
         let start_output_extraction = Instant::now();
         let outcome = match self.generator_settings.get_problem_kind() {
             PBKind::PBS => {
-                let res_program1 =
-                    PBSProcessor::extract_result_from_output(&self.command1, output_bin1);
-                let res_program2 =
-                    PBSProcessor::extract_result_from_output(&self.command2, output_bin2);
+                let res_program1 = self.command1.get_parser().parse_pbs(output_bin1);
+                let res_program2 = self.command2.get_parser().parse_pbs(output_bin2);
                 match (res_program1, res_program2) {
                     (Ok(status1), Ok(status2)) => {
                         &status1.compare_status(&status2, &work_result.grammar)
@@ -204,10 +191,8 @@ where
                 }
             }
             PBKind::PBO => {
-                let res_program1 =
-                    PBOProcessor::extract_result_from_output(&self.command1, output_bin1);
-                let res_program2 =
-                    PBOProcessor::extract_result_from_output(&self.command2, output_bin2);
+                let res_program1 = self.command1.get_parser().parse_pbo(output_bin1);
+                let res_program2 = self.command2.get_parser().parse_pbo(output_bin2);
                 match (res_program1, res_program2) {
                     (Ok(status1), Ok(status2)) => {
                         &status1.compare_status(&status2, &work_result.grammar)
@@ -299,16 +284,12 @@ fn get_seed() -> u64 {
     rand::rng().random()
 }
 
-fn work_iteration<T, U>(
+fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: GeneratorSettings,
-    command1: &T,
-    command2: &U,
-) -> Result<WorkerResult, String>
-where
-    T: SolverRunner,
-    U: SolverRunner,
-{
+    command1: &ExternalProgram,
+    command2: &ExternalProgram,
+) -> Result<WorkerResult, String> {
     let start_worker = Instant::now();
     let seed = get_seed();
     let worker_thread = current_thread_index().unwrap_or(1);
@@ -327,7 +308,6 @@ where
         (output_generation_duration.as_secs_f32() * 1000.0)
     );
 
-    debug!("Solving generated instance with {}", command1.get_name());
     let start_bin1 = Instant::now();
     let output_bin1 = command1.run(&output_file).map_err(|err| err.to_string())?;
     let time_bin1 = start_bin1.elapsed();
