@@ -2,18 +2,21 @@ use crate::{
     fuzzer::{
         grammar::{PBGrammar, PBKind},
         helpers::{RunningAverage, RunningAverageDuration, get_hms_parts, move_file},
+        pbs_generator::GeneratorSettingsBuilder,
     },
     orchestrator::{
         csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         external_program::{ExternalProgram, IterationOutcome},
         folders::{DATA_FOLDER, prepare_output_folder},
+        orchestrator_args::OrchestratorArgs,
     },
 };
-use rayon::{current_thread_index, prelude::*};
+use rayon::{ThreadPoolBuilder, current_thread_index, prelude::*};
 use std::{
+    error::Error,
     fmt::Display,
     fs::File,
-    io::{BufWriter, Error, Write},
+    io::{BufWriter, Write},
     ops::Range,
     path::PathBuf,
     sync::mpsc::channel,
@@ -24,7 +27,7 @@ use std::{path::Path, process::Output};
 
 use csv::Writer;
 use itertools::Itertools;
-use log::{debug, error};
+use log::{debug, error, info};
 use rand::{self, Rng};
 use ron::ser::PrettyConfig;
 
@@ -37,6 +40,7 @@ use crate::fuzzer::{
 /// met.
 ///
 /// The workflow here goes as follows:
+/// - extract cli args and initialize all relevant data relevant for orchestrator
 /// - prepare the output folder
 ///   - create output folder, if not yet exist
 ///   - clean up subdirectories, if needed to
@@ -62,29 +66,47 @@ use crate::fuzzer::{
 /// - Update stats for the orchestrator
 /// - write relevant data points to the CSV file
 pub fn run_orchestrator(
-    output_base_folder: PathBuf,
     time_stamp_as_str: &str,
-    generator_settings: GeneratorSettings,
-    command1: ExternalProgram,
-    command2: ExternalProgram,
-    save_all_files: bool,
-    stop_condition: StopCondition,
-) -> Result<(), String> {
+    args: OrchestratorArgs,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(t) = args.thread_count {
+        ThreadPoolBuilder::new().num_threads(t).build_global()?
+    }
+    info!(
+        "Using {} threads for computing fuzzing runs in parallel",
+        rayon::current_num_threads()
+    );
+    let command1 = ExternalProgram::load_from_file(args.program_config1)?;
+    let command2 = ExternalProgram::load_from_file(args.program_config2)?;
+    let mut generator_settings_builder = match args.settings_file {
+        Some(file) => GeneratorSettingsBuilder::load_from_file(&file)?,
+        None => GeneratorSettingsBuilder::default(),
+    };
+
+    if let Some(mode) = args.mode {
+        generator_settings_builder = generator_settings_builder.pb_kind(mode);
+    }
+    let generator_settings = generator_settings_builder.build();
+    let stop_condition = StopCondition::new(
+        args.iterations,
+        args.timeout_min.map(|v| Duration::from_mins(v as u64)),
+    )?;
+    let output_dir = &args.output_dir;
+    info!("Workspace set to: {}", output_dir.display());
     let fuzzer_output_dir = prepare_output_folder(
-        &output_base_folder,
+        output_dir,
         time_stamp_as_str,
         generator_settings.get_problem_kind().get_short_str(),
-    )
-    .map_err(|err| format!("Could not create workspace!\nError: {}", err))?;
+    )?;
     print_block("Settings to use", generator_settings);
 
     Orchestrator {
         fuzzer_output_dir,
         generator_settings,
+        orchestrator_start: Instant::now(),
+        save_all_files: args.save_all_files,
         command1,
         command2,
-        save_all_files,
-        orchestrator_start: Instant::now(),
     }
     .run(stop_condition)
 }
@@ -99,13 +121,12 @@ struct Orchestrator {
 }
 
 impl Orchestrator {
-    fn run(&self, stop_condition: StopCondition) -> Result<(), String> {
+    fn run(&self, stop_condition: StopCondition) -> Result<(), Box<dyn Error>> {
         let csv_file_path = &self
             .fuzzer_output_dir
             .join(DATA_FOLDER.name)
             .join(format!("{}.csv", ORCHESTRATOR_DATA_FILE_PREFIX,));
-        let mut csv_writer = csv::Writer::from_path(csv_file_path)
-            .map_err(|err| format!("Failed to create a csv writer\n Error: {}", err))?;
+        let mut csv_writer = csv::Writer::from_path(csv_file_path)?;
         let mut stats = Stats::new();
         let (sender, receiver) = channel::<WorkerResult>();
         thread::scope(|s| {
@@ -266,7 +287,7 @@ impl Orchestrator {
     fn save_settings(&self, stats: &Stats) -> std::io::Result<()> {
         let dir = self.fuzzer_output_dir.join(DATA_FOLDER.name);
         let data = ron::ser::to_string_pretty(&self.generator_settings, PrettyConfig::default())
-            .map_err(Error::other)?;
+            .map_err(std::io::Error::other)?;
         let file_name = dir.join("settings.ron");
         let mut file = File::create(file_name)?;
         file.write_all(data.as_bytes())?;

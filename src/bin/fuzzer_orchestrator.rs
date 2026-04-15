@@ -1,22 +1,11 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{fs, path::Path};
 
 use clap::Parser;
 use fuzzer_pseudo_bool::{
-    fuzzer::{
-        grammar::PBKind, helpers::current_time_as_timestamp,
-        pbs_generator::GeneratorSettingsBuilder,
-    },
-    orchestrator::{
-        external_program::ExternalProgram,
-        runner::{StopCondition, run_orchestrator},
-    },
+    fuzzer::helpers::current_time_as_timestamp,
+    orchestrator::{orchestrator_args::OrchestratorArgs, runner::run_orchestrator},
 };
 use log::{Level, error};
-use rayon::ThreadPoolBuilder;
 
 fn main() {
     let args = OrchestratorArgs::parse();
@@ -25,63 +14,7 @@ fn main() {
         println!("Logger initalization failed\nError: {}", e);
         return;
     }
-    if let Some(t) = args.thread_count {
-        ThreadPoolBuilder::new()
-            .num_threads(t)
-            .build_global()
-            .expect("Global rayon thread pool should only be initialized once!");
-    }
-    println!(
-        "Using {} threads for computing fuzzing runs in parallel",
-        rayon::current_num_threads()
-    );
-    let program1 = match ExternalProgram::load_from_file(args.program_config1) {
-        Ok(p) => p,
-        Err(err) => {
-            error!("{err}");
-            return;
-        }
-    };
-    let program2 = match ExternalProgram::load_from_file(args.program_config2) {
-        Ok(p) => p,
-        Err(err) => {
-            error!("{err}");
-            return;
-        }
-    };
-    let mut settings = match args.settings_file {
-        Some(file) => match GeneratorSettingsBuilder::load_from_file(&file) {
-            Ok(s) => s,
-            Err(e) => {
-                error!("Error occured while loading settings: {}", e);
-                error!("Terminating program...");
-                return;
-            }
-        },
-        None => GeneratorSettingsBuilder::default(),
-    };
-
-    if let Some(mode) = args.mode {
-        settings = settings.pb_kind(mode);
-    }
-    let cancel = StopCondition::new(
-        args.iterations,
-        args.timeout_min.map(|v| Duration::from_mins(v as u64)),
-    );
-    if let Err(e) = &cancel {
-        error!("{}", e);
-    }
-    let output_dir = args.output_dir.unwrap_or("out/".into());
-    println!("Workspace set to: {}", &output_dir.display());
-    let res = run_orchestrator(
-        output_dir,
-        &start_as_str,
-        settings.build(),
-        program1,
-        program2,
-        args.save_all_files,
-        cancel.expect("Error handled already"),
-    );
+    let res = run_orchestrator(&start_as_str, args);
     if let Err(e) = res {
         error!("{}", e)
     }
@@ -106,67 +39,4 @@ fn init_logger(level: Option<Level>, timestamp: &str) -> Result<(), fern::InitEr
         .chain(fern::log_file(format!("logs/{}_output.log", timestamp))?)
         .apply()?;
     Ok(())
-}
-
-/// Arguments that can be passed to the orchestration pipeline for testing multiple solvers against
-/// there outputs.
-/// IMPORTANT: if both settings file and parameters are provided, then parameters will override
-/// settings specified in the file
-#[derive(Debug, Parser)]
-#[command(version, about, long_about = None)]
-struct OrchestratorArgs {
-    /// Set logging level (debug, info, warn, error). Default is 'error'
-    ///
-    /// Logging currently only supports printing to standard out.
-    #[arg(short, long)]
-    log: Option<log::Level>,
-    /// Specify the base directory for the orchestrator (default: `out/`).
-    ///
-    /// Inside the base directory the runner creates a directory with the current timestamp.
-    /// All data gets written into this subdirectory.
-    /// BE CAREFUL to either specify a path relative to the execution of the binary or specify a
-    /// correct absolute path for the base directory.
-    #[arg(short, long)]
-    output_dir: Option<PathBuf>,
-    /// Terminate orchestrator after n iterations. Conflicts with the timeout_min flag.
-    ///
-    #[arg(short, long, conflicts_with = "timeout_min")]
-    iterations: Option<u32>,
-    /// Terminate orchestrator after n elapsed minutes. Conflicts with the iterations flag.
-    #[arg(short, long, conflicts_with = "iterations")]
-    timeout_min: Option<u32>,
-    /// Choose mode for Fuzzer (default: PBS)
-    #[arg(long, value_enum)]
-    mode: Option<PBKind>,
-    /// Use a settings file for the fuzzer.
-    ///
-    /// The expected file should be in the [ron-format](https://docs.rs/ron/latest/ron/).
-    /// This file allows for more granular control about the settings.
-    /// Not only `PBMode` can be set here, but also relevant meta parameters for the fuzzer.
-    /// Those include things like maximum generated variables per instance and more.
-    /// After a successful run the used settings are stored in the current working space and can be
-    /// used for the next run.
-    #[arg(long)]
-    settings_file: Option<PathBuf>,
-
-    /// Specify the config file in toml format for program 1
-    #[arg(long)]
-    program_config1: PathBuf,
-
-    /// Specify the config file in toml format for program 2
-    #[arg(long)]
-    program_config2: PathBuf,
-
-    /// Set to true if `valid` results should be saved as well (default: false)
-    ///
-    /// A valid result is considered to be SAT or UNSAT
-    #[arg(long, default_value_t = false)]
-    save_all_files: bool,
-
-    /// Provide number of threads used to run parallel fuzzing runs
-    ///
-    /// If nothing is provided, the program will use up all available threads
-    /// See: [Rayon FAQ](https://github.com/rayon-rs/rayon/blob/main/FAQ.md)
-    #[arg(long)]
-    thread_count: Option<usize>,
 }

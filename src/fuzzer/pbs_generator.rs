@@ -108,7 +108,7 @@ impl Display for GeneratorSettings {
         writeln!(f, "{}", self.cancel_condition)?;
         writeln!(
             f,
-            "Literals per constraint                         : {}",
+            "Literals per constraint                      : {}",
             self.amount_literals_per_constraint
         )?;
         writeln!(
