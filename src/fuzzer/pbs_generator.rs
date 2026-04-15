@@ -1,7 +1,7 @@
 use crate::fuzzer::{
     constraint::Constraint,
     constraint_generator::{ConstraintDistribution, ConstraintGenerator, ConstraintSettings},
-    domain::AtomIdent,
+    domain::LiteralIdent,
     grammar::{PBGrammar, PBKind},
 };
 use itertools::Itertools;
@@ -53,18 +53,18 @@ pub struct GeneratorSettings {
     cancel_condition: CancelCondition,
     /// which type of grammar we want to generate: PBS | PBO
     grammar_kind: PBKind,
-    /// How many atoms a single constraint should have
-    amount_atoms_per_constraint: u32,
+    /// How many literals a single constraint should have
+    amount_literals_per_constraint: u32,
     max_unsat_for_single_constraint: u32,
-    /// The possible values a coefficient of a atom can be
+    /// The possible values a coefficient of a literal can be
     /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
     coeff_range: u32,
-    /// Given the sampled atoms in a constraint, the lower bound specifies the smallest possible
+    /// Given the sampled literals in a constraint, the lower bound specifies the smallest possible
     /// fraction of the given range
     /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
     ///       lowest possible degree (RHS) can be 3
     lower_bound_degree: f64,
-    /// Given the sampled atoms in a constraint, the upper bound specifies the highest possible
+    /// Given the sampled literals in a constraint, the upper bound specifies the highest possible
     /// fraction of the given range
     /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then
     ///       highest possible degree (RHS) can be 6
@@ -77,7 +77,7 @@ impl From<GeneratorSettings> for ConstraintSettings {
         ConstraintSettings::new(
             val.max_vars,
             val.max_unsat_for_single_constraint,
-            val.amount_atoms_per_constraint,
+            val.amount_literals_per_constraint,
             val.coeff_range as i32,
             val.lower_bound_degree,
             val.upper_bound_degree,
@@ -108,8 +108,8 @@ impl Display for GeneratorSettings {
         writeln!(f, "{}", self.cancel_condition)?;
         writeln!(
             f,
-            "Atoms per constraint                         : {}",
-            self.amount_atoms_per_constraint
+            "Literals per constraint                         : {}",
+            self.amount_literals_per_constraint
         )?;
         writeln!(
             f,
@@ -143,7 +143,7 @@ impl Display for GeneratorSettings {
 ///
 /// Defaults:
 /// `coeff_range: 3`
-/// `amount_atoms_per_constraint: 3`
+/// `amount_literals_per_constraint: 3`
 /// `max_unsat_for_single_constraint: 5`
 /// `lower_bound_degree: 0.3`
 /// `upper_bound_degree: 0.5`
@@ -155,7 +155,7 @@ pub struct GeneratorSettingsBuilder {
     cancel_condition: CancelCondition,
     grammar_kind: PBKind,
     coeff_range: u32,
-    amount_atoms_per_constraint: u32,
+    amount_literals_per_constraint: u32,
     lower_bound_degree: f64,
     upper_bound_degree: f64,
     constraint_distribution: ConstraintDistribution,
@@ -176,7 +176,7 @@ impl Default for GeneratorSettingsBuilder {
 impl GeneratorSettingsBuilder {
     pub fn new(max_vars: u32) -> Self {
         let coeff_range = 3;
-        let amount_atoms_per_constraint = 30;
+        let amount_literals_per_constraint = 30;
         let max_unsat_for_single_constraint = 5;
         let lower_bound_degree = 0.3;
         let upper_bound_degree = 0.5;
@@ -192,7 +192,7 @@ impl GeneratorSettingsBuilder {
             cancel_condition,
             grammar_kind,
             coeff_range,
-            amount_atoms_per_constraint,
+            amount_literals_per_constraint,
             lower_bound_degree,
             upper_bound_degree,
             constraint_distribution,
@@ -213,7 +213,7 @@ impl GeneratorSettingsBuilder {
             cancel_condition: settings.cancel_condition,
             grammar_kind: settings.grammar_kind,
             coeff_range: settings.coeff_range,
-            amount_atoms_per_constraint: settings.amount_atoms_per_constraint,
+            amount_literals_per_constraint: settings.amount_literals_per_constraint,
             lower_bound_degree: settings.lower_bound_degree,
             upper_bound_degree: settings.upper_bound_degree,
             constraint_distribution: settings.constraint_distribution,
@@ -263,7 +263,7 @@ impl GeneratorSettingsBuilder {
             cancel_condition: self.cancel_condition,
             grammar_kind: self.grammar_kind,
             coeff_range: self.coeff_range,
-            amount_atoms_per_constraint: self.amount_atoms_per_constraint,
+            amount_literals_per_constraint: self.amount_literals_per_constraint,
             lower_bound_degree: self.lower_bound_degree,
             upper_bound_degree: self.upper_bound_degree,
             constraint_distribution: self.constraint_distribution,
@@ -320,10 +320,10 @@ impl PBSGenerator {
             }
         };
 
-        let distinct_atom_ids: Vec<AtomIdent> = constraints
+        let distinct_literal_ids: Vec<LiteralIdent> = constraints
             .iter()
-            .flat_map(|c| c.atoms())
-            .map(|a| a.atom_id)
+            .flat_map(|c| c.literals())
+            .map(|a| a.literal_id)
             .unique()
             .collect();
 
@@ -331,14 +331,14 @@ impl PBSGenerator {
             PBKind::PBS => Option::None,
             PBKind::PBO => Some(
                 self.constraint_generator
-                    .generate_min_function(&distinct_atom_ids, 5),
+                    .generate_min_function(&distinct_literal_ids, 5),
             ),
         };
 
         PBGrammar::new(
             self.seed,
             unsat_assignments,
-            distinct_atom_ids.len() as u32,
+            distinct_literal_ids.len() as u32,
             constraints,
             min_constraint,
             start.elapsed(),

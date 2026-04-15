@@ -78,7 +78,7 @@ impl Parser for ScipParser {
                 ident
                     .parse()
                     .map(|v| HashSet::from([v]))
-                    .map_err(|err| self.error(format!("Could not parse AtomIdent: {err}"))),
+                    .map_err(|err| self.error(format!("Could not parse LiteralIdent: {err}"))),
             );
         }
         StatusLine::Ignored

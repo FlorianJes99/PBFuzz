@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use log::error;
 
 use crate::{
-    fuzzer::domain::AtomIdent,
+    fuzzer::domain::LiteralIdent,
     orchestrator::{
         external_program::ExternalProgramError,
         parser::{Parser, StatusKind, StatusLine},
@@ -22,13 +22,13 @@ impl DefaultParser {
     fn parse_solution(
         &self,
         solution_model_line: &str,
-    ) -> Result<HashSet<AtomIdent>, ExternalProgramError> {
+    ) -> Result<HashSet<LiteralIdent>, ExternalProgramError> {
         solution_model_line
             .split_whitespace()
             .filter(|w| w.starts_with("x"))
             .map(|w| {
-                w.parse::<AtomIdent>().map_err(|err| {
-                    self.error(format!("Could not parse symbol to Atom\n Err: {err}"))
+                w.parse::<LiteralIdent>().map_err(|err| {
+                    self.error(format!("Could not parse symbol to Literal\n Err: {err}"))
                 })
             })
             .collect()
@@ -52,7 +52,7 @@ impl Parser for DefaultParser {
             Some(("v", rest)) => StatusLine::Solution(self.parse_solution(rest)),
             Some(("o", rest)) => StatusLine::Objective(
                 rest.parse()
-                    .map_err(|err| self.error(format!("Could not parse AtomIdent: {err}"))),
+                    .map_err(|err| self.error(format!("Could not parse LiteralIdent: {err}"))),
             ),
             Some(("c", rest)) => match rest.split_once(' ') {
                 Some(("conflicts", rest)) => match rest.parse() {

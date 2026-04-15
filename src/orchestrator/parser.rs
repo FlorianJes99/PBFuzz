@@ -3,7 +3,7 @@ use std::{collections::HashSet, process::Output};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    fuzzer::domain::AtomIdent,
+    fuzzer::domain::LiteralIdent,
     orchestrator::external_program::{
         ErrorKind, ExternalProgramError, SolverSolution, SolverStatus,
     },
@@ -89,7 +89,7 @@ pub trait Parser: Sync {
 #[derive(Default)]
 pub struct ScannedResult {
     status: Option<StatusKind>,
-    solution: HashSet<AtomIdent>,
+    solution: HashSet<LiteralIdent>,
     objective: Option<i32>,
     conflicts: Option<u32>,
 }
@@ -103,7 +103,7 @@ pub enum StatusKind {
 
 pub enum StatusLine {
     Status(StatusKind),
-    Solution(Result<HashSet<AtomIdent>, ExternalProgramError>),
+    Solution(Result<HashSet<LiteralIdent>, ExternalProgramError>),
     Objective(Result<i32, ExternalProgramError>),
     Conflicts(u32),
     Ignored,

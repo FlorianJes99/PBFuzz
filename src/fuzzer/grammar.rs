@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::fuzzer::constraint::Constraint;
 use crate::fuzzer::constraint::ConstraintKind;
-use crate::fuzzer::domain::AtomIdent;
+use crate::fuzzer::domain::LiteralIdent;
 use crate::fuzzer::domain::MinFunction;
 use crate::fuzzer::domain::MinObjectiveValue;
 use crate::fuzzer::domain::SolutionModel;
@@ -121,8 +121,8 @@ impl PBGrammar {
         let occurences_per_var = self
             .constraints
             .iter()
-            .flat_map(|c| c.atoms())
-            .counts_by(|atom| atom.atom_id);
+            .flat_map(|c| c.literals())
+            .counts_by(|literal| literal.literal_id);
         let max = occurences_per_var
             .iter()
             .max_by(|(id_a, count_a), (id_b, count_b)| count_a.cmp(count_b).then(id_b.cmp(id_a)))
@@ -152,15 +152,15 @@ impl PBGrammar {
 
     pub fn verify_min_constraint(
         &self,
-        true_vars: &HashSet<AtomIdent>,
+        true_vars: &HashSet<LiteralIdent>,
         objective: &MinObjectiveValue,
     ) -> bool {
         self.min_constraint
             .as_ref()
             .map(|c| -> MinObjectiveValue {
-                c.get_atoms()
+                c.get_literals()
                     .iter()
-                    .filter(|a| true_vars.contains(&a.atom_id))
+                    .filter(|a| true_vars.contains(&a.literal_id))
                     .map(|a| a.coeff)
                     .sum::<i32>()
                     .into()
@@ -221,19 +221,19 @@ impl Display for GrammarStatistics {
 
 #[derive(Clone, Copy)]
 struct OccurenceWithId {
-    atom_id: AtomIdent,
+    literal_id: LiteralIdent,
     count: u32,
 }
 
 impl OccurenceWithId {
-    fn new(atom_id: AtomIdent, count: u32) -> Self {
-        Self { atom_id, count }
+    fn new(literal_id: LiteralIdent, count: u32) -> Self {
+        Self { literal_id, count }
     }
 }
 
 impl Display for OccurenceWithId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.count, self.atom_id)
+        write!(f, "{} ({})", self.count, self.literal_id)
     }
 }
 
@@ -244,15 +244,15 @@ mod test {
     #[test]
     fn test_statistics() {
         use crate::fuzzer::constraint::CostraintWithUnsatAssignments;
-        use crate::fuzzer::constraint::ThreeAtomConstraint;
-        use crate::fuzzer::domain::{Atom, Comparison};
-        let atoms1 = [Atom::new(1, 2), Atom::new(2, 5), Atom::new(4, 1)];
-        let atoms2 = [Atom::new(2, 2), Atom::new(3, 5), Atom::new(4, 1)];
-        let atoms3 = [Atom::new(1, 2), Atom::new(3, 5), Atom::new(4, 1)];
+        use crate::fuzzer::constraint::ThreeLiteralConstraint;
+        use crate::fuzzer::domain::{Comparison, Literal};
+        let literals1 = [Literal::new(1, 2), Literal::new(2, 5), Literal::new(4, 1)];
+        let literals2 = [Literal::new(2, 2), Literal::new(3, 5), Literal::new(4, 1)];
+        let literals3 = [Literal::new(1, 2), Literal::new(3, 5), Literal::new(4, 1)];
         let constraints = vec![
-            ThreeAtomConstraint::new(atoms1, Comparison::GrEqual, 5),
-            ThreeAtomConstraint::new(atoms2, Comparison::GrEqual, 5),
-            ThreeAtomConstraint::new(atoms3, Comparison::GrEqual, 5),
+            ThreeLiteralConstraint::new(literals1, Comparison::GrEqual, 5),
+            ThreeLiteralConstraint::new(literals2, Comparison::GrEqual, 5),
+            ThreeLiteralConstraint::new(literals3, Comparison::GrEqual, 5),
         ];
         let unsat_assignments = Option::Some(
             constraints

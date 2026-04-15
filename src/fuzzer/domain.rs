@@ -5,27 +5,27 @@ use std::{
     ops::Deref,
 };
 
-/// Wrapper type for the identifier of an atom.
+/// Wrapper type for the identifier of an literal.
 ///
 /// Values are expected to be > 0.
 /// This type gets displayed as xN, where N is the actual id number.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
-pub struct AtomIdent(u32);
+pub struct LiteralIdent(u32);
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
 pub struct MinObjectiveValue(i32);
 
 #[derive(Debug, Clone)]
-pub struct SolutionModel(HashSet<AtomIdent>);
+pub struct SolutionModel(HashSet<LiteralIdent>);
 
-impl From<HashSet<AtomIdent>> for SolutionModel {
-    fn from(value: HashSet<AtomIdent>) -> Self {
+impl From<HashSet<LiteralIdent>> for SolutionModel {
+    fn from(value: HashSet<LiteralIdent>) -> Self {
         Self(value)
     }
 }
 
 impl Deref for SolutionModel {
-    type Target = HashSet<AtomIdent>;
+    type Target = HashSet<LiteralIdent>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -38,31 +38,31 @@ impl From<i32> for MinObjectiveValue {
     }
 }
 
-impl AtomIdent {
+impl LiteralIdent {
     pub fn new(var_id: u32) -> Self {
-        assert!(var_id > 0, "Identifier of an Atom needs to be > 0");
+        assert!(var_id > 0, "Identifier of an Literal needs to be > 0");
         Self(var_id)
     }
     pub fn literal_id(&self) -> u32 {
         self.0
     }
 
-    /// Consumes the id and creates a new atom
-    pub fn to_atom(self, coeff: i32) -> Atom {
-        Atom {
-            atom_id: self,
+    /// Consumes the id and creates a new literal
+    pub fn to_literal(self, coeff: i32) -> Literal {
+        Literal {
+            literal_id: self,
             coeff,
         }
     }
 }
 
-impl From<u32> for AtomIdent {
+impl From<u32> for LiteralIdent {
     fn from(value: u32) -> Self {
-        AtomIdent::new(value)
+        LiteralIdent::new(value)
     }
 }
 
-impl std::str::FromStr for AtomIdent {
+impl std::str::FromStr for LiteralIdent {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -75,54 +75,54 @@ impl std::str::FromStr for AtomIdent {
         let num_str = &s[1..];
         num_str
             .parse::<u32>()
-            .map(AtomIdent::new)
+            .map(LiteralIdent::new)
             .map_err(|e| format!("Failed to parse number: {}", e))
     }
 }
 
-impl Display for AtomIdent {
+impl Display for LiteralIdent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "x{}", self.literal_id())
     }
 }
 
-/// Atom is the most basic building block
+/// Literal is the most basic building block
 ///
 /// It consists of an Id (u32), which is used to display the variable name
 /// and a coefficient (i32).
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct Atom {
-    pub atom_id: AtomIdent,
+pub struct Literal {
+    pub literal_id: LiteralIdent,
     pub coeff: i32,
 }
 
-impl Atom {
+impl Literal {
     pub fn new(var_id: u32, coeff: i32) -> Self {
         Self {
-            atom_id: AtomIdent::new(var_id),
+            literal_id: LiteralIdent::new(var_id),
             coeff,
         }
     }
 }
 
-impl Display for Atom {
+impl Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.coeff, self.atom_id)
+        write!(f, "{} {}", self.coeff, self.literal_id)
     }
 }
 
 /// Wrapper type to represent the minimizing function
 ///
-/// This is just a vector of atoms with distinct ids.
+/// This is just a vector of literals with distinct ids.
 /// It is used when creating Pseudo-Boolean Optimization problems.
-pub struct MinFunction(Vec<Atom>);
+pub struct MinFunction(Vec<Literal>);
 
 impl MinFunction {
-    pub fn new(atoms: Vec<Atom>) -> Self {
-        MinFunction(atoms)
+    pub fn new(literals: Vec<Literal>) -> Self {
+        MinFunction(literals)
     }
 
-    pub fn get_atoms(&self) -> &[Atom] {
+    pub fn get_literals(&self) -> &[Literal] {
         &self.0
     }
 }
@@ -130,11 +130,11 @@ impl MinFunction {
 impl Display for MinFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("min: ")?;
-        for (i, atom) in self.0.iter().enumerate() {
+        for (i, literal) in self.0.iter().enumerate() {
             if i > 0 {
                 f.write_str(" ")?;
             }
-            write!(f, "{}", atom)?;
+            write!(f, "{}", literal)?;
         }
         f.write_char(';')
     }
@@ -164,30 +164,33 @@ mod test {
     use super::*;
 
     #[test]
-    fn convert_atom() {
-        let id = AtomIdent::new(2);
-        let atom = id.to_atom(15);
-        let expected = Atom::new(2, 15);
+    fn convert_literal() {
+        let id = LiteralIdent::new(2);
+        let literal = id.to_literal(15);
+        let expected = Literal::new(2, 15);
         assert_eq!(
-            expected, atom,
+            expected, literal,
             "Expected equality: {} and {}",
-            expected, atom
+            expected, literal
         )
     }
 
     #[test]
-    fn display_atom() {
-        let atom = Atom::new(1, 3);
-        assert_eq!(atom.to_string(), "3 x1".to_string());
+    fn display_literal() {
+        let literal = Literal::new(1, 3);
+        assert_eq!(literal.to_string(), "3 x1".to_string());
 
-        let negative_coeff = Atom::new(1, -3);
+        let negative_coeff = Literal::new(1, -3);
         assert_eq!(negative_coeff.to_string(), "-3 x1".to_string());
     }
 
     #[test]
     fn display_min_function() {
-        let min_function =
-            MinFunction::new(vec![Atom::new(1, 3), Atom::new(2, 8), Atom::new(5, -3)]);
+        let min_function = MinFunction::new(vec![
+            Literal::new(1, 3),
+            Literal::new(2, 8),
+            Literal::new(5, -3),
+        ]);
 
         assert_eq!("min: 3 x1 8 x2 -3 x5;", min_function.to_string())
     }

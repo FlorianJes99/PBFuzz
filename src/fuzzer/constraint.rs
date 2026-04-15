@@ -1,21 +1,21 @@
-use crate::fuzzer::domain::Atom;
 use crate::fuzzer::domain::Comparison;
+use crate::fuzzer::domain::Literal;
 use crate::fuzzer::domain::SolutionModel;
 use std::cell::OnceCell;
 use std::fmt::Display;
 
 /// Constraint trait for different types of constraints in a PBS/PBO grammar.
 ///
-/// Atoms: a reference to a array slice of atoms.
+/// Literals: a reference to a array slice of literals.
 /// Comparison: the comparison operator used in this constraint.
 /// Degree: rhs value, for which we are solving the constraint.
 ///
-/// Constraint is a combination of atoms, comparison operator and a degree
+/// Constraint is a combination of literals, comparison operator and a degree
 ///
-/// The degree should always be in bound of the atoms max and min assignment.
+/// The degree should always be in bound of the literals max and min assignment.
 /// Otherwise, a Constraint itself makes the problem instantly unsat.
 pub trait Constraint: Display + Send {
-    fn atoms(&self) -> &[Atom];
+    fn literals(&self) -> &[Literal];
     fn comparison(&self) -> &Comparison;
     fn degree(&self) -> i64;
     fn kind(&self) -> ConstraintKind;
@@ -33,9 +33,9 @@ pub trait Constraint: Display + Send {
     /// This can be used in order to verify the results of a solver
     fn verify(&self, true_vars: &SolutionModel) -> bool {
         self.satisfied(
-            self.atoms()
+            self.literals()
                 .iter()
-                .filter(|a| true_vars.contains(&a.atom_id))
+                .filter(|a| true_vars.contains(&a.literal_id))
                 .map(|a| a.coeff as i64)
                 .sum::<i64>(),
         )
@@ -45,10 +45,10 @@ pub trait Constraint: Display + Send {
     /// A solvable constraint needs to have at least one assignment, which fulfill the degree.
     fn is_solvable(&self) -> bool {
         self.satisfied(
-            self.atoms()
+            self.literals()
                 .iter()
-                .filter(|atom| atom.coeff > 0)
-                .map(|atom| atom.coeff as i64)
+                .filter(|literal| literal.coeff > 0)
+                .map(|literal| literal.coeff as i64)
                 .sum::<i64>(),
         )
     }
@@ -56,11 +56,11 @@ pub trait Constraint: Display + Send {
     /// Can be used in every implementation of the trait in order to get a formatted version of the
     /// constraint
     fn fmt_constraint(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, atom) in self.atoms().iter().enumerate() {
+        for (i, literal) in self.literals().iter().enumerate() {
             if i > 0 {
                 f.write_str(" ")?;
             }
-            atom.fmt(f)?;
+            literal.fmt(f)?;
         }
         write!(f, " {} {};", self.comparison(), self.degree())
     }
@@ -69,7 +69,7 @@ pub trait Constraint: Display + Send {
 /// Extension of the Constraint type
 ///
 /// It is used for Constraint Kinds, where we can compute the amount of unsat assignments
-/// in reasonable time amount (e.g. Three Atom or Cardinality)
+/// in reasonable time amount (e.g. Three Literal or Cardinality)
 pub trait CostraintWithUnsatAssignments: Constraint {
     fn amount_unsat_assignments(&self) -> u128;
 }
@@ -79,7 +79,7 @@ pub trait CostraintWithUnsatAssignments: Constraint {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConstraintKind {
     ArbitraryLength,
-    ThreeAtom,
+    ThreeLiteral,
     Cardinality,
 }
 
@@ -87,7 +87,7 @@ impl Display for ConstraintKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConstraintKind::ArbitraryLength => write!(f, "Arbitrary Length"),
-            ConstraintKind::ThreeAtom => write!(f, "Three Atom"),
+            ConstraintKind::ThreeLiteral => write!(f, "Three Literal"),
             ConstraintKind::Cardinality => write!(f, "Cardinality"),
         }
     }
@@ -98,17 +98,17 @@ impl Display for ConstraintKind {
 /// Length can be chosen arbitrary as well as coefficient range.
 #[derive(Debug)]
 pub struct ArbitraryLengthConstraint {
-    atoms: Vec<Atom>,
+    literals: Vec<Literal>,
     comparison: Comparison,
     degree: i64,
 }
 
-/// A constraint with exactly three atoms
+/// A constraint with exactly three literals
 ///
 /// For this type it is fairly ease to compute all possible unsat assignments.
 #[derive(Debug)]
-pub struct ThreeAtomConstraint {
-    atoms: [Atom; 3],
+pub struct ThreeLiteralConstraint {
+    literals: [Literal; 3],
     comparison: Comparison,
     degree: i64,
     /// lazy init this when first needed, can be expensive to compute
@@ -116,9 +116,9 @@ pub struct ThreeAtomConstraint {
 }
 
 /// Cardinality constraints are a special type of constraint, where every coefficient
-/// of an atom needs to be 1 or -1
+/// of an literal needs to be 1 or -1
 pub struct CardinalityConstraint {
-    atoms: Vec<Atom>,
+    literals: Vec<Literal>,
     comparison: Comparison,
     degree: i64,
     // Lazy init this when first needed, can be expensive to compute
@@ -126,8 +126,8 @@ pub struct CardinalityConstraint {
 }
 
 impl Constraint for ArbitraryLengthConstraint {
-    fn atoms(&self) -> &[Atom] {
-        &self.atoms
+    fn literals(&self) -> &[Literal] {
+        &self.literals
     }
 
     fn comparison(&self) -> &Comparison {
@@ -146,15 +146,15 @@ impl Constraint for ArbitraryLengthConstraint {
 impl ArbitraryLengthConstraint {
     /// Construct a new constraints object with arbitrary length.
     ///
-    /// Arbitrary length is relevant for the amount of atoms a single constraint holds.
-    /// Degree needs to be inside the min/max bounds of atoms assignment.
-    pub fn new(atoms: Vec<Atom>, comparison: Comparison, degree: i64) -> Self {
+    /// Arbitrary length is relevant for the amount of literals a single constraint holds.
+    /// Degree needs to be inside the min/max bounds of literals assignment.
+    pub fn new(literals: Vec<Literal>, comparison: Comparison, degree: i64) -> Self {
         assert!(
-            !atoms.is_empty(),
-            "Constraint needs at least one atom to be valid"
+            !literals.is_empty(),
+            "Constraint needs at least one literal to be valid"
         );
         let constraint = Self {
-            atoms,
+            literals,
             comparison,
             degree,
         };
@@ -173,15 +173,15 @@ impl Display for ArbitraryLengthConstraint {
     }
 }
 
-impl From<ThreeAtomConstraint> for ArbitraryLengthConstraint {
-    fn from(value: ThreeAtomConstraint) -> Self {
-        ArbitraryLengthConstraint::new(value.atoms.to_vec(), value.comparison, value.degree)
+impl From<ThreeLiteralConstraint> for ArbitraryLengthConstraint {
+    fn from(value: ThreeLiteralConstraint) -> Self {
+        ArbitraryLengthConstraint::new(value.literals.to_vec(), value.comparison, value.degree)
     }
 }
 
-impl Constraint for ThreeAtomConstraint {
-    fn atoms(&self) -> &[Atom] {
-        &self.atoms
+impl Constraint for ThreeLiteralConstraint {
+    fn literals(&self) -> &[Literal] {
+        &self.literals
     }
 
     fn comparison(&self) -> &Comparison {
@@ -193,43 +193,43 @@ impl Constraint for ThreeAtomConstraint {
     }
 
     fn kind(&self) -> ConstraintKind {
-        ConstraintKind::ThreeAtom
+        ConstraintKind::ThreeLiteral
     }
 }
 
-impl CostraintWithUnsatAssignments for ThreeAtomConstraint {
+impl CostraintWithUnsatAssignments for ThreeLiteralConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
         *self
             .amount_unsat
-            .get_or_init(|| self.unsat_count_three_atoms().into())
+            .get_or_init(|| self.unsat_count_three_literals().into())
     }
 }
 
-impl Display for ThreeAtomConstraint {
+impl Display for ThreeLiteralConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.fmt_constraint(f)
     }
 }
 
-impl TryFrom<ArbitraryLengthConstraint> for ThreeAtomConstraint {
+impl TryFrom<ArbitraryLengthConstraint> for ThreeLiteralConstraint {
     type Error = String;
 
     fn try_from(value: ArbitraryLengthConstraint) -> Result<Self, Self::Error> {
         let ArbitraryLengthConstraint {
-            atoms,
+            literals,
             comparison,
             degree,
         } = value;
-        atoms
+        literals
             .try_into()
-            .map_err(|_| "Constraint has not exactly three atoms".to_string())
-            .map(|[a1, a2, a3]: [Atom; 3]| {
-                ThreeAtomConstraint::new([a1, a2, a3], comparison, degree)
+            .map_err(|_| "Constraint has not exactly three literals".to_string())
+            .map(|[a1, a2, a3]: [Literal; 3]| {
+                ThreeLiteralConstraint::new([a1, a2, a3], comparison, degree)
             })
     }
 }
 
-impl ThreeAtomConstraint {
+impl ThreeLiteralConstraint {
     const ASSIGNMENTS: [(i32, i32, i32); 8] = [
         (0, 0, 0),
         (1, 0, 0),
@@ -241,18 +241,18 @@ impl ThreeAtomConstraint {
         (1, 1, 1),
     ];
 
-    pub fn new(atoms: [Atom; 3], comparison: Comparison, degree: i64) -> Self {
+    pub fn new(literals: [Literal; 3], comparison: Comparison, degree: i64) -> Self {
         Self {
-            atoms,
+            literals,
             comparison,
             degree,
             amount_unsat: OnceCell::new(),
         }
     }
 
-    /// Checks how many assignments are unsat for a constraint with 3 Atoms
-    fn unsat_count_three_atoms(&self) -> u32 {
-        let [a1, a2, a3] = &self.atoms;
+    /// Checks how many assignments are unsat for a constraint with 3 Literals
+    fn unsat_count_three_literals(&self) -> u32 {
+        let [a1, a2, a3] = &self.literals;
         Self::ASSIGNMENTS
             .iter()
             .map(|(b1, b2, b3)| b1 * a1.coeff + b2 * a2.coeff + b3 * a3.coeff)
@@ -264,8 +264,12 @@ impl ThreeAtomConstraint {
 }
 
 impl CardinalityConstraint {
-    pub fn new(atoms: Vec<Atom>, comparison: Comparison, degree: i64) -> Result<Self, String> {
-        if atoms
+    pub fn new(
+        literals: Vec<Literal>,
+        comparison: Comparison,
+        degree: i64,
+    ) -> Result<Self, String> {
+        if literals
             .iter()
             .find(|a| !(a.coeff == 1 || a.coeff == -1))
             .is_some()
@@ -275,7 +279,7 @@ impl CardinalityConstraint {
             );
         }
         let c = Self {
-            atoms,
+            literals,
             comparison,
             degree,
             amount_unsat: OnceCell::new(),
@@ -287,7 +291,7 @@ impl CardinalityConstraint {
     }
 
     fn lowest_rhs_assignment(&self) -> i32 {
-        self.atoms()
+        self.literals()
             .iter()
             .map(|a| a.coeff)
             .filter(|coeff| *coeff < 0)
@@ -296,8 +300,8 @@ impl CardinalityConstraint {
 }
 
 impl Constraint for CardinalityConstraint {
-    fn atoms(&self) -> &[Atom] {
-        &self.atoms
+    fn literals(&self) -> &[Literal] {
+        &self.literals
     }
 
     fn comparison(&self) -> &Comparison {
@@ -318,7 +322,7 @@ impl CostraintWithUnsatAssignments for CardinalityConstraint {
     fn amount_unsat_assignments(&self) -> u128 {
         *self.amount_unsat.get_or_init(|| {
             let max_combinations_to_set_true = self.degree() - self.lowest_rhs_assignment() as i64;
-            let amount_vars = self.atoms().len() as u64;
+            let amount_vars = self.literals().len() as u64;
 
             (0..max_combinations_to_set_true as u64)
                 .fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
@@ -340,74 +344,90 @@ impl Display for CardinalityConstraint {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::fuzzer::domain::AtomIdent;
+    use crate::fuzzer::domain::LiteralIdent;
     use std::collections::HashSet;
     #[test]
     fn amount_unsat() {
-        let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
-        let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 4);
-        assert_eq!(c.unsat_count_three_atoms(), 4);
+        let literals = [Literal::new(1, 5), Literal::new(3, -1), Literal::new(5, 3)];
+        let c = ThreeLiteralConstraint::new(literals, Comparison::GrEqual, 4);
+        assert_eq!(c.unsat_count_three_literals(), 4);
 
-        let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
-        let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
-        assert_eq!(c.unsat_count_three_atoms(), 1);
+        let literals = [Literal::new(1, 5), Literal::new(3, -1), Literal::new(5, 3)];
+        let c = ThreeLiteralConstraint::new(literals, Comparison::GrEqual, 0);
+        assert_eq!(c.unsat_count_three_literals(), 1);
 
-        let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
-        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 2).expect("Test method");
+        let literals = vec![Literal::new(1, 1), Literal::new(2, 1), Literal::new(3, 1)];
+        let c = CardinalityConstraint::new(literals, Comparison::GrEqual, 2).expect("Test method");
         assert_eq!(c.amount_unsat_assignments(), 4);
 
-        let atoms = vec![Atom::new(1, 1), Atom::new(2, 1), Atom::new(3, 1)];
-        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 1).expect("Test method");
+        let literals = vec![Literal::new(1, 1), Literal::new(2, 1), Literal::new(3, 1)];
+        let c = CardinalityConstraint::new(literals, Comparison::GrEqual, 1).expect("Test method");
         assert_eq!(c.amount_unsat_assignments(), 1)
     }
 
     #[test]
     fn amount_unsat_with_negative_coefficeints() {
-        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
-        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 0).expect("Test method");
+        let literals = vec![
+            Literal::new(1, -1),
+            Literal::new(2, -1),
+            Literal::new(3, -1),
+        ];
+        let c = CardinalityConstraint::new(literals, Comparison::GrEqual, 0).expect("Test method");
         assert_eq!(c.amount_unsat_assignments(), 7);
 
-        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
-        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, -2).expect("Test method");
+        let literals = vec![
+            Literal::new(1, -1),
+            Literal::new(2, -1),
+            Literal::new(3, -1),
+        ];
+        let c = CardinalityConstraint::new(literals, Comparison::GrEqual, -2).expect("Test method");
         assert_eq!(c.amount_unsat_assignments(), 1);
 
-        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
-        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, -3).expect("Test method");
+        let literals = vec![
+            Literal::new(1, -1),
+            Literal::new(2, -1),
+            Literal::new(3, -1),
+        ];
+        let c = CardinalityConstraint::new(literals, Comparison::GrEqual, -3).expect("Test method");
         assert_eq!(c.amount_unsat_assignments(), 0)
     }
 
     #[test]
     fn display_constraint() {
-        let atoms: Vec<Atom> = (1..=3).map(|i| Atom::new(i as u32, i * 10)).collect();
+        let literals: Vec<Literal> = (1..=3).map(|i| Literal::new(i as u32, i * 10)).collect();
 
         let comp = Comparison::GrEqual;
         let res = 15;
 
-        let constr = ArbitraryLengthConstraint::new(atoms, comp, res);
+        let constr = ArbitraryLengthConstraint::new(literals, comp, res);
 
         assert_eq!(constr.to_string(), "10 x1 20 x2 30 x3 >= 15;")
     }
 
     #[test]
     fn verify_constraint() {
-        let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
-        let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
-        let true_vars = HashSet::from([AtomIdent::new(1)]).into();
+        let literals = [Literal::new(1, 5), Literal::new(3, -1), Literal::new(5, 3)];
+        let c = ThreeLiteralConstraint::new(literals, Comparison::GrEqual, 0);
+        let true_vars = HashSet::from([LiteralIdent::new(1)]).into();
         assert!(c.verify(&true_vars));
-        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]).into();
+        let true_vars = HashSet::from([LiteralIdent::new(1), LiteralIdent::new(3)]).into();
         assert!(c.verify(&true_vars));
-        let true_vars = HashSet::from([AtomIdent::new(3)]).into();
+        let true_vars = HashSet::from([LiteralIdent::new(3)]).into();
         assert!(!c.verify(&true_vars));
 
-        let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
-        let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 0).expect("Test method");
+        let literals = vec![
+            Literal::new(1, -1),
+            Literal::new(2, -1),
+            Literal::new(3, -1),
+        ];
+        let c = CardinalityConstraint::new(literals, Comparison::GrEqual, 0).expect("Test method");
         let true_vars = HashSet::new().into();
         assert!(c.verify(&true_vars));
 
-        let true_vars = HashSet::from([AtomIdent::new(1)]).into();
+        let true_vars = HashSet::from([LiteralIdent::new(1)]).into();
         assert!(!c.verify(&true_vars));
 
-        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]).into();
+        let true_vars = HashSet::from([LiteralIdent::new(1), LiteralIdent::new(3)]).into();
         assert!(!c.verify(&true_vars));
     }
     #[test]
