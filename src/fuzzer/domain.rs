@@ -1,5 +1,9 @@
 /// Basic building blocks for generating pseudo boolean constraints
-use std::fmt::{Display, Write};
+use std::{
+    collections::HashSet,
+    fmt::{Display, Write},
+    ops::Deref,
+};
 
 /// Wrapper type for the identifier of an atom.
 ///
@@ -8,8 +12,25 @@ use std::fmt::{Display, Write};
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct AtomIdent(u32);
 
-#[derive(PartialOrd, PartialEq, Eq)]
+#[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
 pub struct MinObjectiveValue(i32);
+
+#[derive(Debug, Clone)]
+pub struct SolutionModel(HashSet<AtomIdent>);
+
+impl From<HashSet<AtomIdent>> for SolutionModel {
+    fn from(value: HashSet<AtomIdent>) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for SolutionModel {
+    type Target = HashSet<AtomIdent>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl From<i32> for MinObjectiveValue {
     fn from(value: i32) -> Self {

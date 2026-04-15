@@ -16,6 +16,7 @@ use crate::fuzzer::constraint::ConstraintKind;
 use crate::fuzzer::domain::AtomIdent;
 use crate::fuzzer::domain::MinFunction;
 use crate::fuzzer::domain::MinObjectiveValue;
+use crate::fuzzer::domain::SolutionModel;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, clap::ValueEnum, Default)]
 pub enum PBKind {
@@ -145,7 +146,7 @@ impl PBGrammar {
         }
     }
 
-    pub fn verify_solution(&self, true_vars: &HashSet<AtomIdent>) -> bool {
+    pub fn verify_solution(&self, true_vars: &SolutionModel) -> bool {
         self.constraints.iter().all(|c| c.verify(true_vars))
     }
 

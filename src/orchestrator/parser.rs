@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     fuzzer::domain::AtomIdent,
     orchestrator::external_program::{
-        ErrorKind, ExternalProgramError, PBOValues, PBSValues, SolverResultPBO, SolverResultPBS,
+        ErrorKind, ExternalProgramError, SolverSolution, SolverStatus,
     },
 };
 
@@ -47,39 +47,39 @@ pub trait Parser: Sync {
         ExternalProgramError::new(self.name().into(), message, ErrorKind::OutputParsingError)
     }
 
-    fn parse_pbs(&self, output: Output) -> Result<SolverResultPBS, ExternalProgramError> {
+    fn parse_pbs(&self, output: Output) -> Result<SolverStatus, ExternalProgramError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
-                StatusKind::Sat => Ok(SolverResultPBS::Sat {
+                StatusKind::Sat => Ok(SolverStatus::Sat {
                     conflicts: result.conflicts.unwrap_or(0),
-                    solution: PBSValues::new(result.solution),
+                    solution: SolverSolution::PBS(result.solution.into()),
                 }),
-                StatusKind::Unsat => Ok(SolverResultPBS::Unsat {
+                StatusKind::Unsat => Ok(SolverStatus::Unsat {
                     conflicts: result.conflicts.unwrap_or(0),
                 }),
-                StatusKind::TimeLimit => Ok(SolverResultPBS::TimeLimit),
-                StatusKind::Unknown => Ok(SolverResultPBS::Unknown),
+                StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
+                StatusKind::Unknown => Ok(SolverStatus::Unknown),
             },
             None => Err(self.error("Status wasn't parsed".to_string())),
         }
     }
-    fn parse_pbo(&self, output: Output) -> Result<SolverResultPBO, ExternalProgramError> {
+    fn parse_pbo(&self, output: Output) -> Result<SolverStatus, ExternalProgramError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
                 StatusKind::Sat => match result.objective {
-                    Some(o) => Ok(SolverResultPBO::Sat {
+                    Some(o) => Ok(SolverStatus::Sat {
                         conflicts: result.conflicts.unwrap_or(0),
-                        solution: PBOValues::new(PBSValues::new(result.solution), o.into()),
+                        solution: SolverSolution::PBO(result.solution.into(), o.into()),
                     }),
-                    None => Ok(SolverResultPBO::TimeLimit),
+                    None => Ok(SolverStatus::TimeLimit),
                 },
-                StatusKind::Unsat => Ok(SolverResultPBO::Unsat {
+                StatusKind::Unsat => Ok(SolverStatus::Unsat {
                     conflicts: result.conflicts.unwrap_or(0),
                 }),
-                StatusKind::TimeLimit => Ok(SolverResultPBO::TimeLimit),
-                StatusKind::Unknown => Ok(SolverResultPBO::Unknown),
+                StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
+                StatusKind::Unknown => Ok(SolverStatus::Unknown),
             },
             None => Err(self.error("Status wasn't parsed".to_string())),
         }

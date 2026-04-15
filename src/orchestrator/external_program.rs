@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     fmt::Display,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -9,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     fuzzer::{
-        domain::{AtomIdent, MinObjectiveValue},
+        domain::{MinObjectiveValue, SolutionModel},
         grammar::PBGrammar,
     },
     orchestrator::{
@@ -71,98 +70,47 @@ impl ExternalProgram {
     }
 }
 
-/// Parsing Output and extracting stuff relevant for PBS analysis
-pub trait PBSProcessor {
-    /// This method parses the output and extracts all information needed for PBS validation
-    fn extract_result_from_output(
-        &self,
-        output: Output,
-    ) -> Result<SolverResultPBS, ExternalProgramError>;
+#[derive(Debug, Clone)]
+pub enum SolverSolution {
+    PBS(SolutionModel),
+    PBO(SolutionModel, MinObjectiveValue),
 }
 
-/// Parsing Output and extracting stuff relevant for BPO analysis
-pub trait PBOProcessor {
-    fn extract_result_from_output(
-        &self,
-        output: Output,
-    ) -> Result<SolverResultPBO, ExternalProgramError>;
-}
-
-pub struct PBSValues {
-    true_vars: HashSet<AtomIdent>,
-}
-
-impl SatSolutionVerifyer for PBSValues {
-    fn verify_model(&self, grammar: &PBGrammar) -> bool {
-        grammar.verify_solution(&self.true_vars)
-    }
-
-    fn has_same_min_objective(&self, _: &Self) -> bool {
-        // pbs does not track min objective
-        true
-    }
-}
-
-impl PBSValues {
-    pub fn new(true_vars: HashSet<AtomIdent>) -> Self {
-        Self { true_vars }
-    }
-
-    pub fn get_true_model(&self) -> &HashSet<AtomIdent> {
-        &self.true_vars
-    }
-}
-
-pub struct PBOValues {
-    pbs_values: PBSValues,
-    min_objective_value: MinObjectiveValue,
-}
-
-impl SatSolutionVerifyer for PBOValues {
-    fn verify_model(&self, grammar: &PBGrammar) -> bool {
-        self.pbs_values.verify_model(grammar)
-            && grammar.verify_min_constraint(&self.pbs_values.true_vars, &self.min_objective_value)
-    }
-
-    fn has_same_min_objective(&self, other: &Self) -> bool {
-        self.min_objective_value == other.min_objective_value
-    }
-}
-impl PBOValues {
-    pub fn new(pbs_values: PBSValues, min_objective_value: MinObjectiveValue) -> Self {
-        Self {
-            pbs_values,
-            min_objective_value,
+impl SolverSolution {
+    fn get_model(&self) -> &SolutionModel {
+        match self {
+            SolverSolution::PBS(solution_model) => solution_model,
+            SolverSolution::PBO(solution_model, _) => solution_model,
         }
     }
 
-    pub fn get_true_model(&self) -> &HashSet<AtomIdent> {
-        &self.pbs_values.true_vars
-    }
-
-    pub fn get_min_objective_values(&self) -> &MinObjectiveValue {
-        &self.min_objective_value
+    fn has_same_min_objective(&self, other: &SolverSolution) -> bool {
+        match (self, other) {
+            (SolverSolution::PBS(_), SolverSolution::PBS(_)) => true,
+            (SolverSolution::PBO(_, o1), SolverSolution::PBO(_, o2)) => o1 == o2,
+            _ => unreachable!(
+                "PBS should not be compared to PBO values: {:#?}, {:#?}",
+                self, other
+            ),
+        }
     }
 }
-
-pub trait SatSolutionVerifyer {
-    fn verify_model(&self, grammar: &PBGrammar) -> bool;
-    fn has_same_min_objective(&self, other: &Self) -> bool;
-}
-
-pub type SolverResultPBS = SolverStatus<PBSValues>;
-pub type SolverResultPBO = SolverStatus<PBOValues>;
 
 #[derive(Debug, Clone)]
-pub enum SolverStatus<M> {
-    Sat { conflicts: u32, solution: M },
-    Unsat { conflicts: u32 },
+pub enum SolverStatus {
+    Sat {
+        conflicts: u32,
+        solution: SolverSolution,
+    },
+    Unsat {
+        conflicts: u32,
+    },
     TimeLimit,
     Unknown,
 }
 
-impl<M: SatSolutionVerifyer> SolverStatus<M> {
-    pub fn compare_status(&self, other: &SolverStatus<M>, grammar: &PBGrammar) -> IterationOutcome {
+impl SolverStatus {
+    pub fn compare_status(&self, other: &SolverStatus, grammar: &PBGrammar) -> IterationOutcome {
         match (self, other) {
             (
                 SolverStatus::Sat {
@@ -170,18 +118,18 @@ impl<M: SatSolutionVerifyer> SolverStatus<M> {
                     solution: s1,
                 },
                 SolverStatus::Sat {
-                    // Currently we don't track conflicts for scip
+                    // TODO: Currently we don't track conflicts for scip
                     conflicts: _,
                     solution: s2,
                 },
             ) => {
-                let v1 = s1.verify_model(grammar);
+                let v1 = grammar.verify_solution(s1.get_model());
                 if !v1 {
                     return IterationOutcome::Bug {
                         reason: BugReason::InvalidSolution,
                     };
                 }
-                let v2 = s2.verify_model(grammar);
+                let v2 = grammar.verify_solution(s2.get_model());
                 if !v2 {
                     return IterationOutcome::Bug {
                         reason: BugReason::InvalidSolution,

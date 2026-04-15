@@ -1,8 +1,7 @@
 use crate::fuzzer::domain::Atom;
-use crate::fuzzer::domain::AtomIdent;
 use crate::fuzzer::domain::Comparison;
+use crate::fuzzer::domain::SolutionModel;
 use std::cell::OnceCell;
-use std::collections::HashSet;
 use std::fmt::Display;
 
 /// Constraint trait for different types of constraints in a PBS/PBO grammar.
@@ -32,7 +31,7 @@ pub trait Constraint: Display + Send {
     /// Checks if the constraint is satisfied for a given set of true variables in a grammar
     ///
     /// This can be used in order to verify the results of a solver
-    fn verify(&self, true_vars: &HashSet<AtomIdent>) -> bool {
+    fn verify(&self, true_vars: &SolutionModel) -> bool {
         self.satisfied(
             self.atoms()
                 .iter()
@@ -341,6 +340,8 @@ impl Display for CardinalityConstraint {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::fuzzer::domain::AtomIdent;
+    use std::collections::HashSet;
     #[test]
     fn amount_unsat() {
         let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
@@ -391,22 +392,22 @@ mod test {
     fn verify_constraint() {
         let atoms = [Atom::new(1, 5), Atom::new(3, -1), Atom::new(5, 3)];
         let c = ThreeAtomConstraint::new(atoms, Comparison::GrEqual, 0);
-        let true_vars = HashSet::from([AtomIdent::new(1)]);
+        let true_vars = HashSet::from([AtomIdent::new(1)]).into();
         assert!(c.verify(&true_vars));
-        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]);
+        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]).into();
         assert!(c.verify(&true_vars));
-        let true_vars = HashSet::from([AtomIdent::new(3)]);
+        let true_vars = HashSet::from([AtomIdent::new(3)]).into();
         assert!(!c.verify(&true_vars));
 
         let atoms = vec![Atom::new(1, -1), Atom::new(2, -1), Atom::new(3, -1)];
         let c = CardinalityConstraint::new(atoms, Comparison::GrEqual, 0).expect("Test method");
-        let true_vars = HashSet::new();
+        let true_vars = HashSet::new().into();
         assert!(c.verify(&true_vars));
 
-        let true_vars = HashSet::from([AtomIdent::new(1)]);
+        let true_vars = HashSet::from([AtomIdent::new(1)]).into();
         assert!(!c.verify(&true_vars));
 
-        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]);
+        let true_vars = HashSet::from([AtomIdent::new(1), AtomIdent::new(3)]).into();
         assert!(!c.verify(&true_vars));
     }
     #[test]
