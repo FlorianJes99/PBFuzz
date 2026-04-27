@@ -4,7 +4,7 @@ use std::{
     process::{Command, Output},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{
     fuzzer::{
@@ -16,17 +16,19 @@ use crate::{
         folders::{
             BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
         },
+        modes::proof_checking_mode::check,
         parser::{Parser, ParserKind},
         scip_parser::ScipParser,
     },
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct ExternalProgramSer {
     binary: PathBuf,
     args: Vec<String>,
     name: String,
     parser_kind: ParserKind,
+    proof_arg: Option<String>,
 }
 
 impl ExternalProgramSer {
@@ -48,6 +50,7 @@ pub struct ExternalProgram {
     args: Vec<String>,
     name: String,
     parser: Box<dyn Parser>,
+    proof_arg: Option<String>,
 }
 
 impl From<ExternalProgramSer> for ExternalProgram {
@@ -57,11 +60,39 @@ impl From<ExternalProgramSer> for ExternalProgram {
             binary: value.binary,
             args: value.args,
             name: value.name,
+            proof_arg: value.proof_arg,
         }
     }
 }
 
 impl ExternalProgram {
+    pub fn run_with_proof(
+        &self,
+        file_path_pb: &Path,
+        file_path_proof: &Path,
+    ) -> Result<Output, ExternalProgramError> {
+        let mut command = Command::new(self.binary.as_os_str());
+        let proof_arg = self.proof_arg.as_ref().ok_or_else(|| {
+            ExternalProgramError::new(
+                self.get_name().to_string(),
+                "No argument provided to generate a proof".to_string(),
+                ErrorKind::MissingProofLoggingArgument,
+            )
+        })?;
+        command.arg(format!("{proof_arg}{}", file_path_proof.display()));
+
+        for arg in &self.args {
+            command.arg(arg);
+        }
+
+        command.arg(file_path_pb).output().map_err(|e| {
+            ExternalProgramError::new(
+                self.get_name().to_string(),
+                e.to_string(),
+                ErrorKind::ProgramExecutionFailed,
+            )
+        })
+    }
     pub fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
@@ -99,13 +130,15 @@ pub enum SolverSolution {
 }
 
 impl SolverSolution {
-    fn get_model(&self) -> &SolutionModel {
+    fn is_valid(&self, grammar: &PBGrammar) -> bool {
         match self {
-            SolverSolution::PBS(solution_model) => solution_model,
-            SolverSolution::PBO(solution_model, _) => solution_model,
+            SolverSolution::PBS(solution_model) => grammar.verify_solution(solution_model),
+            SolverSolution::PBO(solution_model, min_objective_value) => {
+                grammar.verify_solution(solution_model)
+                    && grammar.verify_min_constraint(solution_model, min_objective_value)
+            }
         }
     }
-
     fn has_same_min_objective(&self, other: &SolverSolution) -> bool {
         match (self, other) {
             (SolverSolution::PBS(_), SolverSolution::PBS(_)) => true,
@@ -132,24 +165,43 @@ pub enum SolverStatus {
 }
 
 impl SolverStatus {
-    pub fn verify(&self, grammar: &PBGrammar) -> bool {
-        if let SolverStatus::Sat {
-            conflicts: _,
-            solution: s,
-        } = self
-        {
-            match s {
-                SolverSolution::PBS(solution_model) => grammar.verify_solution(solution_model),
-                SolverSolution::PBO(solution_model, min_objective_value) => {
-                    grammar.verify_solution(solution_model)
-                        && grammar.verify_min_constraint(solution_model, min_objective_value)
+    pub fn verify_with_proof_checking(
+        &self,
+        grammar: &PBGrammar,
+        formula: &Path,
+        derivation: &Path,
+    ) -> IterationOutcome {
+        match self {
+            SolverStatus::Sat {
+                conflicts,
+                solution,
+            } => {
+                if !solution.is_valid(grammar) {
+                    return IterationOutcome::Bug {
+                        reason: BugReason::InvalidSolution,
+                    };
+                }
+                if !check(formula, derivation) {
+                    return IterationOutcome::Bug {
+                        reason: BugReason::ProofCheckerFailed,
+                    };
+                }
+                IterationOutcome::Sat {
+                    conflicts: *conflicts,
                 }
             }
-        } else {
-            true
+            SolverStatus::Unsat { conflicts } => IterationOutcome::Unsat {
+                conflicts: *conflicts,
+            },
+            SolverStatus::TimeLimit => IterationOutcome::TimeLimt,
+            SolverStatus::Unknown => IterationOutcome::Unknown,
         }
     }
-    pub fn compare_status(&self, other: &SolverStatus, grammar: &PBGrammar) -> IterationOutcome {
+    pub fn verify_and_compare_status(
+        &self,
+        other: &SolverStatus,
+        grammar: &PBGrammar,
+    ) -> IterationOutcome {
         match (self, other) {
             (
                 SolverStatus::Sat {
@@ -162,13 +214,13 @@ impl SolverStatus {
                     solution: s2,
                 },
             ) => {
-                let v1 = grammar.verify_solution(s1.get_model());
+                let v1 = s1.is_valid(grammar);
                 if !v1 {
                     return IterationOutcome::Bug {
                         reason: BugReason::InvalidSolution,
                     };
                 }
-                let v2 = grammar.verify_solution(s2.get_model());
+                let v2 = s2.is_valid(grammar);
                 if !v2 {
                     return IterationOutcome::Bug {
                         reason: BugReason::InvalidSolution,
@@ -246,6 +298,7 @@ pub enum BugReason {
     InvalidSolution,
     DifferentObjectives,
     OutputStatusDiffers,
+    ProofCheckerFailed,
 }
 
 impl Display for BugReason {
@@ -257,6 +310,7 @@ impl Display for BugReason {
                 BugReason::InvalidSolution => "Invalid solution",
                 BugReason::DifferentObjectives => "Different objectives founds",
                 BugReason::OutputStatusDiffers => "Output status differs",
+                BugReason::ProofCheckerFailed => "Proof Checker disagreed with solver solution",
             }
         )
     }
@@ -266,6 +320,7 @@ impl Display for BugReason {
 pub enum ErrorKind {
     ProgramExecutionFailed,
     OutputParsingError,
+    MissingProofLoggingArgument,
 }
 
 #[derive(Debug)]
@@ -303,6 +358,8 @@ impl Display for ErrorKind {
             match self {
                 ErrorKind::ProgramExecutionFailed => "Program Execution Error",
                 ErrorKind::OutputParsingError => "Output Parsing Error",
+                ErrorKind::MissingProofLoggingArgument =>
+                    "Proof logging not supplied in program configuration",
             }
         )
     }

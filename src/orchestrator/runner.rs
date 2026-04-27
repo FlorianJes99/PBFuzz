@@ -281,7 +281,9 @@ fn work_iteration(
     let start_worker = Instant::now();
     let seed = get_seed();
     let worker_thread = current_thread_index().unwrap_or(1);
-    let output_file = fuzzer_output_dir.join(format!("{worker_thread}_test_{seed}.opb"));
+    let file_name = format!("{worker_thread}_test_{seed}");
+    let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
+    let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
     debug!("Running Fuzzer with seed {seed}...");
     let grammar = PBSGenerator::create_grammar(seed, settings);
     let duration_write_to_file = File::create(&output_file)
@@ -310,7 +312,7 @@ fn work_iteration(
     let res_program1 = command1.parse(output_bin1, &pb_kind);
     let res_program2 = command2.parse(output_bin2, &pb_kind);
     let outcome = match (res_program1, res_program2) {
-        (Ok(status1), Ok(status2)) => status1.compare_status(&status2, &grammar),
+        (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(&status2, &grammar),
         (Err(err), _) => IterationOutcome::Error { error: err },
         (_, Err(err)) => IterationOutcome::Error { error: err },
     };
@@ -327,7 +329,6 @@ fn work_iteration(
     Ok(WorkResult {
         start_worker,
         pb_file: output_file,
-
         outcome,
         record: comparison_record,
     })
