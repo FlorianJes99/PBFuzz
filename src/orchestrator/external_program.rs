@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     fuzzer::{
         domain::{MinObjectiveValue, SolutionModel},
-        grammar::PBGrammar,
+        grammar::{PBGrammar, PBKind},
     },
     orchestrator::{
         default_parser::DefaultParser,
@@ -22,35 +22,46 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize)]
-pub struct ExternalProgram {
+pub struct ExternalProgramSer {
     binary: PathBuf,
     args: Vec<String>,
     name: String,
     parser_kind: ParserKind,
 }
 
-impl ExternalProgram {
-    pub fn new(binary: PathBuf, args: Vec<String>, name: String, kind: ParserKind) -> Self {
-        Self {
-            binary,
-            args,
-            name,
-            parser_kind: kind,
-        }
-    }
-
-    pub fn load_from_file(path: PathBuf) -> std::io::Result<Self> {
+impl ExternalProgramSer {
+    pub fn load_from_file(path: &Path) -> std::io::Result<Self> {
         let s = std::fs::read_to_string(path)?;
         toml::from_str(&s).map_err(std::io::Error::other)
     }
 
-    pub fn get_parser(&self) -> Box<dyn Parser> {
+    fn create_parser(&self) -> Box<dyn Parser> {
         match self.parser_kind {
             ParserKind::Default => Box::new(DefaultParser::new(self.name.clone())),
             ParserKind::Scip => Box::new(ScipParser::new(self.name.clone())),
         }
     }
+}
 
+pub struct ExternalProgram {
+    binary: PathBuf,
+    args: Vec<String>,
+    name: String,
+    parser: Box<dyn Parser>,
+}
+
+impl From<ExternalProgramSer> for ExternalProgram {
+    fn from(value: ExternalProgramSer) -> Self {
+        ExternalProgram {
+            parser: value.create_parser(),
+            binary: value.binary,
+            args: value.args,
+            name: value.name,
+        }
+    }
+}
+
+impl ExternalProgram {
     pub fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
@@ -63,6 +74,17 @@ impl ExternalProgram {
                 ErrorKind::ProgramExecutionFailed,
             )
         })
+    }
+
+    pub fn parse(
+        &self,
+        output: Output,
+        pb_kind: &PBKind,
+    ) -> Result<SolverStatus, ExternalProgramError> {
+        match pb_kind {
+            PBKind::PBS => self.parser.parse_pbs(&output),
+            PBKind::PBO => self.parser.parse_pbo(&output),
+        }
     }
 
     pub fn get_name(&self) -> &str {
@@ -110,6 +132,23 @@ pub enum SolverStatus {
 }
 
 impl SolverStatus {
+    pub fn verify(&self, grammar: &PBGrammar) -> bool {
+        if let SolverStatus::Sat {
+            conflicts: _,
+            solution: s,
+        } = self
+        {
+            match s {
+                SolverSolution::PBS(solution_model) => grammar.verify_solution(solution_model),
+                SolverSolution::PBO(solution_model, min_objective_value) => {
+                    grammar.verify_solution(solution_model)
+                        && grammar.verify_min_constraint(solution_model, min_objective_value)
+                }
+            }
+        } else {
+            true
+        }
+    }
     pub fn compare_status(&self, other: &SolverStatus, grammar: &PBGrammar) -> IterationOutcome {
         match (self, other) {
             (
@@ -235,6 +274,8 @@ pub struct ExternalProgramError {
     error_message: String,
     error_kind: ErrorKind,
 }
+
+impl std::error::Error for ExternalProgramError {}
 
 impl ExternalProgramError {
     pub fn new(program_name: String, error_message: String, error_kind: ErrorKind) -> Self {

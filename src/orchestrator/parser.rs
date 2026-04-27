@@ -24,7 +24,7 @@ pub trait Parser: Sync {
     fn parse_line(&self, line: &str) -> StatusLine;
 
     /// Folds all the collected information into an aggregated result
-    fn scan(&self, output: Output) -> Result<ScannedResult, ExternalProgramError> {
+    fn scan(&self, output: &Output) -> Result<ScannedResult, ExternalProgramError> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         stdout
             .lines()
@@ -47,7 +47,7 @@ pub trait Parser: Sync {
         ExternalProgramError::new(self.name().into(), message, ErrorKind::OutputParsingError)
     }
 
-    fn parse_pbs(&self, output: Output) -> Result<SolverStatus, ExternalProgramError> {
+    fn parse_pbs(&self, output: &Output) -> Result<SolverStatus, ExternalProgramError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
@@ -64,7 +64,7 @@ pub trait Parser: Sync {
             None => Err(self.error("Status wasn't parsed".to_string())),
         }
     }
-    fn parse_pbo(&self, output: Output) -> Result<SolverStatus, ExternalProgramError> {
+    fn parse_pbo(&self, output: &Output) -> Result<SolverStatus, ExternalProgramError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {

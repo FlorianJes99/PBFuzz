@@ -48,8 +48,10 @@ pub struct OrchestratorArgs {
     pub(crate) program_config1: PathBuf,
 
     /// Specify the config file in toml format for program 2
+    ///
+    /// If nothing is specified orchestrator runs in proof mode, checking proofs generated for program 1
     #[arg(long)]
-    pub(crate) program_config2: PathBuf,
+    pub(crate) program_config2: Option<PathBuf>,
 
     /// Set to true if `valid` results should be saved as well (default: false)
     ///

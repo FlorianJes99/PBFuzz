@@ -1,12 +1,12 @@
 use crate::{
     fuzzer::{
-        grammar::{PBGrammar, PBKind},
+        grammar::PBGrammar,
         helpers::{RunningAverage, RunningAverageDuration, get_hms_parts, move_file},
         pbs_generator::GeneratorSettingsBuilder,
     },
     orchestrator::{
         csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        external_program::{ExternalProgram, IterationOutcome},
+        external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome},
         folders::{DATA_FOLDER, prepare_output_folder},
         orchestrator_args::OrchestratorArgs,
     },
@@ -76,8 +76,13 @@ pub fn run_orchestrator(
         "Using {} threads for computing fuzzing runs in parallel",
         rayon::current_num_threads()
     );
-    let command1 = ExternalProgram::load_from_file(args.program_config1)?;
-    let command2 = ExternalProgram::load_from_file(args.program_config2)?;
+    let command1 = ExternalProgramSer::load_from_file(&args.program_config1)?.into();
+    let command2 = ExternalProgramSer::load_from_file(
+        &args
+            .program_config2
+            .expect("Proof mode not implemented yet"),
+    )?
+    .into();
     let mut generator_settings_builder = match args.settings_file {
         Some(file) => GeneratorSettingsBuilder::load_from_file(&file)?,
         None => GeneratorSettingsBuilder::default(),
@@ -199,28 +204,16 @@ impl Orchestrator {
         let ResultWithDuration(output_bin1, duration_bin1) = work_result.output_bin1;
         let ResultWithDuration(output_bin2, duration_bin2) = work_result.output_bin2;
         let start_output_extraction = Instant::now();
-        let outcome = match self.generator_settings.get_problem_kind() {
-            PBKind::PBS => {
-                let res_program1 = self.command1.get_parser().parse_pbs(output_bin1);
-                let res_program2 = self.command2.get_parser().parse_pbs(output_bin2);
-                match (res_program1, res_program2) {
-                    (Ok(status1), Ok(status2)) => {
-                        &status1.compare_status(&status2, &work_result.grammar)
-                    }
-                    (Err(err), _) => &IterationOutcome::Error { error: err },
-                    (_, Err(err)) => &IterationOutcome::Error { error: err },
+        let pb_kind = &self.generator_settings.get_problem_kind();
+        let outcome = {
+            let res_program1 = self.command1.parse(output_bin1, pb_kind);
+            let res_program2 = self.command2.parse(output_bin2, pb_kind);
+            match (res_program1, res_program2) {
+                (Ok(status1), Ok(status2)) => {
+                    &status1.compare_status(&status2, &work_result.grammar)
                 }
-            }
-            PBKind::PBO => {
-                let res_program1 = self.command1.get_parser().parse_pbo(output_bin1);
-                let res_program2 = self.command2.get_parser().parse_pbo(output_bin2);
-                match (res_program1, res_program2) {
-                    (Ok(status1), Ok(status2)) => {
-                        &status1.compare_status(&status2, &work_result.grammar)
-                    }
-                    (Err(err), _) => &IterationOutcome::Error { error: err },
-                    (_, Err(err)) => &IterationOutcome::Error { error: err },
-                }
+                (Err(err), _) => &IterationOutcome::Error { error: err },
+                (_, Err(err)) => &IterationOutcome::Error { error: err },
             }
         };
         let time_output_extraction = start_output_extraction.elapsed();
