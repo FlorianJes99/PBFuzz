@@ -1,17 +1,17 @@
 use crate::{
     fuzzer::{
-        grammar::PBGrammar,
         helpers::{RunningAverage, RunningAverageDuration, get_hms_parts, move_file},
         pbs_generator::GeneratorSettingsBuilder,
     },
     orchestrator::{
-        csv_data::{IterationRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
+        csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome},
         folders::{DATA_FOLDER, prepare_output_folder},
         orchestrator_args::OrchestratorArgs,
     },
 };
 use rayon::{ThreadPoolBuilder, current_thread_index, prelude::*};
+use std::path::Path;
 use std::{
     error::Error,
     fmt::Display,
@@ -23,7 +23,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use std::{path::Path, process::Output};
 
 use csv::Writer;
 use itertools::Itertools;
@@ -133,7 +132,7 @@ impl Orchestrator {
             .join(format!("{}.csv", ORCHESTRATOR_DATA_FILE_PREFIX,));
         let mut csv_writer = csv::Writer::from_path(csv_file_path)?;
         let mut stats = Stats::new();
-        let (sender, receiver) = channel::<WorkerResult>();
+        let (sender, receiver) = channel::<WorkResult>();
         thread::scope(|s| {
             s.spawn(|| {
                 stop_condition
@@ -187,7 +186,7 @@ impl Orchestrator {
 
     fn process_result(
         &self,
-        work_result: WorkerResult,
+        work_result: WorkResult,
         iteration: u32,
         csv_writer: &mut Writer<File>,
         stats: &mut Stats,
@@ -201,39 +200,23 @@ impl Orchestrator {
             format!("Time elapsed: {}h {}m {}s", h, m, s),
         ].join("\n");
         print_block(&format!("Iteration {iteration}"), body);
-        let ResultWithDuration(output_bin1, duration_bin1) = work_result.output_bin1;
-        let ResultWithDuration(output_bin2, duration_bin2) = work_result.output_bin2;
-        let start_output_extraction = Instant::now();
-        let pb_kind = &self.generator_settings.get_problem_kind();
-        let outcome = {
-            let res_program1 = self.command1.parse(output_bin1, pb_kind);
-            let res_program2 = self.command2.parse(output_bin2, pb_kind);
-            match (res_program1, res_program2) {
-                (Ok(status1), Ok(status2)) => {
-                    &status1.compare_status(&status2, &work_result.grammar)
-                }
-                (Err(err), _) => &IterationOutcome::Error { error: err },
-                (_, Err(err)) => &IterationOutcome::Error { error: err },
-            }
-        };
-        let time_output_extraction = start_output_extraction.elapsed();
-
+        let seed = work_result.record.seed;
+        let outcome = &work_result.outcome;
         if let IterationOutcome::Error { error: err } = outcome {
             error!(
                 "Some error occured in iteration for seed {})!\nError: {}",
-                work_result.seed, err
+                seed, err
             );
         }
         if let IterationOutcome::Bug { reason } = outcome {
             println!("Found bug!\nBug: {}", reason)
         }
-        let ResultWithDuration(output_file, output_generation_duration) =
-            work_result.generated_fuzz_file;
+        let output_file = work_result.pb_file;
         let new_file_location = &self.fuzzer_output_dir.join(format!(
             "{}/{}_{}_{}.opb",
             outcome.get_folder_name(),
             outcome.get_file_name_prefix(),
-            work_result.seed,
+            seed,
             iteration
         ));
         let file_manipulation_result = match outcome {
@@ -251,19 +234,10 @@ impl Orchestrator {
         }
         let duration_iteration_ms = work_result.start_worker.elapsed();
         stats.update(outcome);
-        stats.update_average_fuzzer_output_generation(&output_generation_duration);
         stats.update_iteration_duration(&duration_iteration_ms);
-        let iteration_record = IterationRecord {
-            iteration,
-            result: outcome.get_status_as_string(),
-            duration_iteration_ms: duration_iteration_ms.as_secs_f32() * 1000.0,
-            problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
-            problem_solving_duration_roundingsat_ms: duration_bin1.as_secs_f32() * 1000.0,
-            problem_solving_duration_scip_ms: duration_bin2.as_secs_f32() * 1000.0,
-            problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
-            conflicts: outcome.get_conflicts(),
-            seed: work_result.seed,
-        };
+        let iteration_record = work_result
+            .record
+            .create_iteration_record(iteration, duration_iteration_ms.as_secs_f32() * 1000.0);
         let result = csv_writer.serialize(iteration_record);
         if let Err(err) = result {
             error!("Could not write record into csv\nError: {}", err);
@@ -303,7 +277,7 @@ fn work_iteration(
     settings: GeneratorSettings,
     command1: &ExternalProgram,
     command2: &ExternalProgram,
-) -> Result<WorkerResult, String> {
+) -> Result<WorkResult, String> {
     let start_worker = Instant::now();
     let seed = get_seed();
     let worker_thread = current_thread_index().unwrap_or(1);
@@ -325,34 +299,46 @@ fn work_iteration(
     let start_bin1 = Instant::now();
     let output_bin1 = command1.run(&output_file).map_err(|err| err.to_string())?;
     let time_bin1 = start_bin1.elapsed();
-    let result_output_bin1 = ResultWithDuration(output_bin1, time_bin1);
 
     debug!("Solving generated instance with {}", command2.get_name());
     let start_bin2 = Instant::now();
     let output_bin2 = command2.run(&output_file).map_err(|err| err.to_string())?;
     let time_bin2 = start_bin2.elapsed();
-    let result_output_bin2 = ResultWithDuration(output_bin2, time_bin2);
-    Ok(WorkerResult {
+
+    let start_output_extraction = Instant::now();
+    let pb_kind = settings.get_problem_kind();
+    let res_program1 = command1.parse(output_bin1, &pb_kind);
+    let res_program2 = command2.parse(output_bin2, &pb_kind);
+    let outcome = match (res_program1, res_program2) {
+        (Ok(status1), Ok(status2)) => status1.compare_status(&status2, &grammar),
+        (Err(err), _) => IterationOutcome::Error { error: err },
+        (_, Err(err)) => IterationOutcome::Error { error: err },
+    };
+    let time_output_extraction = start_output_extraction.elapsed();
+    let comparison_record = ComparisonRecord {
+        result: outcome.get_status_as_string(),
+        problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
+        problem_solving_duration_roundingsat_ms: time_bin1.as_secs_f32() * 1000.0,
+        problem_solving_duration_scip_ms: time_bin2.as_secs_f32() * 1000.0,
+        problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
+        conflicts: outcome.get_conflicts(),
         seed,
+    };
+    Ok(WorkResult {
         start_worker,
-        grammar,
-        generated_fuzz_file: ResultWithDuration(output_file, output_generation_duration),
-        output_bin1: result_output_bin1,
-        output_bin2: result_output_bin2,
+        pb_file: output_file,
+
+        outcome,
+        record: comparison_record,
     })
 }
 
-struct WorkerResult {
-    seed: u64,
+struct WorkResult {
     start_worker: Instant,
-    grammar: PBGrammar,
-    generated_fuzz_file: ResultWithDuration<PathBuf>,
-    output_bin1: ResultWithDuration<Output>,
-    output_bin2: ResultWithDuration<Output>,
+    pb_file: PathBuf,
+    outcome: IterationOutcome,
+    record: ComparisonRecord,
 }
-
-/// Data wrapper to provide the duration of the computation alongside the explicit result
-struct ResultWithDuration<T>(T, Duration);
 
 /// Cancel iterations of fuzzing runs
 ///
@@ -411,7 +397,6 @@ struct Stats {
     amount_unsat: u32,
     amount_unknown: u32,
     average_conflicts: RunningAverage,
-    average_problem_generation_time: RunningAverageDuration,
     average_iteration_duration: RunningAverageDuration,
     bugs_found: u32,
     errors: u32,
@@ -426,18 +411,12 @@ impl Stats {
             amount_unsat: 0,
             amount_unknown: 0,
             average_conflicts: RunningAverage::default(),
-            average_problem_generation_time: RunningAverageDuration::default(),
             average_iteration_duration: RunningAverageDuration::default(),
             bugs_found: 0,
             errors: 0,
             timeouts: 0,
             start: Instant::now(),
         }
-    }
-
-    fn update_average_fuzzer_output_generation(&mut self, output_generation_duration: &Duration) {
-        self.average_problem_generation_time
-            .update(output_generation_duration);
     }
 
     fn update_iteration_duration(&mut self, iteration_duration: &Duration) {
@@ -528,14 +507,6 @@ impl Display for Stats {
             f,
             "Average Time per Instance                : {:.3}ms",
             self.average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
-        )?;
-        writeln!(
-            f,
-            "Average time for problem generation      : {:.3}ms",
-            self.average_problem_generation_time
-                .get_average()
-                .as_secs_f32()
-                * 1_000.0
         )?;
         let program_duration = self.start.elapsed();
         let (h, m, s) = get_hms_parts(&program_duration);

@@ -51,7 +51,7 @@ impl ConstraintGenerator {
             let mut c = self.generate_three_literal();
             // Assert we always return a constraint which fulfills max unsat assignments requirement
             while c.amount_unsat_assignments()
-                > self.settings.max_unsat_for_single_constraint.into()
+                > <u32 as Into<u128>>::into(self.settings.max_unsat_for_single_constraint)
             {
                 c = self.generate_three_literal();
             }
@@ -69,7 +69,7 @@ impl ConstraintGenerator {
                 let mut c = self.generate_three_literal();
                 // Assert we always return a constraint which fulfills max unsat assignments requirement
                 while c.amount_unsat_assignments()
-                    > self.settings.max_unsat_for_single_constraint.into()
+                    > <u32 as Into<u128>>::into(self.settings.max_unsat_for_single_constraint)
                 {
                     c = self.generate_three_literal();
                 }
