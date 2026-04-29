@@ -1,4 +1,10 @@
-use std::{fmt::Display, path::Path, time::Duration};
+use std::{
+    fmt::Display,
+    fs::remove_file,
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 /// Wrap a printable Item in a block of equal-signs and a header
 pub fn print_block<T: Display>(heading: &str, item: T) {
@@ -104,6 +110,30 @@ impl RunningAverageDuration {
     pub fn get_average(&self) -> Duration {
         self.average
     }
+}
+
+pub struct MoveFile {
+    from: PathBuf,
+    to: PathBuf,
+}
+
+impl MoveFile {
+    pub fn new(from: PathBuf, to: PathBuf) -> Self {
+        Self { from, to }
+    }
+}
+
+pub fn remove_files(files: &[MoveFile]) -> io::Result<()> {
+    for file in files {
+        remove_file(&file.from)?;
+    }
+    Ok(())
+}
+pub fn move_files(files: &[MoveFile]) -> Result<(), String> {
+    for file in files {
+        move_file(&file.from, &file.to)?;
+    }
+    Ok(())
 }
 
 /// Moves a file from the specified source to a new destination

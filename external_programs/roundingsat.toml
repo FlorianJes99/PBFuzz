@@ -2,3 +2,4 @@ binary = "roundingsat"
 args = ["--print-sol=1", "--time-limit=6"]
 name = "roundingsat"
 parser_kind = "Default"
+proof_arg = "--proof-log="

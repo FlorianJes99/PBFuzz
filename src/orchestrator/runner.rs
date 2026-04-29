@@ -1,11 +1,16 @@
+use crate::fuzzer::helpers::{MoveFile, move_files, remove_files};
+use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
+use crate::orchestrator::external_program::ErrorKind::MissingProofLoggingArgument;
 use crate::{
     fuzzer::{
-        helpers::{RunningAverage, RunningAverageDuration, get_hms_parts, move_file},
+        helpers::{RunningAverage, RunningAverageDuration, get_hms_parts},
         pbs_generator::GeneratorSettingsBuilder,
     },
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome},
+        external_program::{
+            ExternalProgram, ExternalProgramError, ExternalProgramSer, IterationOutcome,
+        },
         folders::{DATA_FOLDER, prepare_output_folder},
         orchestrator_args::OrchestratorArgs,
     },
@@ -75,20 +80,31 @@ pub fn run_orchestrator(
         "Using {} threads for computing fuzzing runs in parallel",
         rayon::current_num_threads()
     );
-    let command1 = ExternalProgramSer::load_from_file(&args.program_config1)?.into();
-    let command2 = ExternalProgramSer::load_from_file(
-        &args
-            .program_config2
-            .expect("Proof mode not implemented yet"),
-    )?
-    .into();
+    let p1 = ExternalProgramSer::load_from_file(&args.program_config1)?.into();
+    let mode = match args.program_config2 {
+        Some(file_p2) => {
+            OrchestrationMode::Comparison(p1, ExternalProgramSer::load_from_file(&file_p2)?.into())
+        }
+        None => {
+            if !p1.supports_proofs() {
+                return Err(ExternalProgramError::new(
+                    p1.get_name().to_string(),
+                    "Provided config for program does not include argument for proof logging"
+                        .to_string(),
+                    MissingProofLoggingArgument,
+                )
+                .into());
+            }
+            OrchestrationMode::ProofChecking(p1)
+        }
+    };
     let mut generator_settings_builder = match args.settings_file {
         Some(file) => GeneratorSettingsBuilder::load_from_file(&file)?,
         None => GeneratorSettingsBuilder::default(),
     };
 
-    if let Some(mode) = args.mode {
-        generator_settings_builder = generator_settings_builder.pb_kind(mode);
+    if let Some(pb_kind) = args.mode {
+        generator_settings_builder = generator_settings_builder.pb_kind(pb_kind);
     }
     let generator_settings = generator_settings_builder.build();
     let stop_condition = StopCondition::new(
@@ -109,10 +125,14 @@ pub fn run_orchestrator(
         generator_settings,
         orchestrator_start: Instant::now(),
         save_all_files: args.save_all_files,
-        command1,
-        command2,
+        mode,
     }
     .run(stop_condition)
+}
+
+enum OrchestrationMode {
+    Comparison(ExternalProgram, ExternalProgram),
+    ProofChecking(ExternalProgram),
 }
 
 struct Orchestrator {
@@ -120,8 +140,7 @@ struct Orchestrator {
     generator_settings: GeneratorSettings,
     save_all_files: bool,
     orchestrator_start: Instant,
-    command1: ExternalProgram,
-    command2: ExternalProgram,
+    mode: OrchestrationMode,
 }
 
 impl Orchestrator {
@@ -142,8 +161,7 @@ impl Orchestrator {
                         match work_iteration(
                             &self.fuzzer_output_dir,
                             self.generator_settings,
-                            &self.command1,
-                            &self.command2,
+                            &self.mode,
                         ) {
                             Ok(work_result) => {
                                 if let Err(e) = sender.send(work_result) {
@@ -200,7 +218,7 @@ impl Orchestrator {
             format!("Time elapsed: {}h {}m {}s", h, m, s),
         ].join("\n");
         print_block(&format!("Iteration {iteration}"), body);
-        let seed = work_result.record.seed;
+        let seed = work_result.record.get_seed();
         let outcome = &work_result.outcome;
         if let IterationOutcome::Error { error: err } = outcome {
             error!(
@@ -211,23 +229,35 @@ impl Orchestrator {
         if let IterationOutcome::Bug { reason } = outcome {
             println!("Found bug!\nBug: {}", reason)
         }
+        let mut files_to_move = vec![];
         let output_file = work_result.pb_file;
-        let new_file_location = &self.fuzzer_output_dir.join(format!(
+        let new_file_location = self.fuzzer_output_dir.join(format!(
             "{}/{}_{}_{}.opb",
             outcome.get_folder_name(),
             outcome.get_file_name_prefix(),
             seed,
             iteration
         ));
+        files_to_move.push(MoveFile::new(output_file, new_file_location));
+        if let Some(proof_file) = work_result.proof_file {
+            let new_file_location_proof = self.fuzzer_output_dir.join(format!(
+                "{}/{}_{}_{}.pbp",
+                outcome.get_folder_name(),
+                outcome.get_file_name_prefix(),
+                seed,
+                iteration
+            ));
+            files_to_move.push(MoveFile::new(proof_file, new_file_location_proof));
+        }
         let file_manipulation_result = match outcome {
             // Only save the file if bug or error or `unknown` occurred
             IterationOutcome::Bug { .. }
             | IterationOutcome::Error { .. }
             | IterationOutcome::TimeLimt
-            | IterationOutcome::Unknown => move_file(&output_file, new_file_location),
-            _ if self.save_all_files => move_file(&output_file, new_file_location),
+            | IterationOutcome::Unknown => move_files(&files_to_move),
+            _ if self.save_all_files => move_files(&files_to_move),
             // Delete the generated fuzzing result if not needed anymore
-            _ => std::fs::remove_file(&output_file).map_err(|e| e.to_string()),
+            _ => remove_files(&files_to_move).map_err(|e| e.to_string()),
         };
         if let Err(err) = file_manipulation_result {
             error!("{err}");
@@ -235,10 +265,11 @@ impl Orchestrator {
         let duration_iteration_ms = work_result.start_worker.elapsed();
         stats.update(outcome);
         stats.update_iteration_duration(&duration_iteration_ms);
-        let iteration_record = work_result
-            .record
-            .create_iteration_record(iteration, duration_iteration_ms.as_secs_f32() * 1000.0);
-        let result = csv_writer.serialize(iteration_record);
+        let result = work_result.record.serialize(
+            iteration,
+            duration_iteration_ms.as_secs_f32() * 1000.0,
+            csv_writer,
+        );
         if let Err(err) = result {
             error!("Could not write record into csv\nError: {}", err);
         }
@@ -275,15 +306,13 @@ fn get_seed() -> u64 {
 fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: GeneratorSettings,
-    command1: &ExternalProgram,
-    command2: &ExternalProgram,
-) -> Result<WorkResult, String> {
+    mode: &OrchestrationMode,
+) -> Result<WorkResult, Box<dyn Error>> {
     let start_worker = Instant::now();
     let seed = get_seed();
     let worker_thread = current_thread_index().unwrap_or(1);
     let file_name = format!("{worker_thread}_test_{seed}");
     let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
-    let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
     debug!("Running Fuzzer with seed {seed}...");
     let grammar = PBSGenerator::create_grammar(seed, settings);
     let duration_write_to_file = File::create(&output_file)
@@ -298,47 +327,84 @@ fn work_iteration(
         (output_generation_duration.as_secs_f32() * 1000.0)
     );
 
-    let start_bin1 = Instant::now();
-    let output_bin1 = command1.run(&output_file).map_err(|err| err.to_string())?;
-    let time_bin1 = start_bin1.elapsed();
-
-    debug!("Solving generated instance with {}", command2.get_name());
-    let start_bin2 = Instant::now();
-    let output_bin2 = command2.run(&output_file).map_err(|err| err.to_string())?;
-    let time_bin2 = start_bin2.elapsed();
-
-    let start_output_extraction = Instant::now();
     let pb_kind = settings.get_problem_kind();
-    let res_program1 = command1.parse(output_bin1, &pb_kind);
-    let res_program2 = command2.parse(output_bin2, &pb_kind);
-    let outcome = match (res_program1, res_program2) {
-        (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(&status2, &grammar),
-        (Err(err), _) => IterationOutcome::Error { error: err },
-        (_, Err(err)) => IterationOutcome::Error { error: err },
-    };
-    let time_output_extraction = start_output_extraction.elapsed();
-    let comparison_record = ComparisonRecord {
-        result: outcome.get_status_as_string(),
-        problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
-        problem_solving_duration_roundingsat_ms: time_bin1.as_secs_f32() * 1000.0,
-        problem_solving_duration_scip_ms: time_bin2.as_secs_f32() * 1000.0,
-        problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
-        conflicts: outcome.get_conflicts(),
-        seed,
-    };
-    Ok(WorkResult {
-        start_worker,
-        pb_file: output_file,
-        outcome,
-        record: comparison_record,
-    })
+    match mode {
+        OrchestrationMode::Comparison(p1, p2) => {
+            let start_bin1 = Instant::now();
+            let output_bin1 = p1.run(&output_file)?;
+            let time_bin1 = start_bin1.elapsed();
+
+            debug!("Solving generated instance with {}", p2.get_name());
+            let start_bin2 = Instant::now();
+            let output_bin2 = p2.run(&output_file)?;
+            let time_bin2 = start_bin2.elapsed();
+
+            let start_output_extraction = Instant::now();
+            let res_program1 = p1.parse(output_bin1, &pb_kind);
+            let res_program2 = p2.parse(output_bin2, &pb_kind);
+            let outcome = match (res_program1, res_program2) {
+                (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(&status2, &grammar),
+                (Err(err), _) => IterationOutcome::Error { error: err },
+                (_, Err(err)) => IterationOutcome::Error { error: err },
+            };
+            let time_output_extraction = start_output_extraction.elapsed();
+            let comparison_record = ComparisonRecord {
+                result: outcome.get_status_as_string(),
+                problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
+                problem_solving_duration_roundingsat_ms: time_bin1.as_secs_f32() * 1000.0,
+                problem_solving_duration_scip_ms: time_bin2.as_secs_f32() * 1000.0,
+                problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
+                conflicts: outcome.get_conflicts(),
+                seed,
+            };
+            Ok(WorkResult {
+                start_worker,
+                pb_file: output_file,
+                proof_file: None,
+                outcome,
+                record: CsvRecord::Comparison(comparison_record),
+            })
+        }
+        OrchestrationMode::ProofChecking(p) => {
+            let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
+            let problem_solving_start = Instant::now();
+            let output = p.run_with_proof(&output_file, &proof_file)?;
+            let problem_solving_duration = problem_solving_start.elapsed();
+            let start_output_parsing = Instant::now();
+            let parsing_result = p.parse(output, &pb_kind);
+            let duration_output_parsing = start_output_parsing.elapsed();
+            let proof_checking_start = Instant::now();
+            let outcome = parsing_result.map_or_else(
+                |err| IterationOutcome::Error { error: err },
+                |r| r.verify_with_proof_checking(&grammar, &output_file, &proof_file),
+            );
+            let proof_checking_duration = proof_checking_start.elapsed();
+            let proof_record = ProofRecord {
+                result: outcome.get_status_as_string(),
+                problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
+                problem_solving_duration_program: problem_solving_duration.as_secs_f32() * 1000.0,
+                problem_parsing_duration_ms: duration_output_parsing.as_secs_f32() * 1000.0,
+                problem_checking_duration_ms: proof_checking_duration.as_secs_f32() * 1000.0,
+                conflicts: outcome.get_conflicts(),
+                seed,
+            };
+            Ok(WorkResult {
+                start_worker,
+                pb_file: output_file,
+                proof_file: Some(proof_file),
+                outcome,
+                record: CsvRecord::Proof(proof_record),
+            })
+        }
+    }
 }
 
 struct WorkResult {
     start_worker: Instant,
     pb_file: PathBuf,
+    proof_file: Option<PathBuf>,
     outcome: IterationOutcome,
-    record: ComparisonRecord,
+    record: CsvRecord,
 }
 
 /// Cancel iterations of fuzzing runs

@@ -107,6 +107,10 @@ impl ExternalProgram {
         })
     }
 
+    pub fn supports_proofs(&self) -> bool {
+        self.proof_arg.is_some()
+    }
+
     pub fn parse(
         &self,
         output: Output,
