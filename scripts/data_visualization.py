@@ -33,7 +33,7 @@ import matplotlib.lines as mlines
 
 def plot_configs(show: bool = True, save: bool = False):
     """Plot different configurations for fuzzer to determine the best ones for our use case."""
-    paths = glob.glob("out/fuzzing_run_*/data/orchestrator_data.csv")
+    paths = glob.glob("../out/fuzzing_run_*/data/orchestrator_data.csv")
     x = []
     y = []
     color_list = []

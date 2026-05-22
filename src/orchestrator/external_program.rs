@@ -1,5 +1,6 @@
 use std::{
     fmt::Display,
+    ops::Not,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -79,6 +80,12 @@ impl ExternalProgram {
                 ErrorKind::MissingProofLoggingArgument,
             )
         })?;
+        // TODO: remove later, when profiling analysis is done
+        let prof_file_name = file_path_pb
+            .file_stem()
+            .expect("PB File should exist")
+            .display();
+        add_profiling_to_command(&mut command, &prof_file_name);
         command.arg(format!("{proof_arg}{}", file_path_proof.display()));
 
         for arg in &self.args {
@@ -125,6 +132,14 @@ impl ExternalProgram {
     pub fn get_name(&self) -> &str {
         &self.name
     }
+}
+
+fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display) {
+    if PathBuf::from("profiles/").exists().not() {
+        panic!("Folder `Profiles` needs to exist!")
+    }
+    let prof_file = format!("profiles/{prof_file_name}.profraw");
+    command.env("LLVM_PROFILE_FILE", prof_file);
 }
 
 #[derive(Debug, Clone)]
