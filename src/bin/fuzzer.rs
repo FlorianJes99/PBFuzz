@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::io::BufWriter;
-use std::path::PathBuf;
 
-use fuzzer_pseudo_bool::fuzzer::grammar::PBKind;
+use clap::Parser;
+use fuzzer_pseudo_bool::fuzzer::fuzzer_args::FuzzerArgs;
 use fuzzer_pseudo_bool::fuzzer::helpers::current_time_as_timestamp;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::GeneratorSettingsBuilder;
@@ -10,29 +10,6 @@ use fuzzer_pseudo_bool::fuzzer::pbs_generator::PBSGenerator;
 use log::Level;
 use log::error;
 use log::info;
-
-use clap::Parser;
-
-#[derive(Debug, Parser)]
-#[command(version, about, long_about = None)]
-pub struct FuzzerArgs {
-    /// Seed used for reproducible runs
-    #[arg(long)]
-    seed: u64,
-    /// Destination to write generated grammar into
-    #[arg(long)]
-    output_path: String,
-    // Optional arguments
-    /// Option to print statistics about a single fuzzer run
-    #[arg(long, default_value_t = false)]
-    print_statistics: bool,
-    /// Choose mode for Fuzzer (default: PBS)
-    #[arg(long, value_enum)]
-    mode: Option<PBKind>,
-    /// Specify a file with settings for the fuzzer
-    #[arg(long)]
-    settings_file: Option<PathBuf>,
-}
 
 fn main() {
     // initialize the logger

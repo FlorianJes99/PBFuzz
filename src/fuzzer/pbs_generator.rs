@@ -201,7 +201,7 @@ impl GeneratorSettingsBuilder {
 
     pub fn load_from_file(file: &Path) -> io::Result<Self> {
         let data = std::fs::read_to_string(file)?;
-        ron::from_str(&data)
+        toml::from_str(&data)
             .map_err(io::Error::other)
             .map(GeneratorSettingsBuilder::from_settings)
     }

@@ -1,0 +1,43 @@
+# GeneratorSettings — configuration for random grammar generation
+
+# Maximum number of distinct variables used in the grammar
+max_vars = 70
+
+# How many literals a single constraint should have
+amount_literals_per_constraint = 19
+
+# Maximum number of unsatisfying assignments allowed for a single constraint
+max_unsat_for_single_constraint = 3
+
+# Coefficient range: values will be sampled from -coeff_range..coeff_range (excluding 0)
+coeff_range = 10
+
+# Fraction of the possible assignment range used as the lower bound for the degree (RHS)
+# E.g. 0.3 means the lowest possible RHS is 30% of the total range
+lower_bound_degree = 0.4
+
+# Fraction of the possible assignment range used as the upper bound for the degree (RHS)
+# E.g. 0.6 means the highest possible RHS is 60% of the total range
+upper_bound_degree = 0.6
+
+# Type of grammar to generate: "PBS" (pseudo boolean solving) or "PBO" (pseudo boolean optimization)
+grammar_kind = "PBO"
+
+# --- Cancel Condition ---
+#   "CountUnsat"       — stop after a total number of unsatisfying assignments
+#   "CountConstraints" — stop after a fixed number of constraints
+
+[cancel_condition.CountConstraints]
+max_constraints = 88
+
+# Alternatively, to cancel based on unsat assignments:
+# [cancel_condition.unsat_assingments]
+# max_unsat_assignments = 10000
+
+# --- Constraint Distribution ---
+# Relative weights controlling how often each constraint shape is generated.
+# Higher weight = more likely to be sampled. Weights are relative to each other.
+[constraint_distribution]
+three_literal_weight = 7   # simple 3-literal constraints
+cardinality_weight = 8     # cardinality constraints
+arbitrary_weight = 4       # arbitrary PB constraints

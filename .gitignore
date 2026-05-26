@@ -4,7 +4,7 @@ logs/
 plots/
 important_findings/
 configuration/*
-!configuration/default_settings.ron
+!configuration/default_settings.toml
 !configuration/scip.set
 software/
 profiles/
