@@ -11,9 +11,9 @@ use std::fmt::Display;
 use crate::fuzzer::{
     constraint::{
         ArbitraryLengthConstraint, CardinalityConstraint, Constraint, ConstraintKind,
-        CostraintWithUnsatAssignments, ThreeLiteralConstraint,
+        CostraintWithUnsatAssignments, ExactlyOneConstraint, ThreeLiteralConstraint,
     },
-    domain::{Comparison, LiteralIdent, MinFunction},
+    domain::{Comparison, Literal, LiteralIdent, MinFunction},
 };
 
 #[derive(Debug)]
@@ -40,6 +40,7 @@ impl ConstraintGenerator {
             0 => ConstraintKind::ThreeLiteral,
             1 => ConstraintKind::Cardinality,
             2 => ConstraintKind::ArbitraryLength,
+            3 => ConstraintKind::ExactlyOne,
             _ => unreachable!(),
         }
     }
@@ -69,7 +70,9 @@ impl ConstraintGenerator {
                 let mut c = self.generate_three_literal();
                 // Assert we always return a constraint which fulfills max unsat assignments requirement
                 while c.amount_unsat_assignments()
-                    > <u32 as Into<u128>>::into(self.settings.max_unsat_for_single_constraint)
+                    > std::convert::Into::<u128>::into(
+                        self.settings.max_unsat_for_single_constraint,
+                    )
                 {
                     c = self.generate_three_literal();
                 }
@@ -93,6 +96,16 @@ impl ConstraintGenerator {
                         self.settings.amount_literals_per_constraint
                     };
                 let c = self.generate_generic(constraint_len);
+                Box::new(c)
+            }
+            ConstraintKind::ExactlyOne => {
+                let constraint_len =
+                    if self.settings.max_vars <= self.settings.amount_literals_per_constraint {
+                        (self.settings.max_vars as f32 * 0.5).floor() as u32
+                    } else {
+                        self.settings.amount_literals_per_constraint
+                    };
+                let c = self.generate_exactly_one_constraint(constraint_len);
                 Box::new(c)
             }
         }
@@ -211,6 +224,19 @@ impl ConstraintGenerator {
         )
     }
 
+    pub fn generate_exactly_one_constraint(&mut self, length: u32) -> ExactlyOneConstraint {
+        assert!(length != 0, "Length of constraint needs to be > 0");
+        let literals: Vec<Literal> = self
+            .get_n_ids_sorted(length)
+            .iter()
+            .map(|id| id.to_literal(1))
+            .collect();
+
+        assert!(literals.len() as u32 == length);
+        ExactlyOneConstraint::new(literals, Comparison::Equal, 1)
+            .expect("Builder should ensure correct constraint initalisation")
+    }
+
     pub fn generate_min_function(
         &mut self,
         possible_vars: &[LiteralIdent],
@@ -283,8 +309,8 @@ pub struct ConstraintSettings {
     /// Specifies the weights of each constraint type.
     ///
     /// According to these weights, the constraints are proportionally sampled
-    /// E.g.:: (2,1,1) will lead to three_literal constraint taking up 50% of the samples,
-    /// while both of the other types will be 25% each.
+    /// E.g.:: (3,1,1,1) will lead to three_literal constraint taking up 50% of the samples,
+    /// while the other types will be equally distributed.
     constraint_distribution: ConstraintDistribution,
 }
 
@@ -293,20 +319,29 @@ pub struct ConstraintDistribution {
     three_literal_weight: i32,
     cardinality_weight: i32,
     arbitrary_weight: i32,
+    exactly_one_weight: i32,
 }
+
 impl ConstraintDistribution {
-    pub fn new(three_literal_weight: i32, cardinality_weight: i32, arbitrary_weight: i32) -> Self {
+    pub fn new(
+        three_literal_weight: i32,
+        cardinality_weight: i32,
+        arbitrary_weight: i32,
+        exactly_one_weight: i32,
+    ) -> Self {
         Self {
             three_literal_weight,
             cardinality_weight,
             arbitrary_weight,
+            exactly_one_weight,
         }
     }
-    fn get_weights(&self) -> [i32; 3] {
+    fn get_weights(&self) -> [i32; 4] {
         [
             self.three_literal_weight,
             self.cardinality_weight,
             self.arbitrary_weight,
+            self.exactly_one_weight,
         ]
     }
 }
@@ -314,13 +349,13 @@ impl ConstraintDistribution {
 impl Display for ConstraintDistribution {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let total = self.three_literal_weight + self.cardinality_weight + self.arbitrary_weight;
-        let percentages: [f32; 3] = self
+        let percentages: [f32; 4] = self
             .get_weights()
             .map(|part| (part as f32 / total as f32) * 100.0);
         write!(
             f,
-            "Constraint Proportions - Three Literal ({:.2}%), Cardinality ({:.2}%), Arbitrary ({:.2}%)",
-            percentages[0], percentages[1], percentages[2]
+            "Constraint Proportions: Three Literal ({:.2}%), Cardinality ({:.2}%), Arbitrary ({:.2}%), Ecactly One ({:.2}%)",
+            percentages[0], percentages[1], percentages[2], percentages[3]
         )
     }
 }

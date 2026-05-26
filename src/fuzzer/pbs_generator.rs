@@ -135,7 +135,7 @@ impl Display for GeneratorSettings {
         )?;
         write!(
             f,
-            "Upper bound for RHS of constraint            : {}",
+            "Constraint distribution                      : {}",
             self.constraint_distribution
         )
     }
@@ -189,7 +189,7 @@ impl GeneratorSettingsBuilder {
             max_unsat_assignments: (max_vars as f32 * 2.4).floor() as u64,
         };
         let grammar_kind = PBKind::PBS;
-        let constraint_distribution = ConstraintDistribution::new(2, 1, 1);
+        let constraint_distribution = ConstraintDistribution::new(2, 1, 1, 1);
         // assignment combinations
         Self {
             max_vars,

@@ -145,15 +145,15 @@ impl Display for MinFunction {
 /// PBS/PBO normally supports only >= and = operators.
 #[derive(Debug)]
 pub enum Comparison {
-    //TODO: Equal,
+    Equal,
     GrEqual,
 }
 
 impl Display for Comparison {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            // Comparison::Equal => "=",
             Comparison::GrEqual => ">=",
+            Comparison::Equal => "=",
         };
         write!(f, "{s}")
     }

@@ -25,6 +25,7 @@ pub trait Constraint: Display + Send {
     fn satisfied(&self, value: i64) -> bool {
         match self.comparison() {
             Comparison::GrEqual => value >= self.degree(),
+            Comparison::Equal => value == self.degree(),
         }
     }
 
@@ -81,6 +82,7 @@ pub enum ConstraintKind {
     ArbitraryLength,
     ThreeLiteral,
     Cardinality,
+    ExactlyOne,
 }
 
 impl Display for ConstraintKind {
@@ -89,6 +91,7 @@ impl Display for ConstraintKind {
             ConstraintKind::ArbitraryLength => write!(f, "Arbitrary Length"),
             ConstraintKind::ThreeLiteral => write!(f, "Three Literal"),
             ConstraintKind::Cardinality => write!(f, "Cardinality"),
+            ConstraintKind::ExactlyOne => write!(f, "Exactly One"),
         }
     }
 }
@@ -123,6 +126,12 @@ pub struct CardinalityConstraint {
     degree: i64,
     // Lazy init this when first needed, can be expensive to compute
     amount_unsat: OnceCell<u128>,
+}
+
+pub struct ExactlyOneConstraint {
+    literals: Vec<Literal>,
+    comparison: Comparison,
+    degree: i64,
 }
 
 impl Constraint for ArbitraryLengthConstraint {
@@ -268,15 +277,15 @@ impl CardinalityConstraint {
         literals: Vec<Literal>,
         comparison: Comparison,
         degree: i64,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, InvalidConstraintConstruction> {
         if literals
             .iter()
             .find(|a| !(a.coeff == 1 || a.coeff == -1))
             .is_some()
         {
-            return Err(
+            return Err(InvalidConstraintConstruction(
                 "All coefficients of a CardinalityConstraint need to be 1 or -1".to_string(),
-            );
+            ));
         }
         let c = Self {
             literals,
@@ -285,7 +294,9 @@ impl CardinalityConstraint {
             amount_unsat: OnceCell::new(),
         };
         if !c.is_solvable() {
-            return Err("A constraint on itself needs to be solvable".to_string());
+            return Err(InvalidConstraintConstruction(
+                "A constraint on itself needs to be solvable".to_string(),
+            ));
         }
         Ok(c)
     }
@@ -327,6 +338,52 @@ impl CostraintWithUnsatAssignments for CardinalityConstraint {
             (0..max_combinations_to_set_true as u64)
                 .fold(0_u128, |acc, i| acc + binomial(amount_vars, i))
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct InvalidConstraintConstruction(String);
+
+impl ExactlyOneConstraint {
+    pub fn new(
+        literals: Vec<Literal>,
+        comparison: Comparison,
+        degree: i64,
+    ) -> Result<Self, InvalidConstraintConstruction> {
+        match comparison {
+            Comparison::Equal => Ok(Self {
+                literals,
+                comparison,
+                degree,
+            }),
+            Comparison::GrEqual => Err(InvalidConstraintConstruction(format!(
+                "Invalid comparison operator ({comparison}) for this constraint!"
+            ))),
+        }
+    }
+}
+
+impl Constraint for ExactlyOneConstraint {
+    fn literals(&self) -> &[Literal] {
+        &self.literals
+    }
+
+    fn comparison(&self) -> &Comparison {
+        &self.comparison
+    }
+
+    fn degree(&self) -> i64 {
+        self.degree
+    }
+
+    fn kind(&self) -> ConstraintKind {
+        ConstraintKind::ExactlyOne
+    }
+}
+
+impl Display for ExactlyOneConstraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.fmt_constraint(f)
     }
 }
 
