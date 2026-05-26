@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use log::error;
+use log::{debug, error};
 
 use crate::{
     fuzzer::domain::LiteralIdent,
@@ -42,13 +42,17 @@ impl Parser for DefaultParser {
 
     fn parse_line(&self, line: &str) -> StatusLine {
         match line.split_once(' ') {
-            Some(("s", rest)) => StatusLine::Status(match rest {
-                "UNSATISFIABLE" => StatusKind::Unsat,
-                "SATISFIABLE" => StatusKind::Sat,
-                "OPTIMUM FOUND" => StatusKind::Sat,
-                "TIMELIMIT" => StatusKind::TimeLimit,
-                _ => StatusKind::Unknown,
-            }),
+            Some(("s", rest)) => {
+                let status = match rest {
+                    "UNSATISFIABLE" => StatusKind::Unsat,
+                    "SATISFIABLE" => StatusKind::Sat,
+                    "OPTIMUM FOUND" => StatusKind::Sat,
+                    "TIMELIMIT" => StatusKind::TimeLimit,
+                    _ => StatusKind::Unknown,
+                };
+                debug!("Parsed statusline {line} to status: {status}");
+                StatusLine::Status(status)
+            }
             Some(("v", rest)) => StatusLine::Solution(self.parse_solution(rest)),
             Some(("o", rest)) => StatusLine::Objective(
                 rest.parse()

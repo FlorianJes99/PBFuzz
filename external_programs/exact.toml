@@ -1,5 +1,5 @@
 binary = "software/Exact"
-args = ["--print-sol", "--print-uniform=0", "--time-limit=6"]
+args = ["--print-sol", "--print-uniform=0", "--timeout=6"]
 name = "exact"
 parser_kind = "Default"
 proof_arg = "--proof-log="

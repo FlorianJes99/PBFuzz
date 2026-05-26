@@ -17,7 +17,7 @@ use crate::{
         folders::{
             BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
         },
-        modes::proof_checking_mode::check,
+        modes::proof_checking_mode::check_proof,
         parser::{Parser, ParserKind},
         scip_parser::ScipParser,
     },
@@ -73,6 +73,13 @@ impl ExternalProgram {
         file_path_proof: &Path,
     ) -> Result<Output, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
+        // TODO: remove later, when profiling analysis is done
+        let prof_file_name = file_path_pb
+            .file_stem()
+            .expect("PB File should exist")
+            .display();
+        add_profiling_to_command(&mut command, &prof_file_name);
+
         let proof_arg = self.proof_arg.as_ref().ok_or_else(|| {
             ExternalProgramError::new(
                 self.get_name().to_string(),
@@ -80,12 +87,6 @@ impl ExternalProgram {
                 ErrorKind::MissingProofLoggingArgument,
             )
         })?;
-        // TODO: remove later, when profiling analysis is done
-        let prof_file_name = file_path_pb
-            .file_stem()
-            .expect("PB File should exist")
-            .display();
-        add_profiling_to_command(&mut command, &prof_file_name);
         command.arg(format!("{proof_arg}{}", file_path_proof.display()));
 
         for arg in &self.args {
@@ -200,7 +201,7 @@ impl SolverStatus {
                         reason: BugReason::InvalidSolution,
                     };
                 }
-                if !check(formula, derivation) {
+                if !check_proof(formula, derivation) {
                     return IterationOutcome::Bug {
                         reason: BugReason::ProofCheckerFailed,
                     };

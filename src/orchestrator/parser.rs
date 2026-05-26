@@ -1,4 +1,4 @@
-use std::{collections::HashSet, process::Output};
+use std::{collections::HashSet, fmt::Display, process::Output};
 
 use serde::{Deserialize, Serialize};
 
@@ -99,6 +99,17 @@ pub enum StatusKind {
     Unsat,
     TimeLimit,
     Unknown,
+}
+
+impl Display for StatusKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StatusKind::Sat => write!(f, "sat"),
+            StatusKind::Unsat => write!(f, "unsat"),
+            StatusKind::TimeLimit => write!(f, "timelimit"),
+            StatusKind::Unknown => write!(f, "unknown"),
+        }
+    }
 }
 
 pub enum StatusLine {
