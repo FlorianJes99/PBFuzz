@@ -9,8 +9,9 @@ amount_literals_per_constraint = 19
 # Maximum number of unsatisfying assignments allowed for a single constraint
 max_unsat_for_single_constraint = 3
 
-# Coefficient range: values will be sampled from -coeff_range..coeff_range (excluding 0)
-coeff_range = 10
+# Coefficient bounds: values will be sampled from coeff_lower_bound..coeff_upper_bound (excluding 0)
+coeff_lower_bound = -10
+coeff_upper_bound = 10
 
 # Fraction of the possible assignment range used as the lower bound for the degree (RHS)
 # E.g. 0.3 means the lowest possible RHS is 30% of the total range

@@ -58,7 +58,8 @@ pub struct GeneratorSettings {
     max_unsat_for_single_constraint: u32,
     /// The possible values a coefficient of a literal can be
     /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
-    coeff_range: u32,
+    coeff_lower_bound: i32,
+    coeff_upper_bound: i32,
     /// Given the sampled literals in a constraint, the lower bound specifies the smallest possible
     /// fraction of the given range
     /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
@@ -78,7 +79,8 @@ impl From<GeneratorSettings> for ConstraintSettings {
             val.max_vars,
             val.max_unsat_for_single_constraint,
             val.amount_literals_per_constraint,
-            val.coeff_range as i32,
+            val.coeff_lower_bound,
+            val.coeff_upper_bound,
             val.lower_bound_degree,
             val.upper_bound_degree,
             val.constraint_distribution,
@@ -118,8 +120,8 @@ impl Display for GeneratorSettings {
         )?;
         writeln!(
             f,
-            "Coefficient range                            : -{}..{}",
-            self.coeff_range, self.coeff_range
+            "Coefficient range                            : {}..{}",
+            self.coeff_lower_bound, self.coeff_upper_bound
         )?;
         writeln!(
             f,
@@ -154,8 +156,9 @@ pub struct GeneratorSettingsBuilder {
     max_unsat_for_single_constraint: u32,
     cancel_condition: CancelCondition,
     grammar_kind: PBKind,
-    coeff_range: u32,
     amount_literals_per_constraint: u32,
+    coeff_lower_bound: i32,
+    coeff_upper_bound: i32,
     lower_bound_degree: f64,
     upper_bound_degree: f64,
     constraint_distribution: ConstraintDistribution,
@@ -169,13 +172,15 @@ impl Default for GeneratorSettingsBuilder {
         GeneratorSettingsBuilder::new(100)
             .max_unsat_for_single_constraint(3)
             .cancel_condition(cancel_condition)
-            .coeff_range(200)
+            .coeff_lower_bound(-200)
+            .coeff_upper_bound(200)
     }
 }
 
 impl GeneratorSettingsBuilder {
     pub fn new(max_vars: u32) -> Self {
-        let coeff_range = 3;
+        let coeff_lower_bound = -3;
+        let coeff_upper_bound = 3;
         let amount_literals_per_constraint = 30;
         let max_unsat_for_single_constraint = 5;
         let lower_bound_degree = 0.3;
@@ -191,8 +196,9 @@ impl GeneratorSettingsBuilder {
             max_unsat_for_single_constraint,
             cancel_condition,
             grammar_kind,
-            coeff_range,
             amount_literals_per_constraint,
+            coeff_lower_bound,
+            coeff_upper_bound,
             lower_bound_degree,
             upper_bound_degree,
             constraint_distribution,
@@ -212,8 +218,9 @@ impl GeneratorSettingsBuilder {
             max_unsat_for_single_constraint: settings.max_unsat_for_single_constraint,
             cancel_condition: settings.cancel_condition,
             grammar_kind: settings.grammar_kind,
-            coeff_range: settings.coeff_range,
             amount_literals_per_constraint: settings.amount_literals_per_constraint,
+            coeff_lower_bound: settings.coeff_lower_bound,
+            coeff_upper_bound: settings.coeff_upper_bound,
             lower_bound_degree: settings.lower_bound_degree,
             upper_bound_degree: settings.upper_bound_degree,
             constraint_distribution: settings.constraint_distribution,
@@ -235,13 +242,18 @@ impl GeneratorSettingsBuilder {
         self
     }
 
-    pub fn coeff_range(mut self, range: u32) -> Self {
-        self.coeff_range = range;
+    pub fn coeff_lower_bound(mut self, lower_bound: i32) -> Self {
+        self.coeff_lower_bound = lower_bound;
+        self
+    }
+
+    pub fn coeff_upper_bound(mut self, upper_bound: i32) -> Self {
+        self.coeff_upper_bound = upper_bound;
         self
     }
 
     /// this method panics if lower > upper!
-    pub fn set_bounds(mut self, lower: f64, upper: f64) -> Self {
+    pub fn set_bounds_degree(mut self, lower: f64, upper: f64) -> Self {
         assert!(lower <= upper);
         self.lower_bound_degree = lower;
         self.upper_bound_degree = upper;
@@ -262,8 +274,9 @@ impl GeneratorSettingsBuilder {
             max_unsat_for_single_constraint: self.max_unsat_for_single_constraint,
             cancel_condition: self.cancel_condition,
             grammar_kind: self.grammar_kind,
-            coeff_range: self.coeff_range,
             amount_literals_per_constraint: self.amount_literals_per_constraint,
+            coeff_lower_bound: self.coeff_lower_bound,
+            coeff_upper_bound: self.coeff_upper_bound,
             lower_bound_degree: self.lower_bound_degree,
             upper_bound_degree: self.upper_bound_degree,
             constraint_distribution: self.constraint_distribution,

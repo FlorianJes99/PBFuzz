@@ -101,8 +101,8 @@ impl ConstraintGenerator {
     pub fn generate_generic(&mut self, length: u32) -> ArbitraryLengthConstraint {
         assert!(length != 0, "Length of constraint needs to be > 0");
         let ids = self.get_n_ids_sorted(length);
-        let start_val = -self.settings.coeff_range;
-        let end_val = self.settings.coeff_range;
+        let start_val = self.settings.coeff_lower_bound;
+        let end_val = self.settings.coeff_upper_bound;
         let mut literals = vec![];
         let mut min_coeff = i64::MAX;
         let mut max_coeff = i64::MIN;
@@ -170,8 +170,8 @@ impl ConstraintGenerator {
     pub fn generate_three_literal(&mut self) -> ThreeLiteralConstraint {
         let ids = self.get_three_ids_sorted();
         let comparison = Comparison::GrEqual;
-        let start_val = -self.settings.coeff_range;
-        let end_val = self.settings.coeff_range;
+        let start_val = self.settings.coeff_lower_bound;
+        let end_val = self.settings.coeff_upper_bound;
         let mut literals = vec![];
         let mut min_coeff = i64::MAX;
         let mut max_coeff = i64::MIN;
@@ -266,9 +266,10 @@ pub struct ConstraintSettings {
     max_vars: u32,
     max_unsat_for_single_constraint: u32,
     amount_literals_per_constraint: u32,
-    /// The possible values a coefficient of an literal can be
-    /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
-    coeff_range: i32,
+    /// Minimal value a coefficient can have
+    coeff_lower_bound: i32,
+    /// Maximum value a coefficient can have
+    coeff_upper_bound: i32,
     /// Given the sampled literals in a constraint, the lower bound specifies the smallest possible
     /// fraction of the given range
     /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
@@ -329,7 +330,8 @@ impl ConstraintSettings {
         max_vars: u32,
         max_unsat_for_single_constraint: u32,
         amount_literals_per_constraint: u32,
-        coeff_range: i32,
+        coeff_lower_bound: i32,
+        coeff_upper_bound: i32,
         lower_bound_degree: f64,
         upper_bound_degree: f64,
         constraint_distribution: ConstraintDistribution,
@@ -338,7 +340,8 @@ impl ConstraintSettings {
             max_vars,
             max_unsat_for_single_constraint,
             amount_literals_per_constraint,
-            coeff_range,
+            coeff_lower_bound,
+            coeff_upper_bound,
             lower_bound_degree,
             upper_bound_degree,
             constraint_distribution,

@@ -33,7 +33,6 @@ use csv::Writer;
 use itertools::Itertools;
 use log::{debug, error, info};
 use rand::{self, Rng};
-use ron::ser::PrettyConfig;
 
 use crate::fuzzer::{
     helpers::print_block,
@@ -284,16 +283,16 @@ impl Orchestrator {
 
     fn save_settings(&self, stats: &Stats) -> std::io::Result<()> {
         let dir = self.fuzzer_output_dir.join(DATA_FOLDER.name);
-        let data = ron::ser::to_string_pretty(&self.generator_settings, PrettyConfig::default())
-            .map_err(std::io::Error::other)?;
-        let file_name = dir.join("settings.ron");
+        let data =
+            toml::ser::to_string_pretty(&self.generator_settings).map_err(std::io::Error::other)?;
+        let file_name = dir.join("settings.toml");
         let mut file = File::create(file_name)?;
         file.write_all(data.as_bytes())?;
         file.write_all("\n".as_bytes())?;
         let commented_stats: String = stats
             .to_string()
             .lines()
-            .map(|line| format!("// {}", line))
+            .map(|line| format!("# {}", line)) // # denotes a comment in toml
             .join("\n");
         file.write_all(commented_stats.as_bytes())
     }
