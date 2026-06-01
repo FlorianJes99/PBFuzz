@@ -79,11 +79,14 @@ pub fn run_orchestrator(
         "Using {} threads for computing fuzzing runs in parallel",
         rayon::current_num_threads()
     );
-    let p1 = ExternalProgramSer::load_from_file(&args.program_config1)?.into();
+    let timelimit = Duration::from_secs(args.timeout_external_program_secs);
+    let p1 =
+        ExternalProgramSer::load_from_file(&args.program_config1)?.to_external_program(timelimit);
     let mode = match args.program_config2 {
-        Some(file_p2) => {
-            OrchestrationMode::Comparison(p1, ExternalProgramSer::load_from_file(&file_p2)?.into())
-        }
+        Some(file_p2) => OrchestrationMode::Comparison(
+            p1,
+            ExternalProgramSer::load_from_file(&file_p2)?.to_external_program(timelimit),
+        ),
         None => {
             if !p1.supports_proofs() {
                 return Err(ExternalProgramError::new(

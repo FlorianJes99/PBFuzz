@@ -1,10 +1,15 @@
 use std::{
     fmt::Display,
+    io,
     ops::Not,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
+    sync::mpsc,
+    thread::{self},
+    time::Duration,
 };
 
+use log::info;
 use serde::Deserialize;
 
 use crate::{
@@ -33,6 +38,16 @@ pub struct ExternalProgramSer {
 }
 
 impl ExternalProgramSer {
+    pub fn to_external_program(self, timelimit: Duration) -> ExternalProgram {
+        ExternalProgram {
+            parser: self.create_parser(),
+            binary: self.binary,
+            args: self.args,
+            name: self.name,
+            proof_arg: self.proof_arg,
+            timelimit,
+        }
+    }
     pub fn load_from_file(path: &Path) -> std::io::Result<Self> {
         let s = std::fs::read_to_string(path)?;
         toml::from_str(&s).map_err(std::io::Error::other)
@@ -52,18 +67,7 @@ pub struct ExternalProgram {
     name: String,
     parser: Box<dyn Parser>,
     proof_arg: Option<String>,
-}
-
-impl From<ExternalProgramSer> for ExternalProgram {
-    fn from(value: ExternalProgramSer) -> Self {
-        ExternalProgram {
-            parser: value.create_parser(),
-            binary: value.binary,
-            args: value.args,
-            name: value.name,
-            proof_arg: value.proof_arg,
-        }
-    }
+    timelimit: Duration,
 }
 
 impl ExternalProgram {
@@ -71,7 +75,7 @@ impl ExternalProgram {
         &self,
         file_path_pb: &Path,
         file_path_proof: &Path,
-    ) -> Result<Output, ExternalProgramError> {
+    ) -> Result<ExternalProgramResult, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         // TODO: remove later, when profiling analysis is done
         let prof_file_name = file_path_pb
@@ -93,26 +97,19 @@ impl ExternalProgram {
             command.arg(arg);
         }
 
-        command.arg(file_path_pb).output().map_err(|e| {
-            ExternalProgramError::new(
-                self.get_name().to_string(),
-                e.to_string(),
-                ErrorKind::ProgramExecutionFailed,
-            )
-        })
+        command.arg(file_path_pb);
+        self.run_with_timeout(&mut command, self.timelimit)
+            .map_err(|e| self.external_execution_error(e.to_string()))
     }
-    pub fn run(&self, file_path: &Path) -> Result<Output, ExternalProgramError> {
+
+    pub fn run(&self, file_path: &Path) -> Result<ExternalProgramResult, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
             command.arg(arg);
         }
-        command.arg(file_path).output().map_err(|e| {
-            ExternalProgramError::new(
-                self.get_name().to_string(),
-                e.to_string(),
-                ErrorKind::ProgramExecutionFailed,
-            )
-        })
+        command.arg(file_path);
+        self.run_with_timeout(&mut command, self.timelimit)
+            .map_err(|e| self.external_execution_error(e.to_string()))
     }
 
     pub fn supports_proofs(&self) -> bool {
@@ -121,18 +118,59 @@ impl ExternalProgram {
 
     pub fn parse(
         &self,
-        output: Output,
+        ext_result: ExternalProgramResult,
         pb_kind: &PBKind,
     ) -> Result<SolverStatus, ExternalProgramError> {
-        match pb_kind {
-            PBKind::PBS => self.parser.parse_pbs(&output),
-            PBKind::PBO => self.parser.parse_pbo(&output),
+        match ext_result {
+            ExternalProgramResult::Terminated(output) => match pb_kind {
+                PBKind::PBS => self.parser.parse_pbs(&output),
+                PBKind::PBO => self.parser.parse_pbo(&output),
+            },
+            ExternalProgramResult::Timeout => Ok(SolverStatus::TimeLimit),
         }
     }
 
     pub fn get_name(&self) -> &str {
         &self.name
     }
+
+    fn external_execution_error(&self, message: impl Into<String>) -> ExternalProgramError {
+        ExternalProgramError::new(
+            self.name.clone(),
+            message.into(),
+            ErrorKind::ProgramExecutionFailed,
+        )
+    }
+    fn run_with_timeout(
+        &self,
+        cmd: &mut Command,
+        timeout: Duration,
+    ) -> io::Result<ExternalProgramResult> {
+        let child = cmd.stdout(Stdio::piped()).spawn()?;
+        let (tx, rx) = mpsc::channel();
+        let pid = child.id();
+
+        thread::spawn(move || {
+            let _ = tx.send(child.wait_with_output());
+        });
+
+        match rx.recv_timeout(timeout) {
+            Ok(result) => result.map(ExternalProgramResult::Terminated),
+            Err(_) => {
+                info!("Terminating solver {}...", self.get_name());
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
+                Ok(ExternalProgramResult::Timeout)
+            }
+        }
+    }
+}
+
+pub enum ExternalProgramResult {
+    Terminated(Output),
+    Timeout,
 }
 
 fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display) {

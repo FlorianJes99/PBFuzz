@@ -65,4 +65,11 @@ pub struct OrchestratorArgs {
     /// See: [Rayon FAQ](https://github.com/rayon-rs/rayon/blob/main/FAQ.md)
     #[arg(long)]
     pub(crate) thread_count: Option<usize>,
+
+    /// Use this flag to terminate an external solver after n seconds
+    ///
+    /// This is only ment to be used, if the solver itself does not provide any
+    /// flags to stop computation after some amount of time
+    #[arg(long, default_value_t = u64::MAX)]
+    pub(crate) timeout_external_program_secs: u64,
 }

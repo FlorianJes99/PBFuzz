@@ -27,10 +27,7 @@ pub trait Parser: Sync {
     /// Folds all the collected information into an aggregated result
     fn scan(&self, output: &Output) -> Result<ScannedResult, ExternalProgramError> {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if !output.status.success() {
-            debug!("Program did terminate with non-zero exit code!");
-            debug!("Output of program:\n {stdout}")
-        }
+        debug!("Output of program:\n {stdout}");
         stdout
             .lines()
             .map(str::trim)
