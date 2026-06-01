@@ -34,7 +34,7 @@ pub struct OrchestratorArgs {
     pub(crate) mode: Option<PBKind>,
     /// Use a settings file for the fuzzer.
     ///
-    /// The expected file should be in the [ron-format](https://docs.rs/ron/latest/ron/).
+    /// The expected file should be in the [toml-format](https://docs.rs/toml/latest/toml/).
     /// This file allows for more granular control about the settings.
     /// Not only `PBMode` can be set here, but also relevant meta parameters for the fuzzer.
     /// Those include things like maximum generated variables per instance and more.

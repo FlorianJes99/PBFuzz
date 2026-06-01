@@ -1,23 +1,18 @@
-use std::{fs, path::Path};
+use std::{error::Error, fs, path::Path};
 
 use clap::Parser;
 use fuzzer_pseudo_bool::{
     fuzzer::helpers::current_time_as_timestamp,
     orchestrator::{orchestrator_args::OrchestratorArgs, runner::run_orchestrator},
 };
-use log::{Level, error};
+use log::Level;
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = OrchestratorArgs::parse();
     let start_as_str = current_time_as_timestamp();
-    if let Err(e) = init_logger(args.log, &start_as_str) {
-        println!("Logger initalization failed\nError: {}", e);
-        return;
-    }
-    let res = run_orchestrator(&start_as_str, args);
-    if let Err(e) = res {
-        error!("{}", e)
-    }
+
+    init_logger(args.log, &start_as_str)?;
+    run_orchestrator(&start_as_str, args)
 }
 
 fn init_logger(level: Option<Level>, timestamp: &str) -> Result<(), fern::InitError> {

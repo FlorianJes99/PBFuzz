@@ -75,7 +75,7 @@ impl ExternalProgram {
         &self,
         file_path_pb: &Path,
         file_path_proof: &Path,
-    ) -> Result<ExternalProgramResult, ExternalProgramError> {
+    ) -> Result<SolverOutcome, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         // TODO: remove later, when profiling analysis is done
         let prof_file_name = file_path_pb
@@ -102,7 +102,7 @@ impl ExternalProgram {
             .map_err(|e| self.external_execution_error(e.to_string()))
     }
 
-    pub fn run(&self, file_path: &Path) -> Result<ExternalProgramResult, ExternalProgramError> {
+    pub fn run(&self, file_path: &Path) -> Result<SolverOutcome, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
             command.arg(arg);
@@ -118,15 +118,15 @@ impl ExternalProgram {
 
     pub fn parse(
         &self,
-        ext_result: ExternalProgramResult,
+        ext_result: SolverOutcome,
         pb_kind: &PBKind,
     ) -> Result<SolverStatus, ExternalProgramError> {
         match ext_result {
-            ExternalProgramResult::Terminated(output) => match pb_kind {
+            SolverOutcome::Terminated(output) => match pb_kind {
                 PBKind::PBS => self.parser.parse_pbs(&output),
                 PBKind::PBO => self.parser.parse_pbo(&output),
             },
-            ExternalProgramResult::Timeout => Ok(SolverStatus::TimeLimit),
+            SolverOutcome::Timeout => Ok(SolverStatus::TimeLimit),
         }
     }
 
@@ -141,11 +141,7 @@ impl ExternalProgram {
             ErrorKind::ProgramExecutionFailed,
         )
     }
-    fn run_with_timeout(
-        &self,
-        cmd: &mut Command,
-        timeout: Duration,
-    ) -> io::Result<ExternalProgramResult> {
+    fn run_with_timeout(&self, cmd: &mut Command, timeout: Duration) -> io::Result<SolverOutcome> {
         let child = cmd.stdout(Stdio::piped()).spawn()?;
         let (tx, rx) = mpsc::channel();
         let pid = child.id();
@@ -155,20 +151,20 @@ impl ExternalProgram {
         });
 
         match rx.recv_timeout(timeout) {
-            Ok(result) => result.map(ExternalProgramResult::Terminated),
+            Ok(result) => result.map(SolverOutcome::Terminated),
             Err(_) => {
                 info!("Terminating solver {}...", self.get_name());
                 #[cfg(unix)]
                 unsafe {
                     libc::kill(pid as i32, libc::SIGTERM);
                 }
-                Ok(ExternalProgramResult::Timeout)
+                Ok(SolverOutcome::Timeout)
             }
         }
     }
 }
 
-pub enum ExternalProgramResult {
+pub enum SolverOutcome {
     Terminated(Output),
     Timeout,
 }

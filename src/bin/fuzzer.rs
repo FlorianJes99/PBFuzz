@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
 
@@ -8,16 +9,12 @@ use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::GeneratorSettingsBuilder;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::PBSGenerator;
 use log::Level;
-use log::error;
 use log::info;
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     // initialize the logger
-    if let Err(e) = init_logger() {
-        println!("Logger initialization failed\n Error: {}", e);
-        return;
-    }
 
+    init_logger()?;
     // start of actual program
     let args = FuzzerArgs::parse();
 
@@ -38,13 +35,15 @@ fn main() {
         print_block("Grammar Statistics", grammar.get_statistics());
     }
     let output_path = &args.output_path;
-    let write_result = File::create(output_path)
+    let write_duration = File::create(output_path)
         .map(BufWriter::new)
-        .map(|mut buf_writer| grammar.produce(&mut buf_writer));
-    match write_result {
-        Ok(_) => info!("Wrote generated grammar into file: {}", output_path),
-        Err(e) => error!("Could not write into file: {}\n Error: {}", output_path, e),
-    }
+        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))?;
+    info!(
+        "Wrote generated grammar in {}s into file: {}",
+        write_duration.as_secs_f32(),
+        output_path
+    );
+    Ok(())
 }
 
 fn init_logger() -> Result<(), fern::InitError> {
