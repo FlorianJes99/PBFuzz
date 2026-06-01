@@ -32,7 +32,7 @@ use std::{
 use csv::Writer;
 use itertools::Itertools;
 use log::{debug, error, info};
-use rand::{self, Rng};
+use rand::{self, RngExt};
 
 use crate::fuzzer::{
     helpers::print_block,

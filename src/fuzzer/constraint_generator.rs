@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use rand::{
-    Rng,
+    RngExt,
     distr::{Distribution, weighted::WeightedIndex},
     rngs::StdRng,
     seq::{IndexedRandom, index},
@@ -239,7 +239,7 @@ impl ConstraintGenerator {
         amount: usize,
     ) -> MinFunction {
         let literals = possible_vars
-            .choose_multiple(&mut self.rand, amount)
+            .sample(&mut self.rand, amount)
             .sorted()
             .map(|id| id.to_literal(self.sample_without_zero_from_range(-3, 3)))
             .collect();
