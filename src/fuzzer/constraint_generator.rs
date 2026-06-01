@@ -99,12 +99,8 @@ impl ConstraintGenerator {
                 Box::new(c)
             }
             ConstraintKind::ExactlyOne => {
-                let constraint_len =
-                    if self.settings.max_vars <= self.settings.amount_literals_per_constraint {
-                        (self.settings.max_vars as f32 * 0.5).floor() as u32
-                    } else {
-                        self.settings.amount_literals_per_constraint
-                    };
+                // we want to have at max 3 literals in the exactly one constraint for now
+                let constraint_len = 3.min((self.settings.max_vars as f32 * 0.5).floor() as u32);
                 let c = self.generate_exactly_one_constraint(constraint_len);
                 Box::new(c)
             }
