@@ -1,5 +1,6 @@
 use crate::fuzzer::helpers::{MoveFile, move_files, remove_files};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
+use crate::orchestrator::external_program::ExternalProgramWithProof;
 use crate::{
     fuzzer::{
         helpers::{RunningAverage, RunningAverageDuration, get_hms_parts},
@@ -7,7 +8,7 @@ use crate::{
     },
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome},
+        external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome, Solver},
         folders::{DATA_FOLDER, prepare_output_folder},
         orchestrator_args::OrchestratorArgs,
     },
@@ -77,14 +78,16 @@ pub fn run_orchestrator(
         rayon::current_num_threads()
     );
     let timelimit = Duration::from_secs(args.timeout_external_program_secs);
-    let p1 =
-        ExternalProgramSer::load_from_file(&args.program_config1)?.to_external_program(timelimit);
-    let mode = match args.program_config2 {
-        Some(file_p2) => OrchestrationMode::Comparison(
-            p1,
-            ExternalProgramSer::load_from_file(&file_p2)?.to_external_program(timelimit),
+    let mode = match &args.program_config2 {
+        Some(p2) => OrchestrationMode::Comparison(
+            ExternalProgramSer::load_from_file(&args.program_config1)?
+                .to_external_program(timelimit),
+            ExternalProgramSer::load_from_file(p2)?.to_external_program(timelimit),
         ),
-        None => OrchestrationMode::ProofChecking(p1.supports_proofs()?),
+        None => OrchestrationMode::ProofChecking(
+            ExternalProgramSer::load_from_file(&args.program_config1)?
+                .to_external_program_with_proof(timelimit)?,
+        ),
     };
     let mut generator_settings_builder = match args.settings_file {
         Some(file) => GeneratorSettingsBuilder::load_from_file(&file)?,
@@ -120,7 +123,7 @@ pub fn run_orchestrator(
 
 enum OrchestrationMode {
     Comparison(ExternalProgram, ExternalProgram),
-    ProofChecking(ExternalProgram),
+    ProofChecking(ExternalProgramWithProof),
 }
 
 struct Orchestrator {
@@ -305,8 +308,7 @@ fn work_iteration(
     let grammar = PBSGenerator::create_grammar(seed, settings);
     let duration_write_to_file = File::create(&output_file)
         .map(BufWriter::new)
-        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
-        .map_err(|e| e.to_string())?;
+        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))?;
     let grammar_statistics = grammar.get_statistics();
     let output_generation_duration =
         *grammar_statistics.get_generation_time() + duration_write_to_file;

@@ -29,117 +29,8 @@ use crate::{
     },
 };
 
-#[derive(Deserialize)]
-pub struct ExternalProgramSer {
-    binary: PathBuf,
-    args: Vec<String>,
-    name: String,
-    parser_kind: ParserKind,
-    proof_arg: Option<String>,
-}
-
-impl ExternalProgramSer {
-    pub fn to_external_program(self, timelimit: Duration) -> ExternalProgram {
-        ExternalProgram {
-            parser: self.create_parser(),
-            binary: self.binary,
-            args: self.args,
-            name: self.name,
-            proof_arg: self.proof_arg,
-            timelimit,
-        }
-    }
-    pub fn load_from_file(path: &Path) -> std::io::Result<Self> {
-        let s = std::fs::read_to_string(path)?;
-        toml::from_str(&s).map_err(std::io::Error::other)
-    }
-
-    fn create_parser(&self) -> Box<dyn Parser> {
-        match self.parser_kind {
-            ParserKind::Default => Box::new(DefaultParser::new(self.name.clone())),
-            ParserKind::Scip => Box::new(ScipParser::new(self.name.clone())),
-        }
-    }
-}
-
-pub struct ExternalProgram {
-    binary: PathBuf,
-    args: Vec<String>,
-    name: String,
-    parser: Box<dyn Parser>,
-    proof_arg: Option<String>,
-    timelimit: Duration,
-}
-
-impl ExternalProgram {
-    pub fn run_with_proof(
-        &self,
-        file_path_pb: &Path,
-        file_path_proof: &Path,
-    ) -> Result<SolverOutcome, ExternalProgramError> {
-        let mut command = Command::new(self.binary.as_os_str());
-        // TODO: remove later, when profiling analysis is done
-        let prof_file_name = file_path_pb
-            .file_stem()
-            .expect("PB File should exist")
-            .display();
-        add_profiling_to_command(&mut command, &prof_file_name);
-
-        let proof_arg = self.proof_arg.as_ref().ok_or_else(|| {
-            ExternalProgramError::MissingProofLoggingArgument {
-                program: self.get_name().into(),
-            }
-        })?;
-        command.arg(format!("{proof_arg}{}", file_path_proof.display()));
-
-        for arg in &self.args {
-            command.arg(arg);
-        }
-
-        command.arg(file_path_pb);
-        self.run_with_timeout(&mut command, self.timelimit)
-            .map_err(|e| self.external_execution_error(e))
-    }
-
-    pub fn run(&self, file_path: &Path) -> Result<SolverOutcome, ExternalProgramError> {
-        let mut command = Command::new(self.binary.as_os_str());
-        for arg in &self.args {
-            command.arg(arg);
-        }
-        command.arg(file_path);
-        self.run_with_timeout(&mut command, self.timelimit)
-            .map_err(|e| self.external_execution_error(e))
-    }
-
-    /// Check whether the solver supports proofs
-    ///
-    /// If so return itself back, otherwise fail with an error
-    pub fn supports_proofs(self) -> Result<Self, ExternalProgramError> {
-        match self.proof_arg {
-            Some(_) => Ok(self),
-            None => Err(ExternalProgramError::MissingProofLoggingArgument {
-                program: self.get_name().into(),
-            }),
-        }
-    }
-
-    pub fn parse(
-        &self,
-        ext_result: SolverOutcome,
-        pb_kind: &PBKind,
-    ) -> Result<SolverStatus, ExternalProgramError> {
-        match ext_result {
-            SolverOutcome::Terminated(output) => match pb_kind {
-                PBKind::PBS => self.parser.parse_pbs(&output).map_err(|e| e.into()),
-                PBKind::PBO => self.parser.parse_pbo(&output).map_err(|e| e.into()),
-            },
-            SolverOutcome::Timeout => Ok(SolverStatus::TimeLimit),
-        }
-    }
-
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
+pub trait Solver {
+    fn get_name(&self) -> &str;
 
     fn external_execution_error(&self, source: std::io::Error) -> ExternalProgramError {
         ExternalProgramError::ExecutionFailed {
@@ -147,6 +38,23 @@ impl ExternalProgram {
             source,
         }
     }
+
+    fn parser(&self) -> &dyn Parser;
+
+    fn parse(
+        &self,
+        ext_result: SolverOutcome,
+        pb_kind: &PBKind,
+    ) -> Result<SolverStatus, ExternalProgramError> {
+        match ext_result {
+            SolverOutcome::Terminated(output) => match pb_kind {
+                PBKind::PBS => self.parser().parse_pbs(&output).map_err(|e| e.into()),
+                PBKind::PBO => self.parser().parse_pbo(&output).map_err(|e| e.into()),
+            },
+            SolverOutcome::Timeout => Ok(SolverStatus::TimeLimit),
+        }
+    }
+
     fn run_with_timeout(&self, cmd: &mut Command, timeout: Duration) -> io::Result<SolverOutcome> {
         let child = cmd.stdout(Stdio::piped()).spawn()?;
         let (tx, rx) = mpsc::channel();
@@ -167,6 +75,134 @@ impl ExternalProgram {
                 Ok(SolverOutcome::Timeout)
             }
         }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ExternalProgramSer {
+    binary: PathBuf,
+    args: Vec<String>,
+    name: String,
+    parser_kind: ParserKind,
+    proof_arg: Option<String>,
+}
+
+impl ExternalProgramSer {
+    pub fn to_external_program(self, timelimit: Duration) -> ExternalProgram {
+        ExternalProgram {
+            parser: self.create_parser(),
+            binary: self.binary,
+            args: self.args,
+            name: self.name,
+            timelimit,
+        }
+    }
+
+    pub fn to_external_program_with_proof(
+        self,
+        timelimit: Duration,
+    ) -> Result<ExternalProgramWithProof, ExternalProgramError> {
+        match self.proof_arg.as_ref() {
+            Some(proof_arg) => Ok(ExternalProgramWithProof {
+                parser: self.create_parser(),
+                binary: self.binary,
+                args: self.args,
+                name: self.name,
+                proof_arg: proof_arg.to_string(),
+                timelimit,
+            }),
+            None => Err(ExternalProgramError::MissingProofLoggingArgument { program: self.name }),
+        }
+    }
+    pub fn load_from_file(path: &Path) -> std::io::Result<Self> {
+        let s = std::fs::read_to_string(path)?;
+        toml::from_str(&s).map_err(std::io::Error::other)
+    }
+
+    fn create_parser(&self) -> Box<dyn Parser> {
+        match self.parser_kind {
+            ParserKind::Default => Box::new(DefaultParser::new(self.name.clone())),
+            ParserKind::Scip => Box::new(ScipParser::new(self.name.clone())),
+        }
+    }
+}
+
+pub struct ExternalProgram {
+    binary: PathBuf,
+    args: Vec<String>,
+    name: String,
+    parser: Box<dyn Parser>,
+    timelimit: Duration,
+}
+
+pub struct ExternalProgramWithProof {
+    binary: PathBuf,
+    args: Vec<String>,
+    name: String,
+    parser: Box<dyn Parser>,
+    proof_arg: String,
+    timelimit: Duration,
+}
+
+impl Solver for ExternalProgramWithProof {
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    fn parser(&self) -> &dyn Parser {
+        &*self.parser
+    }
+}
+
+impl ExternalProgramWithProof {
+    pub fn run_with_proof(
+        &self,
+        file_path_pb: &Path,
+        file_path_proof: &Path,
+    ) -> Result<SolverOutcome, ExternalProgramError> {
+        let mut command = Command::new(self.binary.as_os_str());
+        // TODO: remove later, when profiling analysis is done
+        let prof_file_name = file_path_pb
+            .file_stem()
+            .expect("PB File should exist")
+            .display();
+        add_profiling_to_command(&mut command, &prof_file_name);
+
+        command.arg(format!("{}{}", self.proof_arg, file_path_proof.display()));
+
+        for arg in &self.args {
+            command.arg(arg);
+        }
+
+        command.arg(file_path_pb);
+        self.run_with_timeout(&mut command, self.timelimit)
+            .map_err(|e| self.external_execution_error(e))
+    }
+}
+
+impl Solver for ExternalProgram {
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    fn parser(&self) -> &dyn Parser {
+        &*self.parser
+    }
+}
+
+impl ExternalProgram {
+    pub fn run(&self, file_path: &Path) -> Result<SolverOutcome, ExternalProgramError> {
+        let mut command = Command::new(self.binary.as_os_str());
+        for arg in &self.args {
+            command.arg(arg);
+        }
+        command.arg(file_path);
+        self.run_with_timeout(&mut command, self.timelimit)
+            .map_err(|e| self.external_execution_error(e))
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
     }
 }
 
