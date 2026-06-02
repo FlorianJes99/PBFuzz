@@ -1,3 +1,5 @@
+use thiserror::Error;
+
 use crate::fuzzer::domain::Comparison;
 use crate::fuzzer::domain::Literal;
 use crate::fuzzer::domain::SolutionModel;
@@ -77,7 +79,7 @@ pub trait CostraintWithUnsatAssignments: Constraint {
 
 /// Currently, these types of constraints are supported.
 ///  Mainly used for type safe generation of the different types of actual constraints
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConstraintKind {
     ArbitraryLength,
     ThreeLiteral,
@@ -285,6 +287,7 @@ impl CardinalityConstraint {
         {
             return Err(InvalidConstraintConstruction(
                 "All coefficients of a CardinalityConstraint need to be 1 or -1".to_string(),
+                ConstraintKind::Cardinality,
             ));
         }
         let c = Self {
@@ -296,6 +299,7 @@ impl CardinalityConstraint {
         if !c.is_solvable() {
             return Err(InvalidConstraintConstruction(
                 "A constraint on itself needs to be solvable".to_string(),
+                ConstraintKind::Cardinality,
             ));
         }
         Ok(c)
@@ -341,8 +345,9 @@ impl CostraintWithUnsatAssignments for CardinalityConstraint {
     }
 }
 
-#[derive(Debug)]
-pub struct InvalidConstraintConstruction(String);
+#[derive(Debug, Error)]
+#[error("Can not construct constraint of kind '{1}' out of line: {0}")]
+pub struct InvalidConstraintConstruction(String, ConstraintKind);
 
 impl ExactlyOneConstraint {
     pub fn new(
@@ -356,9 +361,10 @@ impl ExactlyOneConstraint {
                 comparison,
                 degree,
             }),
-            Comparison::GrEqual => Err(InvalidConstraintConstruction(format!(
-                "Invalid comparison operator ({comparison}) for this constraint!"
-            ))),
+            Comparison::GrEqual => Err(InvalidConstraintConstruction(
+                format!("Invalid comparison operator ({comparison}) for this constraint!"),
+                ConstraintKind::ExactlyOne,
+            )),
         }
     }
 }

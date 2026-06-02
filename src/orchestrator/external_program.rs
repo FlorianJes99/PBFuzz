@@ -11,6 +11,7 @@ use std::{
 
 use log::info;
 use serde::Deserialize;
+use thiserror::Error;
 
 use crate::{
     fuzzer::{
@@ -23,7 +24,7 @@ use crate::{
             BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
         },
         modes::proof_checking_mode::check_proof,
-        parser::{Parser, ParserKind},
+        parser::{OutputParsingError, Parser, ParserKind},
         scip_parser::ScipParser,
     },
 };
@@ -85,11 +86,9 @@ impl ExternalProgram {
         add_profiling_to_command(&mut command, &prof_file_name);
 
         let proof_arg = self.proof_arg.as_ref().ok_or_else(|| {
-            ExternalProgramError::new(
-                self.get_name().to_string(),
-                "No argument provided to generate a proof".to_string(),
-                ErrorKind::MissingProofLoggingArgument,
-            )
+            ExternalProgramError::MissingProofLoggingArgument {
+                program: self.get_name().into(),
+            }
         })?;
         command.arg(format!("{proof_arg}{}", file_path_proof.display()));
 
@@ -99,7 +98,7 @@ impl ExternalProgram {
 
         command.arg(file_path_pb);
         self.run_with_timeout(&mut command, self.timelimit)
-            .map_err(|e| self.external_execution_error(e.to_string()))
+            .map_err(|e| self.external_execution_error(e))
     }
 
     pub fn run(&self, file_path: &Path) -> Result<SolverOutcome, ExternalProgramError> {
@@ -109,11 +108,19 @@ impl ExternalProgram {
         }
         command.arg(file_path);
         self.run_with_timeout(&mut command, self.timelimit)
-            .map_err(|e| self.external_execution_error(e.to_string()))
+            .map_err(|e| self.external_execution_error(e))
     }
 
-    pub fn supports_proofs(&self) -> bool {
-        self.proof_arg.is_some()
+    /// Check whether the solver supports proofs
+    ///
+    /// If so return itself back, otherwise fail with an error
+    pub fn supports_proofs(self) -> Result<Self, ExternalProgramError> {
+        match self.proof_arg {
+            Some(_) => Ok(self),
+            None => Err(ExternalProgramError::MissingProofLoggingArgument {
+                program: self.get_name().into(),
+            }),
+        }
     }
 
     pub fn parse(
@@ -123,8 +130,8 @@ impl ExternalProgram {
     ) -> Result<SolverStatus, ExternalProgramError> {
         match ext_result {
             SolverOutcome::Terminated(output) => match pb_kind {
-                PBKind::PBS => self.parser.parse_pbs(&output),
-                PBKind::PBO => self.parser.parse_pbo(&output),
+                PBKind::PBS => self.parser.parse_pbs(&output).map_err(|e| e.into()),
+                PBKind::PBO => self.parser.parse_pbo(&output).map_err(|e| e.into()),
             },
             SolverOutcome::Timeout => Ok(SolverStatus::TimeLimit),
         }
@@ -134,12 +141,11 @@ impl ExternalProgram {
         &self.name
     }
 
-    fn external_execution_error(&self, message: impl Into<String>) -> ExternalProgramError {
-        ExternalProgramError::new(
-            self.name.clone(),
-            message.into(),
-            ErrorKind::ProgramExecutionFailed,
-        )
+    fn external_execution_error(&self, source: std::io::Error) -> ExternalProgramError {
+        ExternalProgramError::ExecutionFailed {
+            program: self.get_name().into(),
+            source,
+        }
     }
     fn run_with_timeout(&self, cmd: &mut Command, timeout: Duration) -> io::Result<SolverOutcome> {
         let child = cmd.stdout(Stdio::piped()).spawn()?;
@@ -370,51 +376,16 @@ impl Display for BugReason {
     }
 }
 
-#[derive(Debug)]
-pub enum ErrorKind {
-    ProgramExecutionFailed,
-    OutputParsingError,
-    MissingProofLoggingArgument,
-}
-
-#[derive(Debug)]
-pub struct ExternalProgramError {
-    program_name: String,
-    error_message: String,
-    error_kind: ErrorKind,
-}
-
-impl std::error::Error for ExternalProgramError {}
-
-impl ExternalProgramError {
-    pub fn new(program_name: String, error_message: String, error_kind: ErrorKind) -> Self {
-        Self {
-            program_name,
-            error_message,
-            error_kind,
-        }
-    }
-}
-
-impl Display for ExternalProgramError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Error while executing program: {}", self.program_name)?;
-        writeln!(f, "Error reason: {}", self.error_kind)?;
-        writeln!(f, "Error message: {}", self.error_message)
-    }
-}
-
-impl Display for ErrorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                ErrorKind::ProgramExecutionFailed => "Program Execution Error",
-                ErrorKind::OutputParsingError => "Output Parsing Error",
-                ErrorKind::MissingProofLoggingArgument =>
-                    "Proof logging not supplied in program configuration",
-            }
-        )
-    }
+#[derive(Debug, Error)]
+pub enum ExternalProgramError {
+    #[error("{program}: failed to execute: {source}")]
+    ExecutionFailed {
+        program: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{program}: missing required proof logging argument")]
+    MissingProofLoggingArgument { program: String },
+    #[error("Failed to parse output of solver")]
+    Parsing(#[from] OutputParsingError),
 }

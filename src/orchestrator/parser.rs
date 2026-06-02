@@ -1,12 +1,14 @@
-use std::{collections::HashSet, fmt::Display, process::Output};
+use std::{collections::HashSet, fmt::Display, num::ParseIntError, process::Output};
 
 use log::debug;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::{
-    fuzzer::domain::LiteralIdent,
-    orchestrator::external_program::{
-        ErrorKind, ExternalProgramError, SolverSolution, SolverStatus,
+    fuzzer::domain::{LiteralIdent, ParseLiteralError},
+    orchestrator::{
+        external_program::{SolverSolution, SolverStatus},
+        scip_parser::ScipParsingError,
     },
 };
 
@@ -25,7 +27,7 @@ pub trait Parser: Sync {
     fn parse_line(&self, line: &str) -> StatusLine;
 
     /// Folds all the collected information into an aggregated result
-    fn scan(&self, output: &Output) -> Result<ScannedResult, ExternalProgramError> {
+    fn scan(&self, output: &Output) -> Result<ScannedResult, OutputParsingError> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         debug!("Output of program:\n {stdout}");
         stdout
@@ -44,12 +46,7 @@ pub trait Parser: Sync {
             })
     }
 
-    /// helper for creating errors related to parsing
-    fn error(&self, message: String) -> ExternalProgramError {
-        ExternalProgramError::new(self.name().into(), message, ErrorKind::OutputParsingError)
-    }
-
-    fn parse_pbs(&self, output: &Output) -> Result<SolverStatus, ExternalProgramError> {
+    fn parse_pbs(&self, output: &Output) -> Result<SolverStatus, OutputParsingError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
@@ -63,10 +60,10 @@ pub trait Parser: Sync {
                 StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
                 StatusKind::Unknown => Ok(SolverStatus::Unknown),
             },
-            None => Err(self.error("Status wasn't parsed".to_string())),
+            None => Err(OutputParsingError::StatusMissing),
         }
     }
-    fn parse_pbo(&self, output: &Output) -> Result<SolverStatus, ExternalProgramError> {
+    fn parse_pbo(&self, output: &Output) -> Result<SolverStatus, OutputParsingError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
@@ -83,7 +80,7 @@ pub trait Parser: Sync {
                 StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
                 StatusKind::Unknown => Ok(SolverStatus::Unknown),
             },
-            None => Err(self.error("Status wasn't parsed".to_string())),
+            None => Err(OutputParsingError::StatusMissing),
         }
     }
 }
@@ -116,8 +113,29 @@ impl Display for StatusKind {
 
 pub enum StatusLine {
     Status(StatusKind),
-    Solution(Result<HashSet<LiteralIdent>, ExternalProgramError>),
-    Objective(Result<i32, ExternalProgramError>),
+    Solution(Result<HashSet<LiteralIdent>, OutputParsingError>),
+    Objective(Result<i32, OutputParsingError>),
     Conflicts(u32),
     Ignored,
+}
+
+#[derive(Debug, Error)]
+pub enum OutputParsingError {
+    #[error("Status was not parsed from solver output")]
+    StatusMissing,
+    #[error("Failed to parse line {line} into solution: source: {source}")]
+    ParseSolution {
+        line: String,
+        #[source]
+        source: ParseLiteralError,
+    },
+    #[error("Faile to parse line {line} into valid objective: source: {source}")]
+    ParseObjective {
+        line: String,
+        #[source]
+        source: ParseIntError,
+    },
+    // TODO: get rid of circular dependency
+    #[error("Parsing scip output failed")]
+    Scip(#[from] ScipParsingError),
 }

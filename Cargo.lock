@@ -439,6 +439,7 @@ dependencies = [
  "rayon",
  "regex",
  "serde",
+ "thiserror",
  "toml",
  "veripb",
 ]

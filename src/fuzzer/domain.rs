@@ -2,8 +2,11 @@
 use std::{
     collections::HashSet,
     fmt::{Display, Write},
+    num::ParseIntError,
     ops::Deref,
 };
+
+use thiserror::Error;
 
 /// Wrapper type for the identifier of an literal.
 ///
@@ -63,21 +66,33 @@ impl From<u32> for LiteralIdent {
 }
 
 impl std::str::FromStr for LiteralIdent {
-    type Err = String;
+    type Err = ParseLiteralError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if !s.starts_with("x") {
-            return Err(format!(
-                "Identifier does not start with character 'x', instead {}",
-                s
-            ));
+            return Err(ParseLiteralError::InvalidCharacter { literal: s.into() });
         }
         let num_str = &s[1..];
         num_str
             .parse::<u32>()
             .map(LiteralIdent::new)
-            .map_err(|e| format!("Failed to parse number: {}", e))
+            .map_err(|err| ParseLiteralError::ParseInt {
+                literal: s.into(),
+                source: err,
+            })
     }
+}
+
+#[derive(Debug, Error)]
+pub enum ParseLiteralError {
+    #[error("Failed to parse literal ({literal}) due to: {source}")]
+    ParseInt {
+        literal: String,
+        #[source]
+        source: ParseIntError,
+    },
+    #[error("Expected literal to start with x, but was {literal}")]
+    InvalidCharacter { literal: String },
 }
 
 impl Display for LiteralIdent {

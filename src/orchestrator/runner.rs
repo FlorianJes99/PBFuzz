@@ -1,6 +1,5 @@
 use crate::fuzzer::helpers::{MoveFile, move_files, remove_files};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
-use crate::orchestrator::external_program::ErrorKind::MissingProofLoggingArgument;
 use crate::{
     fuzzer::{
         helpers::{RunningAverage, RunningAverageDuration, get_hms_parts},
@@ -8,9 +7,7 @@ use crate::{
     },
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        external_program::{
-            ExternalProgram, ExternalProgramError, ExternalProgramSer, IterationOutcome,
-        },
+        external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome},
         folders::{DATA_FOLDER, prepare_output_folder},
         orchestrator_args::OrchestratorArgs,
     },
@@ -87,18 +84,7 @@ pub fn run_orchestrator(
             p1,
             ExternalProgramSer::load_from_file(&file_p2)?.to_external_program(timelimit),
         ),
-        None => {
-            if !p1.supports_proofs() {
-                return Err(ExternalProgramError::new(
-                    p1.get_name().to_string(),
-                    "Provided config for program does not include argument for proof logging"
-                        .to_string(),
-                    MissingProofLoggingArgument,
-                )
-                .into());
-            }
-            OrchestrationMode::ProofChecking(p1)
-        }
+        None => OrchestrationMode::ProofChecking(p1.supports_proofs()?),
     };
     let mut generator_settings_builder = match args.settings_file {
         Some(file) => GeneratorSettingsBuilder::load_from_file(&file)?,

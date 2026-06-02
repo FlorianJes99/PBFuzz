@@ -4,10 +4,7 @@ use log::{debug, error};
 
 use crate::{
     fuzzer::domain::LiteralIdent,
-    orchestrator::{
-        external_program::ExternalProgramError,
-        parser::{Parser, StatusKind, StatusLine},
-    },
+    orchestrator::parser::{OutputParsingError, Parser, StatusKind, StatusLine},
 };
 
 pub struct DefaultParser {
@@ -22,14 +19,16 @@ impl DefaultParser {
     fn parse_solution(
         &self,
         solution_model_line: &str,
-    ) -> Result<HashSet<LiteralIdent>, ExternalProgramError> {
+    ) -> Result<HashSet<LiteralIdent>, OutputParsingError> {
         solution_model_line
             .split_whitespace()
             .filter(|w| w.starts_with("x"))
             .map(|w| {
-                w.parse::<LiteralIdent>().map_err(|err| {
-                    self.error(format!("Could not parse symbol to Literal\n Err: {err}"))
-                })
+                w.parse::<LiteralIdent>()
+                    .map_err(|err| OutputParsingError::ParseSolution {
+                        line: w.into(),
+                        source: err,
+                    })
             })
             .collect()
     }
@@ -54,10 +53,12 @@ impl Parser for DefaultParser {
                 StatusLine::Status(status)
             }
             Some(("v", rest)) => StatusLine::Solution(self.parse_solution(rest)),
-            Some(("o", rest)) => StatusLine::Objective(
-                rest.parse()
-                    .map_err(|err| self.error(format!("Could not parse LiteralIdent: {err}"))),
-            ),
+            Some(("o", rest)) => StatusLine::Objective(rest.parse().map_err(|err| {
+                OutputParsingError::ParseObjective {
+                    line: rest.into(),
+                    source: err,
+                }
+            })),
             Some(("c", rest)) => match rest.split_once(' ') {
                 Some(("conflicts", rest)) => match rest.parse() {
                     Ok(c) => StatusLine::Conflicts(c),
