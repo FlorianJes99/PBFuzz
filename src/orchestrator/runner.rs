@@ -13,8 +13,9 @@ use crate::{
         orchestrator_args::OrchestratorArgs,
     },
 };
-use rayon::{ThreadPoolBuilder, current_thread_index, prelude::*};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::{
     error::Error,
     fmt::Display,
@@ -70,12 +71,10 @@ pub fn run_orchestrator(
     time_stamp_as_str: &str,
     args: OrchestratorArgs,
 ) -> Result<(), Box<dyn Error>> {
-    if let Some(t) = args.thread_count {
-        ThreadPoolBuilder::new().num_threads(t).build_global()?
-    }
+    let thread_count = args.thread_count.unwrap_or(1);
     info!(
         "Using {} threads for computing fuzzing runs in parallel",
-        rayon::current_num_threads()
+        thread_count
     );
     let timelimit = Duration::from_secs(args.timeout_external_program_secs);
     let mode = match &args.program_config2 {
@@ -117,6 +116,7 @@ pub fn run_orchestrator(
         orchestrator_start: Instant::now(),
         save_all_files: args.save_all_files,
         mode,
+        thread_count,
     }
     .run(stop_condition)
 }
@@ -132,6 +132,7 @@ struct Orchestrator {
     save_all_files: bool,
     orchestrator_start: Instant,
     mode: OrchestrationMode,
+    thread_count: u8,
 }
 
 impl Orchestrator {
@@ -142,17 +143,28 @@ impl Orchestrator {
             .join(format!("{}.csv", ORCHESTRATOR_DATA_FILE_PREFIX,));
         let mut csv_writer = csv::Writer::from_path(csv_file_path)?;
         let mut stats = Stats::new();
+        let stop_condtion = Arc::new(stop_condition);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let count_runs = Arc::new(AtomicU32::new(0));
         let (sender, receiver) = channel::<WorkResult>();
+        let start = Instant::now();
         thread::scope(|s| {
-            s.spawn(|| {
-                stop_condition
-                    .into_iter(Instant::now())
-                    .par_bridge()
-                    .for_each_with(sender, |sender, _| {
+            for i in 1..=self.thread_count {
+                let sender = sender.clone();
+                let cancelled = Arc::clone(&cancelled);
+                let count_runs = Arc::clone(&count_runs);
+                let stop_condition = Arc::clone(&stop_condtion);
+                s.spawn(move || {
+                    while !cancelled.load(Ordering::Relaxed) {
+                        let iteration = count_runs.fetch_add(1, Ordering::Relaxed);
+                        if stop_condition.is_done(iteration, start) {
+                            break;
+                        }
                         match work_iteration(
                             &self.fuzzer_output_dir,
                             self.generator_settings,
                             &self.mode,
+                            i,
                         ) {
                             Ok(work_result) => {
                                 if let Err(e) = sender.send(work_result) {
@@ -161,8 +173,10 @@ impl Orchestrator {
                             }
                             Err(e) => error!("{e}"),
                         }
-                    });
-            });
+                    }
+                });
+            }
+            drop(sender);
             for (iteration, work_result) in receiver.iter().enumerate() {
                 let percentage_range_sat = 0.20..0.7;
                 if iteration == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
@@ -173,7 +187,8 @@ impl Orchestrator {
                         "Percentage SAT Instances not in range ({}..{})",
                         percentage_range_sat.start, percentage_range_sat.end
                     );
-                    break;
+                    cancelled.store(true, Ordering::Relaxed);
+                    // We don't break here, because we want to process the remaining running threads
                 }
                 self.process_result(work_result, iteration as u32, &mut csv_writer, &mut stats);
             }
@@ -205,7 +220,7 @@ impl Orchestrator {
         let throughput = iteration as f64 / elapsed_since_start.as_secs_f64();
         #[rustfmt::skip]
         let body = [
-            format!("Throughput: {:.3} Iterations/s ({} threads)", throughput, rayon::current_num_threads()),
+            format!("Throughput: {:.3} Iterations/s ({} threads)", throughput, self.thread_count),
             format!("Time elapsed: {}h {}m {}s", h, m, s),
         ].join("\n");
         print_block(&format!("Iteration {iteration}"), body);
@@ -298,11 +313,11 @@ fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: GeneratorSettings,
     mode: &OrchestrationMode,
+    thread_id: u8,
 ) -> Result<WorkResult, Box<dyn Error>> {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let worker_thread = current_thread_index().unwrap_or(1);
-    let file_name = format!("{worker_thread}_test_{seed}");
+    let file_name = format!("{thread_id}_test_{seed}");
     let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
     debug!("Running Fuzzer with seed {seed}...");
     let grammar = PBSGenerator::create_grammar(seed, settings);
@@ -434,23 +449,11 @@ impl StopCondition {
         }
     }
 
-    fn into_iter(self, start: Instant) -> impl Iterator<Item = ()> {
-        let mut count = 0u32;
-        std::iter::from_fn(move || match self {
-            StopCondition::MaxIterations(max) => {
-                if count >= max {
-                    return None;
-                }
-                count += 1;
-                Some(())
-            }
-            StopCondition::MaxDuration(duration) => {
-                if start.elapsed() >= duration {
-                    return None;
-                }
-                Some(())
-            }
-        })
+    fn is_done(&self, iteration: u32, start: Instant) -> bool {
+        match self {
+            StopCondition::MaxIterations(n) => iteration >= *n,
+            StopCondition::MaxDuration(duration) => start.elapsed() >= *duration,
+        }
     }
 }
 

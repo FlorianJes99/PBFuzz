@@ -61,10 +61,9 @@ pub struct OrchestratorArgs {
 
     /// Provide number of threads used to run parallel fuzzing runs
     ///
-    /// If nothing is provided, the program will use up all available threads
-    /// See: [Rayon FAQ](https://github.com/rayon-rs/rayon/blob/main/FAQ.md)
+    /// If nothing is provided, the program will use only 1 thread
     #[arg(long)]
-    pub(crate) thread_count: Option<usize>,
+    pub(crate) thread_count: Option<u8>,
 
     /// Use this flag to terminate an external solver after n seconds
     ///
