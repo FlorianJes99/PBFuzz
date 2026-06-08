@@ -333,7 +333,12 @@ fn work_iteration(
             let res_program1 = p1.parse(output_bin1, &pb_kind);
             let res_program2 = p2.parse(output_bin2, &pb_kind);
             let outcome = match (res_program1, res_program2) {
-                (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(&status2, &grammar),
+                (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(
+                    &status2,
+                    &grammar,
+                    p1.get_name(),
+                    p2.get_name(),
+                ),
                 (Err(err), _) => IterationOutcome::Error { error: err },
                 (_, Err(err)) => IterationOutcome::Error { error: err },
             };
@@ -366,7 +371,7 @@ fn work_iteration(
             let proof_checking_start = Instant::now();
             let outcome = parsing_result.map_or_else(
                 |err| IterationOutcome::Error { error: err },
-                |r| r.verify_with_proof_checking(&grammar, &output_file, &proof_file),
+                |r| r.verify_with_proof_checking(&grammar, &output_file, &proof_file, p.get_name()),
             );
             let proof_checking_duration = proof_checking_start.elapsed();
             let proof_record = ProofRecord {

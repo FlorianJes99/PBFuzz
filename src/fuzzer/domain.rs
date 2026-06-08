@@ -18,6 +18,12 @@ pub struct LiteralIdent(u32);
 #[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
 pub struct MinObjectiveValue(i32);
 
+impl Display for MinObjectiveValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SolutionModel(HashSet<LiteralIdent>);
 

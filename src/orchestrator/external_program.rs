@@ -235,16 +235,6 @@ impl SolverSolution {
             }
         }
     }
-    fn has_same_min_objective(&self, other: &SolverSolution) -> bool {
-        match (self, other) {
-            (SolverSolution::PBS(_), SolverSolution::PBS(_)) => true,
-            (SolverSolution::PBO(_, o1), SolverSolution::PBO(_, o2)) => o1 == o2,
-            _ => unreachable!(
-                "PBS should not be compared to PBO values: {:#?}, {:#?}",
-                self, other
-            ),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +256,7 @@ impl SolverStatus {
         grammar: &PBGrammar,
         formula: &Path,
         derivation: &Path,
+        solver_name: &str,
     ) -> IterationOutcome {
         match self {
             SolverStatus::Sat {
@@ -274,7 +265,9 @@ impl SolverStatus {
             } => {
                 if !solution.is_valid(grammar) {
                     return IterationOutcome::Bug {
-                        reason: BugReason::InvalidSolution,
+                        reason: BugReason::InvalidSolution {
+                            solver_name: solver_name.into(),
+                        },
                     };
                 }
                 if !check_proof(formula, derivation) {
@@ -297,6 +290,9 @@ impl SolverStatus {
         &self,
         other: &SolverStatus,
         grammar: &PBGrammar,
+        //TODO: we probably want to save the name somewhere inside self and other
+        self_name: &str,
+        other_name: &str,
     ) -> IterationOutcome {
         match (self, other) {
             (
@@ -313,21 +309,33 @@ impl SolverStatus {
                 let v1 = s1.is_valid(grammar);
                 if !v1 {
                     return IterationOutcome::Bug {
-                        reason: BugReason::InvalidSolution,
+                        reason: BugReason::InvalidSolution {
+                            solver_name: self_name.into(),
+                        },
                     };
                 }
                 let v2 = s2.is_valid(grammar);
                 if !v2 {
                     return IterationOutcome::Bug {
-                        reason: BugReason::InvalidSolution,
+                        reason: BugReason::InvalidSolution {
+                            solver_name: other_name.into(),
+                        },
                     };
                 }
-                if s1.has_same_min_objective(s2) {
-                    IterationOutcome::Sat { conflicts: *c1 }
-                } else {
-                    IterationOutcome::Bug {
-                        reason: BugReason::DifferentObjectives,
+                match (s1, s2) {
+                    (SolverSolution::PBS(_), SolverSolution::PBS(_)) => {
+                        IterationOutcome::Sat { conflicts: *c1 }
                     }
+                    (SolverSolution::PBO(_, min1), SolverSolution::PBO(_, min2)) => {
+                        if min1 == min2 {
+                            IterationOutcome::Sat { conflicts: *c1 }
+                        } else {
+                            IterationOutcome::Bug {
+                                reason: BugReason::DifferentObjectives(min1.clone(), min2.clone()),
+                            }
+                        }
+                    }
+                    _ => unreachable!("cant compare pbs with pbo"),
                 }
             }
             (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: _ }) => {
@@ -337,8 +345,20 @@ impl SolverStatus {
             (SolverStatus::TimeLimit, _) => IterationOutcome::TimeLimt,
             (_, SolverStatus::TimeLimit) => IterationOutcome::TimeLimt,
             _ => IterationOutcome::Bug {
-                reason: BugReason::OutputStatusDiffers,
+                reason: BugReason::OutputStatusDiffers(
+                    self.get_status_string().into(),
+                    other.get_status_string().into(),
+                ),
             },
+        }
+    }
+
+    fn get_status_string(&self) -> &'static str {
+        match self {
+            SolverStatus::Sat { .. } => "SAT",
+            SolverStatus::Unsat { .. } => "UNSAT",
+            SolverStatus::TimeLimit => "Timeout",
+            SolverStatus::Unknown => "Unknown",
         }
     }
 }
@@ -391,24 +411,30 @@ impl IterationOutcome {
 }
 
 pub enum BugReason {
-    InvalidSolution,
-    DifferentObjectives,
-    OutputStatusDiffers,
+    InvalidSolution { solver_name: String },
+    DifferentObjectives(MinObjectiveValue, MinObjectiveValue),
+    OutputStatusDiffers(String, String),
     ProofCheckerFailed,
 }
 
 impl Display for BugReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                BugReason::InvalidSolution => "Invalid solution",
-                BugReason::DifferentObjectives => "Different objectives founds",
-                BugReason::OutputStatusDiffers => "Output status differs",
-                BugReason::ProofCheckerFailed => "Proof Checker disagreed with solver solution",
+        match self {
+            BugReason::InvalidSolution {
+                solver_name: program_name,
+            } => {
+                write!(f, "Invalid solution provided by solver {program_name}")
             }
-        )
+            BugReason::DifferentObjectives(m1, m2) => {
+                write!(f, "Different objectives found: {m1} and {m2}")
+            }
+            BugReason::OutputStatusDiffers(s1, s2) => {
+                write!(f, "Different status found: {s1} and {s2}")
+            }
+            BugReason::ProofCheckerFailed => {
+                f.write_str("Proof checker showed that generated prove is invalid")
+            }
+        }
     }
 }
 
