@@ -280,6 +280,11 @@ impl CardinalityConstraint {
         comparison: Comparison,
         degree: i64,
     ) -> Result<Self, InvalidConstraintConstruction> {
+        if literals.len() == 0 {
+            return Err(InvalidConstraintConstruction::create_empty_literal(
+                ConstraintKind::Cardinality,
+            ));
+        }
         if literals
             .iter()
             .find(|a| !(a.coeff == 1 || a.coeff == -1))
@@ -349,12 +354,23 @@ impl CostraintWithUnsatAssignments for CardinalityConstraint {
 #[error("Can not construct constraint of kind '{1}' out of line: {0}")]
 pub struct InvalidConstraintConstruction(String, ConstraintKind);
 
+impl InvalidConstraintConstruction {
+    fn create_empty_literal(kind: ConstraintKind) -> Self {
+        InvalidConstraintConstruction("Constraint has no literals".into(), kind)
+    }
+}
+
 impl ExactlyOneConstraint {
     pub fn new(
         literals: Vec<Literal>,
         comparison: Comparison,
         degree: i64,
     ) -> Result<Self, InvalidConstraintConstruction> {
+        if literals.len() == 0 {
+            return Err(InvalidConstraintConstruction::create_empty_literal(
+                ConstraintKind::ExactlyOne,
+            ));
+        }
         match comparison {
             Comparison::Equal => Ok(Self {
                 literals,

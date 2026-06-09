@@ -1,6 +1,8 @@
 use crate::fuzzer::{
     constraint::Constraint,
-    constraint_generator::{ConstraintDistribution, ConstraintGenerator, ConstraintSettings},
+    constraint_generator::{
+        ConstraintDistribution, ConstraintGenerationError, ConstraintGenerator, ConstraintSettings,
+    },
     domain::LiteralIdent,
     grammar::{PBGrammar, PBKind},
 };
@@ -295,11 +297,14 @@ impl PBSGenerator {
         }
     }
 
-    pub fn create_grammar(seed: u64, settings: GeneratorSettings) -> PBGrammar {
+    pub fn create_grammar(
+        seed: u64,
+        settings: GeneratorSettings,
+    ) -> Result<PBGrammar, ConstraintGenerationError> {
         Self::new(seed, settings).random_grammar()
     }
 
-    fn random_grammar(&mut self) -> PBGrammar {
+    fn random_grammar(&mut self) -> Result<PBGrammar, ConstraintGenerationError> {
         let start = Instant::now();
         let cancel_condition = self.settings.cancel_condition;
         let mut constraints: Vec<Box<dyn Constraint + Send>> = vec![];
@@ -316,7 +321,7 @@ impl PBSGenerator {
                 while current_unsat <= max_unsat_assignments {
                     let c = self
                         .constraint_generator
-                        .generate_random_constraint_with_unsat_count();
+                        .generate_random_constraint_with_unsat_count()?;
                     let unsat_for_c = c.amount_unsat_assignments();
                     current_unsat += unsat_for_c as u64;
                     constraints.push(c);
@@ -326,7 +331,7 @@ impl PBSGenerator {
             CancelCondition::CountConstraints { max_constraints } => {
                 info!("Generating {} constraints", max_constraints);
                 for _ in 0..max_constraints {
-                    let c = self.constraint_generator.generate_random_constraint();
+                    let c = self.constraint_generator.generate_random_constraint()?;
                     constraints.push(c);
                 }
                 assert_eq!(max_constraints, constraints.len() as u64)
@@ -348,13 +353,13 @@ impl PBSGenerator {
             ),
         };
 
-        PBGrammar::new(
+        Ok(PBGrammar::new(
             self.seed,
             unsat_assignments,
             distinct_literal_ids.len() as u32,
             constraints,
             min_constraint,
             start.elapsed(),
-        )
+        ))
     }
 }

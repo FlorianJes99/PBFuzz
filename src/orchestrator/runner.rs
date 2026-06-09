@@ -176,8 +176,10 @@ impl Orchestrator {
                     }
                 });
             }
+            // immediately drop the initial sender reference, only the clones inside the worker threads are kept alive
             drop(sender);
             for (iteration, work_result) in receiver.iter().enumerate() {
+                let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
                 let percentage_range_sat = 0.20..0.7;
                 if iteration == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
                     // Terminate early if amount sat instances not in range
@@ -189,8 +191,9 @@ impl Orchestrator {
                     );
                     cancelled.store(true, Ordering::Relaxed);
                     // We don't break here, because we want to process the remaining running threads
+                    // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
                 }
-                self.process_result(work_result, iteration as u32, &mut csv_writer, &mut stats);
+                self.process_result(work_result, iteration, &mut csv_writer, &mut stats);
             }
             let result = &mut csv_writer.flush();
             if let Err(err) = result {
@@ -320,7 +323,7 @@ fn work_iteration(
     let file_name = format!("{thread_id}_test_{seed}");
     let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
     debug!("Running Fuzzer with seed {seed}...");
-    let grammar = PBSGenerator::create_grammar(seed, settings);
+    let grammar = PBSGenerator::create_grammar(seed, settings)?;
     let duration_write_to_file = File::create(&output_file)
         .map(BufWriter::new)
         .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))?;

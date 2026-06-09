@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(mode) = args.mode {
         settings = settings.pb_kind(mode);
     }
-    let grammar = PBSGenerator::create_grammar(args.seed, settings.build());
+    let grammar = PBSGenerator::create_grammar(args.seed, settings.build())?;
     if args.print_statistics {
         print_block("Grammar Statistics", grammar.get_statistics());
     }
