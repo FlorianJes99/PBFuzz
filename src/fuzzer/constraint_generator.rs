@@ -183,7 +183,7 @@ impl ConstraintGenerator {
         let upper_bound =
             lower_max + (self.settings.upper_bound_degree * distance as f64).floor() as i32;
         let degree = self.rand.random_range(lower_bound..upper_bound).into();
-        CardinalityConstraint::new(literals, Comparison::GrEqual, degree).map_err(|e| e.into())
+        CardinalityConstraint::new(literals, Comparison::GrEqual, degree).map_err(Into::into)
     }
 
     pub fn generate_three_literal(
@@ -243,7 +243,7 @@ impl ConstraintGenerator {
             .collect();
 
         assert!(literals.len() as u32 == length);
-        ExactlyOneConstraint::new(literals, Comparison::Equal, 1).map_err(|e| e.into())
+        ExactlyOneConstraint::new(literals, Comparison::Equal, 1).map_err(Into::into)
     }
 
     pub fn generate_min_function(
@@ -278,28 +278,32 @@ impl ConstraintGenerator {
 
     /// Generate n ids to use for creation of literals in a single constraint
     fn get_n_ids_sorted(&mut self, n: u32) -> Result<Vec<LiteralIdent>, ConstraintGenerationError> {
-        Ok(index::sample(
+        index::sample(
             &mut self.rand,
             self.settings.max_vars.try_into()?,
             n.try_into()?,
         )
         .iter()
-        .map(|x| {
+        // sort the indices in increasing oder
+        .sorted()
+        .map(|x| -> Result<LiteralIdent, ConstraintGenerationError> {
             // Add +1 because we want ids from 1..=len and sample are from 0..len
             (x + 1)
                 .try_into()
-                .expect("Error while converting usize to u32 for literal identifier")
+                .map(LiteralIdent::new)
+                .map_err(Into::into)
         })
-        .map(LiteralIdent::new)
-        .sorted()
-        .collect())
+        .collect()
     }
 
     /// Methods specifically design for ThreeLiteralConstraints
     fn get_three_ids_sorted(&mut self) -> Result<[LiteralIdent; 3], ConstraintGenerationError> {
         let mut ids: [LiteralIdent; 3] =
             index::sample_array(&mut self.rand, self.settings.max_vars.try_into()?)
-                .expect("Invalid config for sampling. Constraint length > max_vars")
+                .ok_or(ConstraintGenerationError::InvalidSampling(
+                    3,
+                    self.settings.max_vars,
+                ))?
                 // Add +1 because we want ids from 1..=len and sample are from 0..len
                 .map(|x| x as u32 + 1)
                 .map(LiteralIdent::new);
@@ -312,12 +316,12 @@ impl ConstraintGenerator {
 pub enum ConstraintGenerationError {
     #[error("Subtraction failed due to overflow: {0} - {1}")]
     SubtractionOverflow(i64, i64),
-
     #[error("Construction of constraint failed")]
     Invalid(#[from] InvalidConstraintConstruction),
-
     #[error(transparent)]
     ConvertionFromInt(#[from] TryFromIntError),
+    #[error("Constraint length ({0}) is larger than amount of distinct literal ids ({1})")]
+    InvalidSampling(u32, u32),
 }
 
 #[derive(Debug)]

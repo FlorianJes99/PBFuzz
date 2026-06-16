@@ -48,9 +48,10 @@ pub trait Solver {
     ) -> Result<SolverStatus, ExternalProgramError> {
         match ext_result {
             SolverOutcome::Terminated(output) => match pb_kind {
-                PBKind::PBS => self.parser().parse_pbs(&output).map_err(|e| e.into()),
-                PBKind::PBO => self.parser().parse_pbo(&output).map_err(|e| e.into()),
-            },
+                PBKind::PBS => self.parser().parse_pbs(&output),
+                PBKind::PBO => self.parser().parse_pbo(&output),
+            }
+            .map_err(Into::into),
             SolverOutcome::Timeout => Ok(SolverStatus::TimeLimit),
         }
     }

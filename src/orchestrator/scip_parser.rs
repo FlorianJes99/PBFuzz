@@ -77,7 +77,7 @@ impl Parser for ScipParser {
                 .last()
                 .ok_or_else(|| ScipParsingError::NoObjectiveFound(line.into()))
                 .and_then(|v| self.parse_as_i32(v.trim()));
-            return StatusLine::Objective(result.map_err(|e| e.into()));
+            return StatusLine::Objective(result.map_err(Into::into));
         }
 
         if line.starts_with("x")
