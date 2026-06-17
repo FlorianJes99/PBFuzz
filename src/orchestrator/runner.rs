@@ -336,15 +336,16 @@ fn work_iteration(
     );
 
     let pb_kind = settings.get_problem_kind();
+    let with_option_fuzzing = rand::random_bool(0.1); // option fuzzing with 10% probability
     match mode {
         OrchestrationMode::Comparison(p1, p2) => {
             let start_bin1 = Instant::now();
-            let output_bin1 = p1.run(&output_file)?;
+            let output_bin1 = p1.run(&output_file, with_option_fuzzing)?;
             let time_bin1 = start_bin1.elapsed();
 
             debug!("Solving generated instance with {}", p2.get_name());
             let start_bin2 = Instant::now();
-            let output_bin2 = p2.run(&output_file)?;
+            let output_bin2 = p2.run(&output_file, with_option_fuzzing)?;
             let time_bin2 = start_bin2.elapsed();
 
             let start_output_extraction = Instant::now();
@@ -381,7 +382,7 @@ fn work_iteration(
         OrchestrationMode::ProofChecking(p) => {
             let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
             let problem_solving_start = Instant::now();
-            let output = p.run_with_proof(&output_file, &proof_file)?;
+            let output = p.run_with_proof(&output_file, &proof_file, with_option_fuzzing)?;
             let problem_solving_duration = problem_solving_start.elapsed();
             let start_output_parsing = Instant::now();
             let parsing_result = p.parse(output, &pb_kind);
