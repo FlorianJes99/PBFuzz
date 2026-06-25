@@ -280,7 +280,7 @@ impl CardinalityConstraint {
         comparison: Comparison,
         degree: i64,
     ) -> Result<Self, InvalidConstraintConstruction> {
-        if literals.len() == 0 {
+        if literals.is_empty() {
             return Err(InvalidConstraintConstruction::create_empty_literal(
                 ConstraintKind::Cardinality,
             ));
@@ -366,7 +366,7 @@ impl ExactlyOneConstraint {
         comparison: Comparison,
         degree: i64,
     ) -> Result<Self, InvalidConstraintConstruction> {
-        if literals.len() == 0 {
+        if literals.is_empty() {
             return Err(InvalidConstraintConstruction::create_empty_literal(
                 ConstraintKind::ExactlyOne,
             ));

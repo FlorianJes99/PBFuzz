@@ -337,6 +337,9 @@ fn work_iteration(
 
     let pb_kind = settings.get_problem_kind();
     let with_option_fuzzing = rand::random_bool(0.1); // option fuzzing with 10% probability
+    if with_option_fuzzing {
+        info!("Using option fuzzing in this run...")
+    }
     match mode {
         OrchestrationMode::Comparison(p1, p2) => {
             let start_bin1 = Instant::now();

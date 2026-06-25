@@ -84,33 +84,43 @@ pub trait Solver {
 pub struct ExternalProgramSer {
     binary: PathBuf,
     args: Vec<String>,
-    optional_args: Vec<OptionalArg>,
+    optional_args: OptionalArgs,
     name: String,
     parser_kind: ParserKind,
     proof_arg: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct OptionalArg {
-    arg_name: String,
-    arg_type: Option<ArgumentType>,
+struct OptionalArgs {
+    args: Vec<OptionalArg>,
     /// if arg name and value are seperated by spaces, they need to be provided as separate arguments to the `Command` struct
     /// default to false
     #[serde(default)]
     space_separated: bool,
 }
 
+#[derive(Deserialize)]
+struct OptionalArg {
+    arg_name: String,
+    arg_type: Option<ArgumentType>,
+}
+
 impl OptionalArg {
-    fn collect_into_string_args(&self, rng: &mut impl RngExt) -> Vec<String> {
-        let arg_type_as_string = self
-            .arg_type
-            .as_ref()
-            .map(|t| t.sample_to_string(rng))
-            .unwrap_or_default();
-        if self.space_separated {
-            vec![self.arg_name.clone(), arg_type_as_string]
-        } else {
-            vec![format!("{}{}", self.arg_name, arg_type_as_string)]
+    fn collect_into_string_args(
+        &self,
+        space_separated: bool,
+        rng: &mut impl RngExt,
+    ) -> Vec<String> {
+        match &self.arg_type {
+            Some(t) => {
+                let arg_type_as_string = t.sample_to_string(rng);
+                if space_separated {
+                    vec![self.arg_name.clone(), arg_type_as_string]
+                } else {
+                    vec![format!("{}{}", self.arg_name, arg_type_as_string)]
+                }
+            }
+            None => vec![self.arg_name.to_string()],
         }
     }
 }
@@ -118,7 +128,6 @@ impl OptionalArg {
 #[derive(Deserialize)]
 #[serde(try_from = "ArgumentTypeRaw")]
 enum ArgumentType {
-    Bool,
     IntRange(RangeInclusive<i32>),
     FloatRange(RangeInclusive<f32>),
     Values(Vec<String>),
@@ -129,7 +138,6 @@ impl TryFrom<ArgumentTypeRaw> for ArgumentType {
 
     fn try_from(value: ArgumentTypeRaw) -> Result<Self, Self::Error> {
         match value {
-            ArgumentTypeRaw::Bool => Ok(ArgumentType::Bool),
             ArgumentTypeRaw::Values(items) => Ok(ArgumentType::Values(items)),
             ArgumentTypeRaw::IntRange(i1, i2) => {
                 if i1 > i2 {
@@ -151,7 +159,6 @@ impl TryFrom<ArgumentTypeRaw> for ArgumentType {
 
 #[derive(Deserialize)]
 enum ArgumentTypeRaw {
-    Bool,
     IntRange(i32, i32),
     FloatRange(f32, f32),
     Values(Vec<String>),
@@ -160,7 +167,6 @@ enum ArgumentTypeRaw {
 impl ArgumentType {
     fn sample_to_string(&self, rng: &mut impl RngExt) -> String {
         match self {
-            ArgumentType::Bool => (rng.random_bool(0.5) as u8).to_string(),
             ArgumentType::IntRange(r) => rng.random_range(r.clone()).to_string(),
             ArgumentType::FloatRange(r) => rng.random_range(r.clone()).to_string(),
             ArgumentType::Values(items) => items.choose(rng).cloned().unwrap_or_default(),
@@ -211,7 +217,7 @@ pub struct ExternalProgram {
     /// essential args needed in order to run the solver
     args: Vec<String>,
     /// optional arguments, which are used to implement option fuzzing
-    optional_args: Vec<OptionalArg>,
+    optional_args: OptionalArgs,
     /// name of the solver, used as an identifier in info/error messages
     name: String,
     /// parser used to read output of the solver
@@ -256,11 +262,10 @@ impl ExternalProgramWithProof {
             command.arg(arg);
         }
 
-        if with_option_fuzzing {
-            for arg in &self.program.sample_optional_args() {
-                // TODO: what to do if arg look like this `--myarg 10`
-                // Command structure wants every space seperated input as seperarate arg
-                // roundingsat conects arg name and arg with =
+        if with_option_fuzzing && !self.program.optional_args.args.is_empty() {
+            let sampled_args = &self.program.sample_optional_args();
+            info!("Sampled args for this run: {}", sampled_args.join(", "));
+            for arg in sampled_args {
                 command.arg(arg);
             }
         }
@@ -311,10 +316,11 @@ impl ExternalProgram {
 
     fn sample_optional_args(&self) -> Vec<String> {
         let rng = &mut rand::rng();
-        let amount = 3.min(self.optional_args.len());
+        let amount = 3.min(self.optional_args.args.len());
         self.optional_args
+            .args
             .sample(rng, amount)
-            .flat_map(|arg| arg.collect_into_string_args(rng))
+            .flat_map(|arg| arg.collect_into_string_args(self.optional_args.space_separated, rng))
             .collect()
     }
 }
@@ -576,21 +582,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_collect_arg_into_string() {
+    fn test_collect_arg_into_string_not_separated() {
         let mut rng = StdRng::seed_from_u64(42);
         let arg = OptionalArg {
             arg_name: "--myArg=".into(),
             arg_type: Some(ArgumentType::IntRange(1..=3)),
-            space_separated: false,
         };
 
-        let args = arg.collect_into_string_args(&mut rng);
+        let args = arg.collect_into_string_args(false, &mut rng);
         assert_eq!(1, args.len());
         let (arg_name, arg_type) = args[0].split_once("=").unwrap();
         assert_eq!("--myArg", arg_name);
         assert!(
             arg_type.parse::<i32>().is_ok(),
             "should be able to parse int argument value: {}",
+            arg_type
+        );
+    }
+
+    #[test]
+    fn test_collect_arg_into_string_separated() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let arg = OptionalArg {
+            arg_name: "--myArg".into(),
+            arg_type: Some(ArgumentType::FloatRange(1.0..=3.0)),
+        };
+
+        let args = arg.collect_into_string_args(true, &mut rng);
+        assert_eq!(args.len(), 2, "Expected Vec of size 2, but got: {:?}", args);
+        let [arg_name, arg_type]: &[String; 2] = args.as_slice().try_into().unwrap();
+        assert_eq!("--myArg", arg_name);
+        assert!(
+            arg_type.parse::<f32>().is_ok(),
+            "should be able to parse float argument value: {}",
             arg_type
         );
     }
