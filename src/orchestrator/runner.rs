@@ -1,21 +1,21 @@
-use crate::fuzzer::helpers::{MoveFile, move_files, remove_files};
+use crate::fuzzer::helpers::{move_files, remove_files, MoveFile};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::external_program::ExternalProgramWithProof;
 use crate::{
     fuzzer::{
-        helpers::{RunningAverage, RunningAverageDuration, get_hms_parts},
+        helpers::{get_hms_parts, RunningAverage, RunningAverageDuration},
         pbs_generator::GeneratorSettingsBuilder,
     },
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome, Solver},
-        folders::{DATA_FOLDER, prepare_output_folder},
+        folders::{prepare_output_folder, DATA_FOLDER},
         orchestrator_args::OrchestratorArgs,
     },
 };
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::{
     error::Error,
     fmt::Display,
@@ -145,6 +145,12 @@ impl Orchestrator {
         let mut stats = Stats::new();
         let stop_condtion = Arc::new(stop_condition);
         let cancelled = Arc::new(AtomicBool::new(false));
+        let ctrc_flag = cancelled.clone();
+        ctrlc::set_handler(move || {
+            println!("Registered user termination!");
+            println!("Shutting down gracefully...");
+            ctrc_flag.store(true, Ordering::Relaxed);
+        })?;
         let count_runs = Arc::new(AtomicU32::new(0));
         let (sender, receiver) = channel::<WorkResult>();
         let start = Instant::now();
