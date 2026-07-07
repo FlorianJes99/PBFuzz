@@ -6,6 +6,7 @@ use std::{
     ops::Deref,
 };
 
+use rand::RngExt;
 use thiserror::Error;
 
 /// Wrapper type for the identifier of an literal.
@@ -27,9 +28,12 @@ impl Display for MinObjectiveValue {
 #[derive(Debug, Clone)]
 pub struct SolutionModel(HashSet<LiteralIdent>);
 
-impl From<HashSet<LiteralIdent>> for SolutionModel {
-    fn from(value: HashSet<LiteralIdent>) -> Self {
-        Self(value)
+impl<T> From<T> for SolutionModel
+where
+    T: IntoIterator<Item = LiteralIdent>,
+{
+    fn from(value: T) -> Self {
+        Self(value.into_iter().collect())
     }
 }
 
@@ -168,6 +172,15 @@ impl Display for MinFunction {
 pub enum Comparison {
     Equal,
     GrEqual,
+}
+
+impl Comparison {
+    pub fn sample(rand: &mut impl RngExt) -> Self {
+        match rand.random_bool(0.5) {
+            true => Self::Equal,
+            false => Self::GrEqual,
+        }
+    }
 }
 
 impl Display for Comparison {

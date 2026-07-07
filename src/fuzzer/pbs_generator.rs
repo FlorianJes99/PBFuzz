@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::{fmt::Display, path::Path, time::Instant};
 
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, SeedableRng};
 
 #[derive(Debug)]
 pub struct PBSGenerator {
@@ -73,6 +73,14 @@ pub struct GeneratorSettings {
     ///       highest possible degree (RHS) can be 6
     upper_bound_degree: f64,
     constraint_distribution: ConstraintDistribution,
+    generation_method: GenerationMethod,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Default)]
+pub enum GenerationMethod {
+    #[default]
+    Random,
+    FromSolution,
 }
 
 impl From<GeneratorSettings> for ConstraintSettings {
@@ -164,6 +172,7 @@ pub struct GeneratorSettingsBuilder {
     lower_bound_degree: f64,
     upper_bound_degree: f64,
     constraint_distribution: ConstraintDistribution,
+    generation_method: GenerationMethod,
 }
 
 impl Default for GeneratorSettingsBuilder {
@@ -192,6 +201,7 @@ impl GeneratorSettingsBuilder {
         };
         let grammar_kind = PBKind::PBS;
         let constraint_distribution = ConstraintDistribution::new(2, 1, 1, 1);
+        let generation_method = GenerationMethod::default();
         // assignment combinations
         Self {
             max_vars,
@@ -204,6 +214,7 @@ impl GeneratorSettingsBuilder {
             lower_bound_degree,
             upper_bound_degree,
             constraint_distribution,
+            generation_method,
         }
     }
 
@@ -226,6 +237,7 @@ impl GeneratorSettingsBuilder {
             lower_bound_degree: settings.lower_bound_degree,
             upper_bound_degree: settings.upper_bound_degree,
             constraint_distribution: settings.constraint_distribution,
+            generation_method: settings.generation_method,
         }
     }
 
@@ -282,6 +294,7 @@ impl GeneratorSettingsBuilder {
             lower_bound_degree: self.lower_bound_degree,
             upper_bound_degree: self.upper_bound_degree,
             constraint_distribution: self.constraint_distribution,
+            generation_method: self.generation_method,
         }
     }
 }
@@ -307,9 +320,7 @@ impl PBSGenerator {
     fn random_grammar(&mut self) -> Result<PBGrammar, ConstraintGenerationError> {
         let start = Instant::now();
         let cancel_condition = self.settings.cancel_condition;
-        let mut constraints: Vec<Box<dyn Constraint + Send>> = vec![];
-        let mut unsat_assignments = Option::None;
-        match cancel_condition {
+        let (constraints, unsat_assignments) = match cancel_condition {
             CancelCondition::CountUnsat {
                 max_unsat_assignments,
             } => {
@@ -317,6 +328,7 @@ impl PBSGenerator {
                     "Generating a maximum of {} unsat assignments",
                     max_unsat_assignments
                 );
+                let mut constraints_temp: Vec<Box<dyn Constraint>> = vec![];
                 let mut current_unsat = 0;
                 while current_unsat <= max_unsat_assignments {
                     let c = self
@@ -324,17 +336,27 @@ impl PBSGenerator {
                         .generate_random_constraint_with_unsat_count()?;
                     let unsat_for_c = c.amount_unsat_assignments();
                     current_unsat += unsat_for_c as u64;
-                    constraints.push(c);
+                    constraints_temp.push(c);
                 }
-                unsat_assignments = Option::Some(current_unsat);
+                (constraints_temp, Option::Some(current_unsat))
             }
             CancelCondition::CountConstraints { max_constraints } => {
-                info!("Generating {} constraints", max_constraints);
-                for _ in 0..max_constraints {
-                    let c = self.constraint_generator.generate_random_constraint()?;
-                    constraints.push(c);
+                match &self.settings.generation_method {
+                    GenerationMethod::FromSolution => (
+                        self.constraint_generator
+                            .generate_from_solution(max_constraints)?,
+                        Option::None,
+                    ),
+
+                    GenerationMethod::Random => {
+                        info!("Generating {} constraints", max_constraints);
+                        let cs: Vec<_> = (0..max_constraints)
+                            .map(|_| self.constraint_generator.generate_random_constraint())
+                            .collect::<Result<_, _>>()?;
+                        assert_eq!(max_constraints, cs.len() as u64);
+                        (cs, Option::None)
+                    }
                 }
-                assert_eq!(max_constraints, constraints.len() as u64)
             }
         };
 

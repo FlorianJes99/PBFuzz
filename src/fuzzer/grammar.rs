@@ -54,7 +54,7 @@ pub struct PBGrammar {
     amount_vars: u32,
     amount_constraints: u32,
     amount_unsat_assignments: Option<u64>,
-    constraints: Vec<Box<dyn Constraint + Send>>,
+    constraints: Vec<Box<dyn Constraint>>,
     min_constraint: Option<MinFunction>,
     generation_time: Duration,
 }
@@ -64,7 +64,7 @@ impl PBGrammar {
         seed: u64,
         amount_unsat_assignments: Option<u64>,
         amount_distinct_vars: u32,
-        constraints: Vec<Box<dyn Constraint + Send>>,
+        constraints: Vec<Box<dyn Constraint>>,
         min_constraint: Option<MinFunction>,
         generation_time: Duration,
     ) -> Self {
@@ -92,7 +92,7 @@ impl PBGrammar {
             self.amount_vars, self.amount_constraints
         );
         let amount_equal_constraints = 0; //TODO: implement this as soon as constraints can be
-        //equal with RHS
+                                          //equal with RHS
         writeln!(
             writer,
             "* #variable= {} #constraint= {} #equal= {} intsize= 32",
@@ -260,9 +260,9 @@ mod test {
                 .map(|c| c.amount_unsat_assignments() as u64)
                 .sum(),
         );
-        let constraints: Vec<Box<dyn Constraint + Send>> = constraints
+        let constraints: Vec<Box<dyn Constraint>> = constraints
             .into_iter()
-            .map(|a| Box::new(a) as Box<dyn Constraint + Send>)
+            .map(|a| Box::new(a) as Box<dyn Constraint>)
             .collect();
         let grammar = PBGrammar::new(
             42,

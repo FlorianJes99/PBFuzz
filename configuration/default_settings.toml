@@ -28,6 +28,9 @@ grammar_kind = "PBO"
 #   "CountUnsat"       — stop after a total number of unsatisfying assignments
 #   "CountConstraints" — stop after a fixed number of constraints
 
+# Options are: "FromSolution" and "Random"
+generation_method = "FromSolution"
+
 [cancel_condition.CountConstraints]
 max_constraints = 88
 

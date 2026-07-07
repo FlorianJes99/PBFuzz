@@ -1,10 +1,10 @@
 use itertools::Itertools;
 use log::debug;
 use rand::{
-    RngExt,
-    distr::{Distribution, weighted::WeightedIndex},
+    distr::{weighted::WeightedIndex, Distribution},
     rngs::StdRng,
-    seq::{IndexedRandom, index},
+    seq::{index, IndexedRandom},
+    RngExt,
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, num::TryFromIntError};
@@ -16,7 +16,7 @@ use crate::fuzzer::{
         CostraintWithUnsatAssignments, ExactlyOneConstraint, InvalidConstraintConstruction,
         ThreeLiteralConstraint,
     },
-    domain::{Comparison, Literal, LiteralIdent, MinFunction},
+    domain::{Comparison, Literal, LiteralIdent, MinFunction, SolutionModel},
 };
 
 #[derive(Debug)]
@@ -246,6 +246,49 @@ impl ConstraintGenerator {
         ExactlyOneConstraint::new(literals, Comparison::Equal, 1).map_err(Into::into)
     }
 
+    pub fn generate_from_solution(
+        &mut self,
+        amount_constraints: u64,
+    ) -> Result<Vec<Box<dyn Constraint>>, ConstraintGenerationError> {
+        let amount_vars = self.settings.max_vars;
+        let lits: Vec<_> = (1..=amount_vars).map(LiteralIdent::new).collect();
+        let solution: SolutionModel = lits
+            .sample(&mut self.rand, (amount_vars / 2) as usize)
+            .cloned()
+            .into();
+        (0..amount_constraints)
+            .map(|_| self.create_sat_constraint(&solution))
+            .collect()
+    }
+
+    fn create_sat_constraint(
+        &mut self,
+        model: &SolutionModel,
+    ) -> Result<Box<dyn Constraint>, ConstraintGenerationError> {
+        let start_val = self.settings.coeff_lower_bound;
+        let end_val = self.settings.coeff_upper_bound;
+        let mut lits = self
+            .get_three_ids_sorted()?
+            .map(|id| id.to_literal(self.sample_without_zero_from_range(start_val, end_val)));
+        if !lits.iter().any(|l| model.contains(&l.literal_id)) {
+            // in every constraint should be at least one true assignment
+            let candidates = model.iter().collect::<Vec<_>>();
+            let true_lit = candidates
+                .choose(&mut self.rand)
+                .ok_or(ConstraintGenerationError::InvalidSampling(0, 0))?;
+            lits[0] = true_lit.to_literal(lits[0].coeff)
+        }
+        let comparison = Comparison::sample(&mut self.rand);
+        let degree = lits
+            .iter()
+            .filter(|l| model.contains(&l.literal_id))
+            .map(|l| i64::from(l.coeff))
+            .sum::<i64>();
+        Ok(Box::new(ThreeLiteralConstraint::new(
+            lits, comparison, degree,
+        )))
+    }
+
     pub fn generate_min_function(
         &mut self,
         possible_vars: &[LiteralIdent],
@@ -312,6 +355,9 @@ impl ConstraintGenerator {
     }
 }
 
+/// Sum type for all Errors happenings during Constraint Generation
+///
+/// This can be either Errors wrapped and propagated upwards from underlying calls or new error types
 #[derive(Debug, Error)]
 pub enum ConstraintGenerationError {
     #[error("Subtraction failed due to overflow: {0} - {1}")]
@@ -324,6 +370,7 @@ pub enum ConstraintGenerationError {
     InvalidSampling(u32, u32),
 }
 
+/// All Settings needed for generation of constraints
 #[derive(Debug)]
 pub struct ConstraintSettings {
     max_vars: u32,
@@ -351,6 +398,7 @@ pub struct ConstraintSettings {
     constraint_distribution: ConstraintDistribution,
 }
 
+/// Constraint distributions models the relative occurence of each constraint type in the entire grammar.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct ConstraintDistribution {
     three_literal_weight: i32,

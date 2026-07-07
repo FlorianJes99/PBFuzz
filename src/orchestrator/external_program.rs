@@ -10,7 +10,7 @@ use std::{
 };
 
 use log::info;
-use rand::{RngExt, seq::IndexedRandom};
+use rand::{seq::IndexedRandom, RngExt};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -84,13 +84,14 @@ pub trait Solver {
 pub struct ExternalProgramSer {
     binary: PathBuf,
     args: Vec<String>,
+    #[serde(default)]
     optional_args: OptionalArgs,
     name: String,
     parser_kind: ParserKind,
     proof_arg: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct OptionalArgs {
     args: Vec<OptionalArg>,
     /// if arg name and value are seperated by spaces, they need to be provided as separate arguments to the `Command` struct
@@ -571,13 +572,13 @@ pub enum ExternalProgramError {
     InvalidIntRange(i32, i32),
     #[error("Invalid Range specified: {0} needs to be <= {1}")]
     InvalidFloatRange(f32, f32),
-    #[error("Failed to parse output of solver")]
+    #[error("Failed to parse output of solver: {0}")]
     Parsing(#[from] OutputParsingError),
 }
 
 #[cfg(test)]
 mod tests {
-    use rand::{SeedableRng, rngs::StdRng};
+    use rand::{rngs::StdRng, SeedableRng};
 
     use super::*;
 
