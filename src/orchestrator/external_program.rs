@@ -399,9 +399,16 @@ impl SolverStatus {
                     conflicts: *conflicts,
                 }
             }
-            SolverStatus::Unsat { conflicts } => IterationOutcome::Unsat {
-                conflicts: *conflicts,
-            },
+            SolverStatus::Unsat { conflicts } => {
+                if !check_proof(formula, derivation) {
+                    return IterationOutcome::Bug {
+                        reason: BugReason::ProofCheckerFailed,
+                    };
+                }
+                IterationOutcome::Unsat {
+                    conflicts: *conflicts,
+                }
+            }
             SolverStatus::TimeLimit => IterationOutcome::TimeLimt,
             SolverStatus::Unknown => IterationOutcome::Unknown,
         }
@@ -421,8 +428,7 @@ impl SolverStatus {
                     solution: s1,
                 },
                 SolverStatus::Sat {
-                    // TODO: Currently we don't track conflicts for scip
-                    conflicts: _,
+                    conflicts: c2,
                     solution: s2,
                 },
             ) => {
@@ -442,13 +448,14 @@ impl SolverStatus {
                         },
                     };
                 }
+                let conflicts = *c1.max(c2);
                 match (s1, s2) {
                     (SolverSolution::PBS(_), SolverSolution::PBS(_)) => {
-                        IterationOutcome::Sat { conflicts: *c1 }
+                        IterationOutcome::Sat { conflicts }
                     }
                     (SolverSolution::PBO(_, min1), SolverSolution::PBO(_, min2)) => {
                         if min1 == min2 {
-                            IterationOutcome::Sat { conflicts: *c1 }
+                            IterationOutcome::Sat { conflicts }
                         } else {
                             IterationOutcome::Bug {
                                 reason: BugReason::DifferentObjectives(min1.clone(), min2.clone()),
@@ -458,8 +465,10 @@ impl SolverStatus {
                     _ => unreachable!("cant compare pbs with pbo"),
                 }
             }
-            (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: _ }) => {
-                IterationOutcome::Unsat { conflicts: *c1 }
+            (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: c2 }) => {
+                IterationOutcome::Unsat {
+                    conflicts: *c1.max(c2),
+                }
             }
             (SolverStatus::Unknown, SolverStatus::Unknown) => IterationOutcome::Unknown,
             (SolverStatus::TimeLimit, _) => IterationOutcome::TimeLimt,

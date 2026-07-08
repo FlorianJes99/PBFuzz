@@ -278,7 +278,7 @@ impl ConstraintGenerator {
                 .ok_or(ConstraintGenerationError::InvalidSampling(0, 0))?;
             lits[0] = true_lit.to_literal(lits[0].coeff)
         }
-        let comparison = Comparison::sample(&mut self.rand);
+        let comparison = self.sample_comparison(0.1);
         let degree = lits
             .iter()
             .filter(|l| model.contains(&l.literal_id))
@@ -287,6 +287,15 @@ impl ConstraintGenerator {
         Ok(Box::new(ThreeLiteralConstraint::new(
             lits, comparison, degree,
         )))
+    }
+
+    fn sample_comparison(&mut self, percentage_equal: f64) -> Comparison {
+        assert!((0.0..=1.0).contains(&percentage_equal));
+        if self.rand.random_bool(percentage_equal) {
+            Comparison::Equal
+        } else {
+            Comparison::GrEqual
+        }
     }
 
     pub fn generate_min_function(

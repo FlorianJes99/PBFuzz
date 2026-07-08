@@ -563,7 +563,7 @@ impl Display for Stats {
         )?;
         writeln!(
             f,
-            "Average conficts to solve                : {}",
+            "Average conflicts to solve               : {}",
             self.average_conflicts.get_average()
         )?;
         writeln!(
