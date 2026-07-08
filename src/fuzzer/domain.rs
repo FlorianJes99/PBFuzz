@@ -15,6 +15,7 @@ use thiserror::Error;
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub struct LiteralIdent(u32);
 
+/// Wrapper type for the Minimum Objective in PBO
 #[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
 pub struct MinObjectiveValue(i32);
 
@@ -24,6 +25,7 @@ impl Display for MinObjectiveValue {
     }
 }
 
+/// Set of literals set to TRUE in the solution of a PBO/PBS problem
 #[derive(Debug, Clone)]
 pub struct SolutionModel(HashSet<LiteralIdent>);
 
@@ -78,17 +80,25 @@ impl std::str::FromStr for LiteralIdent {
     type Err = ParseLiteralError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if !s.starts_with("x") {
-            return Err(ParseLiteralError::InvalidCharacter { literal: s.into() });
+        if let Some(num_str) = s.strip_prefix("x") {
+            num_str
+                .parse::<u32>()
+                .map(LiteralIdent::new)
+                .map_err(|err| ParseLiteralError::ParseInt {
+                    literal: s.into(),
+                    source: err,
+                })
+        } else if let Some(num_str) = s.strip_prefix("~x") {
+            num_str
+                .parse::<u32>()
+                .map(LiteralIdent::new)
+                .map_err(|err| ParseLiteralError::ParseInt {
+                    literal: s.into(),
+                    source: err,
+                })
+        } else {
+            Err(ParseLiteralError::InvalidCharacter { literal: s.into() })
         }
-        let num_str = &s[1..];
-        num_str
-            .parse::<u32>()
-            .map(LiteralIdent::new)
-            .map_err(|err| ParseLiteralError::ParseInt {
-                literal: s.into(),
-                source: err,
-            })
     }
 }
 

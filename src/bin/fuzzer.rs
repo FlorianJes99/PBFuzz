@@ -6,10 +6,10 @@ use clap::Parser;
 use fuzzer_pseudo_bool::fuzzer::fuzzer_args::FuzzerArgs;
 use fuzzer_pseudo_bool::fuzzer::helpers::current_time_as_timestamp;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
-use fuzzer_pseudo_bool::fuzzer::pbs_generator::GeneratorSettingsBuilder;
+use fuzzer_pseudo_bool::fuzzer::pb_settings::GeneratorSettingsBuilder;
 use fuzzer_pseudo_bool::fuzzer::pbs_generator::PBSGenerator;
-use log::Level;
 use log::info;
+use log::Level;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // initialize the logger

@@ -1,11 +1,9 @@
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile};
+use crate::fuzzer::pb_settings::{GeneratorSettings, GeneratorSettingsBuilder};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::external_program::ExternalProgramWithProof;
 use crate::{
-    fuzzer::{
-        helpers::{get_hms_parts, RunningAverage, RunningAverageDuration},
-        pbs_generator::GeneratorSettingsBuilder,
-    },
+    fuzzer::helpers::{get_hms_parts, RunningAverage, RunningAverageDuration},
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome, Solver},
@@ -33,10 +31,7 @@ use itertools::Itertools;
 use log::{debug, error, info};
 use rand::{self, RngExt};
 
-use crate::fuzzer::{
-    helpers::print_block,
-    pbs_generator::{GeneratorSettings, PBSGenerator},
-};
+use crate::fuzzer::{helpers::print_block, pbs_generator::PBSGenerator};
 
 /// Entry point for the orchestrator to run fuzzer and external programs until a stop condition is
 /// met.
