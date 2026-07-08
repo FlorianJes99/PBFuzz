@@ -12,13 +12,13 @@ use std::time::Instant;
 use rand::{rngs::StdRng, SeedableRng};
 
 #[derive(Debug)]
-pub struct PBSGenerator {
+pub struct PBGenerator {
     seed: u64,
     constraint_generator: ConstraintGenerator,
     settings: GeneratorSettings,
 }
 
-impl PBSGenerator {
+impl PBGenerator {
     fn new(seed: u64, settings: GeneratorSettings) -> Self {
         let constr_generator =
             ConstraintGenerator::new(StdRng::seed_from_u64(seed), settings.into());

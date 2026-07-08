@@ -6,8 +6,8 @@ use clap::Parser;
 use fuzzer_pseudo_bool::fuzzer::fuzzer_args::FuzzerArgs;
 use fuzzer_pseudo_bool::fuzzer::helpers::current_time_as_timestamp;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
+use fuzzer_pseudo_bool::fuzzer::pb_generator::PBGenerator;
 use fuzzer_pseudo_bool::fuzzer::pb_settings::GeneratorSettingsBuilder;
-use fuzzer_pseudo_bool::fuzzer::pbs_generator::PBSGenerator;
 use log::info;
 use log::Level;
 
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(mode) = args.mode {
         settings = settings.pb_kind(mode);
     }
-    let grammar = PBSGenerator::create_grammar(args.seed, settings.build())?;
+    let grammar = PBGenerator::create_grammar(args.seed, settings.build())?;
     if args.print_statistics {
         print_block("Grammar Statistics", grammar.get_statistics());
     }

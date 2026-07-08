@@ -31,7 +31,7 @@ use itertools::Itertools;
 use log::{debug, error, info};
 use rand::{self, RngExt};
 
-use crate::fuzzer::{helpers::print_block, pbs_generator::PBSGenerator};
+use crate::fuzzer::{helpers::print_block, pb_generator::PBGenerator};
 
 /// Entry point for the orchestrator to run fuzzer and external programs until a stop condition is
 /// met.
@@ -324,7 +324,7 @@ fn work_iteration(
     let file_name = format!("{thread_id}_test_{seed}");
     let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
     debug!("Running Fuzzer with seed {seed}...");
-    let grammar = PBSGenerator::create_grammar(seed, settings)?;
+    let grammar = PBGenerator::create_grammar(seed, settings)?;
     let duration_write_to_file = File::create(&output_file)
         .map(BufWriter::new)
         .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))?;
