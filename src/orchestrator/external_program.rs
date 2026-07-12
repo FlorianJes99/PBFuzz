@@ -372,7 +372,7 @@ pub enum SolverStatus {
 
 impl SolverStatus {
     pub fn verify_with_proof_checking(
-        &self,
+        self,
         grammar: &PBGrammar,
         formula: &Path,
         derivation: &Path,
@@ -395,8 +395,19 @@ impl SolverStatus {
                         reason: BugReason::ProofCheckerFailed,
                     };
                 }
-                IterationOutcome::Sat {
-                    conflicts: *conflicts,
+                match solution {
+                    SolverSolution::PBS(solution_model) => IterationOutcome::Sat {
+                        conflicts,
+                        solution: SatModel::Proof(solution_model),
+                        optimum: None,
+                    },
+                    SolverSolution::PBO(solution_model, min_objective_value) => {
+                        IterationOutcome::Sat {
+                            conflicts,
+                            solution: SatModel::Proof(solution_model),
+                            optimum: Some(min_objective_value),
+                        }
+                    }
                 }
             }
             SolverStatus::Unsat { conflicts } => {
@@ -405,22 +416,22 @@ impl SolverStatus {
                         reason: BugReason::ProofCheckerFailed,
                     };
                 }
-                IterationOutcome::Unsat {
-                    conflicts: *conflicts,
-                }
+                IterationOutcome::Unsat { conflicts }
             }
-            SolverStatus::TimeLimit => IterationOutcome::TimeLimt,
+            SolverStatus::TimeLimit => IterationOutcome::TimeLimit,
             SolverStatus::Unknown => IterationOutcome::Unknown,
         }
     }
     pub fn verify_and_compare_status(
-        &self,
-        other: &SolverStatus,
+        self,
+        other: SolverStatus,
         grammar: &PBGrammar,
         //TODO: we probably want to save the name somewhere inside self and other
         self_name: &str,
         other_name: &str,
     ) -> IterationOutcome {
+        let status_str1 = self.get_status_string().to_string();
+        let status_str2 = other.get_status_string().to_string();
         match (self, other) {
             (
                 SolverStatus::Sat {
@@ -448,17 +459,23 @@ impl SolverStatus {
                         },
                     };
                 }
-                let conflicts = *c1.max(c2);
+                let conflicts = c1.max(c2);
                 match (s1, s2) {
-                    (SolverSolution::PBS(_), SolverSolution::PBS(_)) => {
-                        IterationOutcome::Sat { conflicts }
-                    }
-                    (SolverSolution::PBO(_, min1), SolverSolution::PBO(_, min2)) => {
+                    (SolverSolution::PBS(m1), SolverSolution::PBS(m2)) => IterationOutcome::Sat {
+                        conflicts,
+                        solution: SatModel::Comparison(m1, m2),
+                        optimum: None,
+                    },
+                    (SolverSolution::PBO(m1, min1), SolverSolution::PBO(m2, min2)) => {
                         if min1 == min2 {
-                            IterationOutcome::Sat { conflicts }
+                            IterationOutcome::Sat {
+                                conflicts,
+                                solution: SatModel::Comparison(m1, m2),
+                                optimum: Some(min1),
+                            }
                         } else {
                             IterationOutcome::Bug {
-                                reason: BugReason::DifferentObjectives(min1.clone(), min2.clone()),
+                                reason: BugReason::DifferentObjectives(min1, min2),
                             }
                         }
                     }
@@ -467,17 +484,14 @@ impl SolverStatus {
             }
             (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: c2 }) => {
                 IterationOutcome::Unsat {
-                    conflicts: *c1.max(c2),
+                    conflicts: c1.max(c2),
                 }
             }
             (SolverStatus::Unknown, SolverStatus::Unknown) => IterationOutcome::Unknown,
-            (SolverStatus::TimeLimit, _) => IterationOutcome::TimeLimt,
-            (_, SolverStatus::TimeLimit) => IterationOutcome::TimeLimt,
+            (SolverStatus::TimeLimit, _) => IterationOutcome::TimeLimit,
+            (_, SolverStatus::TimeLimit) => IterationOutcome::TimeLimit,
             _ => IterationOutcome::Bug {
-                reason: BugReason::OutputStatusDiffers(
-                    self.get_status_string().into(),
-                    other.get_status_string().into(),
-                ),
+                reason: BugReason::OutputStatusDiffers(status_str1, status_str2),
             },
         }
     }
@@ -492,13 +506,30 @@ impl SolverStatus {
     }
 }
 
+pub enum SatModel {
+    Comparison(SolutionModel, SolutionModel),
+    Proof(SolutionModel),
+}
+
+/// Models the different states of one iteration in the orchestration pipeline
 pub enum IterationOutcome {
-    Sat { conflicts: u32 },
-    Unsat { conflicts: u32 },
+    /// result SAT containts data about the solution and in the Optimization case the found minimum value
+    Sat {
+        conflicts: u32,
+        solution: SatModel,
+        optimum: Option<MinObjectiveValue>,
+    },
+    Unsat {
+        conflicts: u32,
+    },
     Unknown,
-    TimeLimt,
-    Bug { reason: BugReason },
-    Error { error: ExternalProgramError },
+    TimeLimit,
+    Bug {
+        reason: BugReason,
+    },
+    Error {
+        error: ExternalProgramError,
+    },
 }
 
 impl IterationOutcome {
@@ -509,7 +540,7 @@ impl IterationOutcome {
             IterationOutcome::Unknown => UNKNOWN_FOLDER.name,
             IterationOutcome::Bug { .. } => BUG_FOLDER.name,
             IterationOutcome::Error { .. } => ERROR_FOLDER.name,
-            IterationOutcome::TimeLimt => TIMEOUT_FOLDER.name,
+            IterationOutcome::TimeLimit => TIMEOUT_FOLDER.name,
         }
     }
     pub fn get_file_name_prefix(&self) -> &'static str {
@@ -523,18 +554,18 @@ impl IterationOutcome {
             IterationOutcome::Unknown => "unknown",
             IterationOutcome::Bug { .. } => "bug",
             IterationOutcome::Error { .. } => "error",
-            IterationOutcome::TimeLimt => "timeout",
+            IterationOutcome::TimeLimit => "timeout",
         }
     }
 
     pub fn get_conflicts(&self) -> u32 {
         match self {
-            IterationOutcome::Sat { conflicts } => *conflicts,
+            IterationOutcome::Sat { conflicts, .. } => *conflicts,
             IterationOutcome::Unsat { conflicts } => *conflicts,
             IterationOutcome::Unknown => 0,
             IterationOutcome::Bug { .. } => 0,
             IterationOutcome::Error { .. } => 0,
-            IterationOutcome::TimeLimt => 0,
+            IterationOutcome::TimeLimit => 0,
         }
     }
 }

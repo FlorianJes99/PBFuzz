@@ -6,6 +6,7 @@ use std::{
     ops::Deref,
 };
 
+use itertools::Itertools;
 use thiserror::Error;
 
 /// Wrapper type for the identifier of an literal.
@@ -35,6 +36,12 @@ where
 {
     fn from(value: T) -> Self {
         Self(value.into_iter().collect())
+    }
+}
+
+impl Display for SolutionModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.iter().sorted().join(", "))
     }
 }
 
@@ -177,7 +184,7 @@ impl Display for MinFunction {
 /// Comparison enum models the different (In)equalities.
 ///
 /// PBS/PBO normally supports only >= and = operators.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Comparison {
     Equal,
     GrEqual,

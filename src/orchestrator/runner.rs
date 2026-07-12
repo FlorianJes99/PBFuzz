@@ -1,5 +1,5 @@
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile};
-use crate::fuzzer::pb_settings::{GeneratorSettings, GeneratorSettingsBuilder};
+use crate::fuzzer::pb_settings::{GenerationMethod, GeneratorSettings, GeneratorSettingsBuilder};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::external_program::ExternalProgramWithProof;
 use crate::{
@@ -155,36 +155,37 @@ impl Orchestrator {
                 let cancelled = Arc::clone(&cancelled);
                 let count_runs = Arc::clone(&count_runs);
                 let stop_condition = Arc::clone(&stop_condtion);
-                s.spawn(move || {
-                    while !cancelled.load(Ordering::Relaxed) {
-                        let iteration = count_runs.fetch_add(1, Ordering::Relaxed);
-                        if stop_condition.is_done(iteration, start) {
-                            break;
-                        }
-                        match work_iteration(
-                            &self.fuzzer_output_dir,
-                            self.generator_settings,
-                            &self.mode,
-                            i,
-                        ) {
-                            Ok(work_result) => {
-                                if let Err(e) = sender.send(work_result) {
-                                    error!("{e}");
-                                }
+                thread::Builder::new()
+                    .name(format!("thread-{i}"))
+                    .spawn_scoped(s, move || {
+                        while !cancelled.load(Ordering::Relaxed) {
+                            let iteration = count_runs.fetch_add(1, Ordering::Relaxed);
+                            if stop_condition.is_done(iteration, start) {
+                                break;
                             }
-                            Err(e) => error!("{e}"),
+                            match work_iteration(
+                                &self.fuzzer_output_dir,
+                                self.generator_settings,
+                                &self.mode,
+                                i,
+                            ) {
+                                Ok(work_result) => {
+                                    if let Err(e) = sender.send(work_result) {
+                                        error!("{e}");
+                                    }
+                                }
+                                Err(e) => error!("{e}"),
+                            }
                         }
-                    }
-                });
+                    })
+                    .expect("creating thread should not fail!");
             }
             // immediately drop the initial sender reference, only the clones inside the worker threads are kept alive
             drop(sender);
             for (iteration, work_result) in receiver.iter().enumerate() {
                 let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
                 let percentage_range_sat = 0.20..0.7;
-                if iteration == 1001 && !stats.is_sat_percentage_in_range(&percentage_range_sat) {
-                    // Terminate early if amount sat instances not in range
-                    // and more than 1000 iterations are scheduled
+                if self.check_for_early_termination(iteration, &stats, &percentage_range_sat) {
                     println!("Terminating early!");
                     println!(
                         "Percentage SAT Instances not in range ({}..{})",
@@ -210,6 +211,20 @@ impl Orchestrator {
             print_block("Run Statistics", &stats);
         });
         Ok(())
+    }
+
+    /// Terminate early if amount sat instances not in range
+    /// and more than 1000 iterations are scheduled
+    fn check_for_early_termination(
+        &self,
+        iteration: u32,
+        stats: &Stats,
+        percentage_range_sat: &Range<f32>,
+    ) -> bool {
+        if self.generator_settings.get_generation_method() == &GenerationMethod::FromSolution {
+            return false;
+        }
+        iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
     }
 
     fn process_result(
@@ -263,7 +278,7 @@ impl Orchestrator {
             // Only save the file if bug or error or `unknown` occurred
             IterationOutcome::Bug { .. }
             | IterationOutcome::Error { .. }
-            | IterationOutcome::TimeLimt
+            | IterationOutcome::TimeLimit
             | IterationOutcome::Unknown => move_files(&files_to_move),
             _ if self.save_all_files => move_files(&files_to_move),
             // Delete the generated fuzzing result if not needed anymore
@@ -357,7 +372,7 @@ fn work_iteration(
             let res_program2 = p2.parse(output_bin2, &pb_kind);
             let outcome = match (res_program1, res_program2) {
                 (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(
-                    &status2,
+                    status2,
                     &grammar,
                     p1.get_name(),
                     p2.get_name(),
@@ -369,8 +384,8 @@ fn work_iteration(
             let comparison_record = ComparisonRecord {
                 result: outcome.get_status_as_string(),
                 problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
-                problem_solving_duration_roundingsat_ms: time_bin1.as_secs_f32() * 1000.0,
-                problem_solving_duration_scip_ms: time_bin2.as_secs_f32() * 1000.0,
+                problem_solving_duration_solver1_ms: time_bin1.as_secs_f32() * 1000.0,
+                problem_solving_duration_solver2_ms: time_bin2.as_secs_f32() * 1000.0,
                 problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
                 conflicts: outcome.get_conflicts(),
                 seed,
@@ -498,7 +513,11 @@ impl Stats {
 
     fn update(&mut self, outcome: &IterationOutcome) {
         match outcome {
-            IterationOutcome::Sat { conflicts: c } => {
+            IterationOutcome::Sat {
+                conflicts: c,
+                solution: _,
+                optimum: _,
+            } => {
                 self.amount_sat += 1;
                 self.average_conflicts.update(*c);
             }
@@ -509,7 +528,7 @@ impl Stats {
             IterationOutcome::Unknown => self.amount_unknown += 1,
             IterationOutcome::Bug { .. } => self.bugs_found += 1,
             IterationOutcome::Error { .. } => self.errors += 1,
-            IterationOutcome::TimeLimt => self.timeouts += 1,
+            IterationOutcome::TimeLimit => self.timeouts += 1,
         }
     }
     fn amount_runs(&self) -> u32 {
@@ -593,13 +612,19 @@ impl Display for Stats {
 
 #[cfg(test)]
 mod tests {
-    use crate::fuzzer::helpers::float_equals;
+    use std::collections::HashSet;
+
+    use crate::{fuzzer::helpers::float_equals, orchestrator::external_program::SatModel};
 
     use super::*;
     #[test]
     fn test_stats() {
         let mut stats = Stats::new();
-        let res = IterationOutcome::Sat { conflicts: 0 };
+        let res = IterationOutcome::Sat {
+            conflicts: 0,
+            solution: SatModel::Proof(HashSet::new().into()),
+            optimum: None,
+        };
 
         stats.update(&res);
         assert_eq!(1, stats.amount_runs());

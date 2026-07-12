@@ -1,8 +1,8 @@
 use crate::fuzzer::{
     constraint::Constraint,
-    constraint_generator::{ConstraintGenerationError, ConstraintGenerator},
+    constraint_generator::{ConstraintGenerationError, ConstraintGenerator, FromSolutionData},
     domain::LiteralIdent,
-    grammar::{PBGrammar, PBKind},
+    grammar::{GenerationSource, PBGrammar, PBKind},
     pb_settings::{CancelCondition, GenerationMethod, GeneratorSettings},
 };
 use itertools::Itertools;
@@ -39,7 +39,7 @@ impl PBGenerator {
     fn random_grammar(&mut self) -> Result<PBGrammar, ConstraintGenerationError> {
         let start = Instant::now();
         let cancel_condition = self.settings.get_cancel_condition();
-        let (constraints, unsat_assignments) = match cancel_condition {
+        match cancel_condition {
             CancelCondition::CountUnsat {
                 max_unsat_assignments,
             } => {
@@ -47,60 +47,121 @@ impl PBGenerator {
                     "Generating a maximum of {} unsat assignments",
                     max_unsat_assignments
                 );
-                let mut constraints_temp: Vec<Box<dyn Constraint>> = vec![];
-                let mut current_unsat = 0;
-                while &current_unsat <= max_unsat_assignments {
-                    let c = self
-                        .constraint_generator
-                        .generate_random_constraint_with_unsat_count()?;
-                    let unsat_for_c = c.amount_unsat_assignments();
-                    current_unsat += unsat_for_c as u64;
-                    constraints_temp.push(c);
-                }
-                (constraints_temp, Option::Some(current_unsat))
+                let (constraints, current_unsat) =
+                    self.generate_until_max_unsat(*max_unsat_assignments)?;
+                let distinct_literal_ids: Vec<LiteralIdent> = distinct_literal_ids(&constraints);
+                let min_constraint = match self.settings.get_problem_kind() {
+                    PBKind::PBS => Option::None,
+                    PBKind::PBO => Some(
+                        self.constraint_generator
+                            .generate_min_function(&distinct_literal_ids, 5),
+                    ),
+                };
+                Ok(PBGrammar::new(
+                    self.seed,
+                    distinct_literal_ids.len() as u32,
+                    constraints,
+                    min_constraint,
+                    start.elapsed(),
+                    crate::fuzzer::grammar::GenerationSource::Random {
+                        amount_unsat_assignments: Option::Some(current_unsat),
+                    },
+                ))
             }
             CancelCondition::CountConstraints { max_constraints } => {
+                info!("Generating {} constraints", max_constraints);
                 match self.settings.get_generation_method() {
-                    GenerationMethod::FromSolution => (
-                        self.constraint_generator
-                            .generate_from_solution(*max_constraints)?,
-                        Option::None,
-                    ),
+                    GenerationMethod::FromSolution => {
+                        let FromSolutionData {
+                            constraints,
+                            solution,
+                        } = self
+                            .constraint_generator
+                            .generate_from_solution(*max_constraints)?;
+                        let distinct_literal_ids: Vec<LiteralIdent> =
+                            distinct_literal_ids(&constraints);
+                        let min_constraint = match self.settings.get_problem_kind() {
+                            PBKind::PBS => Option::None,
+                            PBKind::PBO => Some(
+                                self.constraint_generator
+                                    .generate_min_function(&distinct_literal_ids, 20),
+                            ),
+                        };
+                        let objective = min_constraint.as_ref().map(|obj| {
+                            obj.get_literals()
+                                .iter()
+                                .filter(|l| solution.contains(&l.literal_id))
+                                .map(|l| l.coeff)
+                                .sum::<i32>()
+                                .into()
+                        });
+                        Ok(PBGrammar::new(
+                            self.seed,
+                            distinct_literal_ids.len() as u32,
+                            constraints,
+                            min_constraint,
+                            start.elapsed(),
+                            GenerationSource::FromSolution {
+                                model: solution,
+                                objective,
+                            },
+                        ))
+                    }
 
                     GenerationMethod::Random => {
-                        info!("Generating {} constraints", max_constraints);
-                        let cs: Vec<_> = (0..*max_constraints)
+                        let constraints: Vec<_> = (0..*max_constraints)
                             .map(|_| self.constraint_generator.generate_random_constraint())
                             .collect::<Result<_, _>>()?;
-                        assert_eq!(*max_constraints, cs.len() as u64);
-                        (cs, Option::None)
+                        assert_eq!(*max_constraints, constraints.len() as u64);
+
+                        let distinct_literal_ids: Vec<LiteralIdent> =
+                            distinct_literal_ids(&constraints);
+                        let min_constraint = match self.settings.get_problem_kind() {
+                            PBKind::PBS => Option::None,
+                            PBKind::PBO => Some(
+                                self.constraint_generator
+                                    .generate_min_function(&distinct_literal_ids, 5),
+                            ),
+                        };
+                        Ok(PBGrammar::new(
+                            self.seed,
+                            distinct_literal_ids.len() as u32,
+                            constraints,
+                            min_constraint,
+                            start.elapsed(),
+                            crate::fuzzer::grammar::GenerationSource::Random {
+                                amount_unsat_assignments: Option::None,
+                            },
+                        ))
                     }
                 }
             }
-        };
-
-        let distinct_literal_ids: Vec<LiteralIdent> = constraints
-            .iter()
-            .flat_map(|c| c.literals())
-            .map(|a| a.literal_id)
-            .unique()
-            .collect();
-
-        let min_constraint = match self.settings.get_problem_kind() {
-            PBKind::PBS => Option::None,
-            PBKind::PBO => Some(
-                self.constraint_generator
-                    .generate_min_function(&distinct_literal_ids, 5),
-            ),
-        };
-
-        Ok(PBGrammar::new(
-            self.seed,
-            unsat_assignments,
-            distinct_literal_ids.len() as u32,
-            constraints,
-            min_constraint,
-            start.elapsed(),
-        ))
+        }
     }
+
+    fn generate_until_max_unsat(
+        &mut self,
+        max_unsat_assignments: u64,
+    ) -> Result<(Vec<Box<dyn Constraint>>, u64), ConstraintGenerationError> {
+        let mut constraints: Vec<Box<dyn Constraint>> = vec![];
+        let mut current_unsat = 0;
+        while current_unsat <= max_unsat_assignments {
+            let c = self
+                .constraint_generator
+                .generate_random_constraint_with_unsat_count()?;
+            let unsat_for_c = c.amount_unsat_assignments();
+            current_unsat += unsat_for_c as u64;
+            constraints.push(c);
+        }
+        Ok((constraints, current_unsat))
+    }
+}
+
+fn distinct_literal_ids(constraints: &[Box<dyn Constraint>]) -> Vec<LiteralIdent> {
+    constraints
+        .iter()
+        .flat_map(|c| c.literals())
+        .map(|a| a.literal_id)
+        .unique()
+        .collect()
 }

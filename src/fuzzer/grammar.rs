@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::fuzzer::constraint::Constraint;
 use crate::fuzzer::constraint::ConstraintKind;
+use crate::fuzzer::domain::Comparison;
 use crate::fuzzer::domain::LiteralIdent;
 use crate::fuzzer::domain::MinFunction;
 use crate::fuzzer::domain::MinObjectiveValue;
@@ -53,20 +54,20 @@ pub struct PBGrammar {
     seed: u64,
     amount_vars: u32,
     amount_constraints: u32,
-    amount_unsat_assignments: Option<u64>,
     constraints: Vec<Box<dyn Constraint>>,
     min_constraint: Option<MinFunction>,
     generation_time: Duration,
+    generation_source: GenerationSource,
 }
 
 impl PBGrammar {
     pub fn new(
         seed: u64,
-        amount_unsat_assignments: Option<u64>,
         amount_distinct_vars: u32,
         constraints: Vec<Box<dyn Constraint>>,
         min_constraint: Option<MinFunction>,
         generation_time: Duration,
+        generation_source: GenerationSource,
     ) -> Self {
         let amount_constraints = constraints
             .len()
@@ -76,10 +77,10 @@ impl PBGrammar {
             seed,
             amount_vars: amount_distinct_vars,
             amount_constraints,
-            amount_unsat_assignments,
             constraints,
             min_constraint,
             generation_time,
+            generation_source,
         }
     }
     /// Writes the generated PBGrammer into a writer
@@ -88,19 +89,41 @@ impl PBGrammar {
     pub fn produce<W: Write>(&self, writer: &mut W) -> Result<Duration> {
         let start = Instant::now();
         info!(
-            "Generated random grammar PBS grammar with {} vars and {} constraints.",
+            "Generated PB grammar with {} vars and {} constraints.",
             self.amount_vars, self.amount_constraints
         );
-        let amount_equal_constraints = 0; //TODO: implement this as soon as constraints can be
-                                          //equal with RHS
+        let amount_equal_constraints = self
+            .constraints
+            .iter()
+            .filter(|c| c.comparison() == &Comparison::Equal)
+            .count();
         writeln!(
             writer,
             "* #variable= {} #constraint= {} #equal= {} intsize= 32",
             self.amount_vars, self.amount_constraints, amount_equal_constraints
         )?;
         writeln!(writer, "* Used seed: {}", self.seed)?;
-        if let Some(n) = self.amount_unsat_assignments {
-            writeln!(writer, "* UNSAT assignments: {}", n)?;
+        match &self.generation_source {
+            GenerationSource::Random {
+                amount_unsat_assignments,
+            } => {
+                if let Some(n) = amount_unsat_assignments {
+                    writeln!(writer, "* UNSAT assignments: {}", n)?;
+                }
+            }
+            GenerationSource::FromSolution { model, objective } => {
+                writeln!(
+                    writer,
+                    "* Generated solution: {}",
+                    model
+                )?;
+                if let Some(o) = objective {
+                    writeln!(
+                        writer,
+                        "* Objective Value for sampled Model (FromSolution Mode): {o}"
+                    )?
+                }
+            }
         }
         writeln!(writer, "{}", self.get_statistics())?;
 
@@ -155,6 +178,13 @@ impl PBGrammar {
         true_vars: &HashSet<LiteralIdent>,
         objective: &MinObjectiveValue,
     ) -> bool {
+        if let GenerationSource::FromSolution {
+            model: _,
+            objective: objective_from_solution,
+        } = &self.generation_source && let Some(obj) = objective_from_solution
+        {
+            info!("Generated objective value from solution: {obj}; found minimum:  {objective}")
+        }
         self.min_constraint
             .as_ref()
             .map(|c| -> MinObjectiveValue {
@@ -168,6 +198,16 @@ impl PBGrammar {
             .map(|min| &min == objective)
             .unwrap_or(false)
     }
+}
+
+pub enum GenerationSource {
+    Random {
+        amount_unsat_assignments: Option<u64>,
+    },
+    FromSolution {
+        model: SolutionModel,
+        objective: Option<MinObjectiveValue>,
+    },
 }
 
 /// Container for various statistics about the generated grammar
@@ -190,31 +230,29 @@ impl GrammarStatistics {
 
 impl Display for GrammarStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "* Amount different used variables: {}", self.amount_vars)?;
-        writeln!(f, "* Amount constraints: {}", self.amount_constraints)?;
-        for (k, v) in self
-            .amount_constraints_by_kind
-            .iter()
-            .sorted_by_key(|&(k, _)| k)
-        {
+        let GrammarStatistics {
+            amount_constraints,
+            amount_constraints_by_kind,
+            amount_vars,
+            total_var_occurences,
+            max_occurence,
+            min_occurence,
+            average_occurence,
+            generation_time,
+        } = self;
+        writeln!(f, "* Amount different used variables: {}", amount_vars)?;
+        writeln!(f, "* Amount constraints: {}", amount_constraints)?;
+        for (k, v) in amount_constraints_by_kind.iter().sorted_by_key(|&(k, _)| k) {
             writeln!(f, "* Amount constraints of type {k}: {v}")?;
         }
-        writeln!(
-            f,
-            "* Total amount of used vars: {}",
-            self.total_var_occurences
-        )?;
-        writeln!(f, "* Max occurence of a var: {}", self.max_occurence)?;
-        writeln!(f, "* Min occurence of a var: {}", self.min_occurence)?;
-        writeln!(
-            f,
-            "* Average occurences of vars: {}",
-            self.average_occurence
-        )?;
+        writeln!(f, "* Total amount of used vars: {}", total_var_occurences)?;
+        writeln!(f, "* Max occurence of a var: {}", max_occurence)?;
+        writeln!(f, "* Min occurence of a var: {}", min_occurence)?;
+        writeln!(f, "* Average occurences of vars: {}", average_occurence)?;
         write!(
             f,
             "* Generation time: {:.3}ms",
-            self.generation_time.as_nanos() as f64 / 1_000_000.0
+            generation_time.as_nanos() as f64 / 1_000_000.0
         )
     }
 }
@@ -266,11 +304,13 @@ mod test {
             .collect();
         let grammar = PBGrammar::new(
             42,
-            unsat_assignments,
             4,
             constraints,
             Option::None,
             Duration::from_secs(0),
+            GenerationSource::Random {
+                amount_unsat_assignments: unsat_assignments,
+            },
         );
         let stats = grammar.get_statistics();
         assert_eq!(stats.amount_vars, 4);

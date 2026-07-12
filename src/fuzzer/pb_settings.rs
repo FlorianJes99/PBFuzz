@@ -67,11 +67,20 @@ impl Display for CancelCondition {
     }
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum GenerationMethod {
     #[default]
     Random,
     FromSolution,
+}
+
+impl Display for GenerationMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GenerationMethod::Random => write!(f, "Random"),
+            GenerationMethod::FromSolution => write!(f, "From sampled solution"),
+        }
+    }
 }
 
 impl From<GeneratorSettings> for ConstraintSettings {
@@ -105,47 +114,65 @@ impl GeneratorSettings {
 
 impl Display for GeneratorSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let GeneratorSettings {
+            max_vars,
+            cancel_condition,
+            grammar_kind,
+            amount_literals_per_constraint,
+            max_unsat_for_single_constraint,
+            coeff_lower_bound,
+            coeff_upper_bound,
+            lower_bound_degree,
+            upper_bound_degree,
+            constraint_distribution,
+            generation_method,
+        } = self;
         writeln!(f, "Used Settings for Generator:")?;
         writeln!(
             f,
             "Problem Task                                 : {}",
-            self.grammar_kind
+            grammar_kind
         )?;
         writeln!(
             f,
             "Max used vars                                : {}",
-            self.max_vars
+            max_vars
         )?;
-        writeln!(f, "{}", self.cancel_condition)?;
+        writeln!(f, "{}", cancel_condition)?;
         writeln!(
             f,
             "Literals per constraint                      : {}",
-            self.amount_literals_per_constraint
+            amount_literals_per_constraint
         )?;
         writeln!(
             f,
             "Max unsat assignments for a single constraint: {}",
-            self.max_unsat_for_single_constraint
+            max_unsat_for_single_constraint
         )?;
         writeln!(
             f,
             "Coefficient range                            : {}..{}",
-            self.coeff_lower_bound, self.coeff_upper_bound
+            coeff_lower_bound, coeff_upper_bound
         )?;
         writeln!(
             f,
             "Lower bound for RHS of constraint            : {}",
-            self.lower_bound_degree
+            lower_bound_degree
         )?;
         writeln!(
             f,
             "Upper bound for RHS of constraint            : {}",
-            self.upper_bound_degree
+            upper_bound_degree
+        )?;
+        writeln!(
+            f,
+            "Constraint distribution                      : {}",
+            constraint_distribution
         )?;
         write!(
             f,
-            "Constraint distribution                      : {}",
-            self.constraint_distribution
+            "Generation method                            : {}",
+            generation_method
         )
     }
 }
@@ -267,7 +294,7 @@ impl GeneratorSettingsBuilder {
 
     /// this method panics if lower > upper!
     pub fn set_bounds_degree(mut self, lower: f64, upper: f64) -> Self {
-        assert!(lower <= upper);
+        assert!(lower <= upper, "{lower} expected to be <= {upper}");
         self.lower_bound_degree = lower;
         self.upper_bound_degree = upper;
         self

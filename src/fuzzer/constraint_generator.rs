@@ -246,19 +246,27 @@ impl ConstraintGenerator {
         ExactlyOneConstraint::new(literals, Comparison::Equal, 1).map_err(Into::into)
     }
 
+    /// Generate constraints to a given assignemnts of the literals
+    ///
+    /// Instead of sampling random constraints, first sample a subset of literals, which will be assigned
+    /// to true. Then we only generate constraints, which are satisfiable under the given solution.
     pub fn generate_from_solution(
         &mut self,
         amount_constraints: u64,
-    ) -> Result<Vec<Box<dyn Constraint>>, ConstraintGenerationError> {
+    ) -> Result<FromSolutionData, ConstraintGenerationError> {
         let amount_vars = self.settings.max_vars;
         let lits: Vec<_> = (1..=amount_vars).map(LiteralIdent::new).collect();
         let solution: SolutionModel = lits
-            .sample(&mut self.rand, (amount_vars / 2) as usize)
+            .sample(&mut self.rand, (amount_vars / 3) as usize)
             .cloned()
             .into();
-        (0..amount_constraints)
+        let constraints = (0..amount_constraints)
             .map(|_| self.create_sat_constraint(&solution))
-            .collect()
+            .collect::<Result<_, _>>()?;
+        Ok(FromSolutionData {
+            constraints,
+            solution,
+        })
     }
 
     fn create_sat_constraint(
@@ -267,35 +275,24 @@ impl ConstraintGenerator {
     ) -> Result<Box<dyn Constraint>, ConstraintGenerationError> {
         let start_val = self.settings.coeff_lower_bound;
         let end_val = self.settings.coeff_upper_bound;
-        let mut lits = self
-            .get_three_ids_sorted()?
-            .map(|id| id.to_literal(self.sample_without_zero_from_range(start_val, end_val)));
-        if !lits.iter().any(|l| model.contains(&l.literal_id)) {
-            // in every constraint should be at least one true assignment
-            let candidates = model.iter().collect::<Vec<_>>();
-            let true_lit = candidates
-                .choose(&mut self.rand)
-                .ok_or(ConstraintGenerationError::InvalidSampling(0, 0))?;
-            lits[0] = true_lit.to_literal(lits[0].coeff)
-        }
-        let comparison = self.sample_comparison(0.1);
-        let degree = lits
+        let amount_lits = self.settings.amount_literals_per_constraint;
+        let lits: Vec<_> = self
+            .get_n_ids_sorted(amount_lits)?
+            .iter()
+            .map(|id| id.to_literal(self.sample_without_zero_from_range(start_val, end_val)))
+            .collect();
+        let comparison = Comparison::GrEqual;
+        let (min_lit, sum_lit) = lits
             .iter()
             .filter(|l| model.contains(&l.literal_id))
             .map(|l| i64::from(l.coeff))
-            .sum::<i64>();
-        Ok(Box::new(ThreeLiteralConstraint::new(
-            lits, comparison, degree,
-        )))
-    }
-
-    fn sample_comparison(&mut self, percentage_equal: f64) -> Comparison {
-        assert!((0.0..=1.0).contains(&percentage_equal));
-        if self.rand.random_bool(percentage_equal) {
-            Comparison::Equal
-        } else {
-            Comparison::GrEqual
-        }
+            .fold((0, 0), |acc, c| (acc.0.min(c), acc.1 + c));
+        let degree = min_lit.min(sum_lit);
+        let constraint = ArbitraryLengthConstraint::new(lits, comparison, degree);
+        assert!(
+            constraint.verify(model),
+            "When generating from a sampled solution, every constraint needs to be satisfiable\nModel: {model}\nConstraint: {constraint}");
+        Ok(Box::new(constraint))
     }
 
     pub fn generate_min_function(
@@ -362,6 +359,11 @@ impl ConstraintGenerator {
         ids.sort();
         Ok(ids)
     }
+}
+
+pub struct FromSolutionData {
+    pub constraints: Vec<Box<dyn Constraint>>,
+    pub solution: SolutionModel,
 }
 
 /// Sum type for all Errors happenings during Constraint Generation

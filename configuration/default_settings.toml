@@ -24,13 +24,12 @@ upper_bound_degree = 0.6
 # Type of grammar to generate: "PBS" (pseudo boolean solving) or "PBO" (pseudo boolean optimization)
 grammar_kind = "PBO"
 
-# --- Cancel Condition ---
-#   "CountUnsat"       — stop after a total number of unsatisfying assignments
-#   "CountConstraints" — stop after a fixed number of constraints
-
 # Options are: "FromSolution" and "Random"
 generation_method = "FromSolution"
 
+# --- Cancel Condition ---
+#   "CountUnsat"       — stop after a total number of unsatisfying assignments
+#   "CountConstraints" — stop after a fixed number of constraints
 [cancel_condition.CountConstraints]
 max_constraints = 88
 
