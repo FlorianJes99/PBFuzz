@@ -1,0 +1,5 @@
+binary = "software/hitpbo"
+args = ["--no-rc"]
+name = "hitpbo"
+parser_kind = "Default"
+# proof_arg = "--proof-log="

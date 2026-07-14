@@ -3,3 +3,14 @@ args = ["--print-sol=1", "--time-limit=6"]
 name = "roundingsat"
 parser_kind = "Default"
 proof_arg = "--proof-log="
+
+[optional_args]
+args = [
+    { arg_name = "--cg-cardreduct=", arg_type = { Values = ["clause", "minslack", "bestbound" ]} },
+    { arg_name = "--opt-mode=", arg_type = { Values = ["linear", "coreguided", "coreboosted", "hybrid"]} },
+    { arg_name = "--lp-budget=", arg_type = { IntRange = [1, 1000000000] } },
+    { arg_name = "--vsids-var=", arg_type = { FloatRange = [0.5, 1.0] } },
+    { arg_name = "--prop-counting=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--cg-strat=", arg_type = { Values = ["0", "1"] } },
+]
+space_separated = false
