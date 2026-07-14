@@ -251,11 +251,11 @@ impl ExternalProgramWithProof {
     ) -> Result<SolverOutcome, ExternalProgramError> {
         let mut command = Command::new(self.program.binary.as_os_str());
         // TODO: remove later, when profiling analysis is done
-        let prof_file_name = file_path_pb
+        let _prof_file_name = file_path_pb
             .file_stem()
             .expect("PB File should exist")
             .display();
-        add_profiling_to_command(&mut command, &prof_file_name);
+        // add_profiling_to_command(&mut command, &prof_file_name);
 
         command.arg(format!("{}{}", self.proof_arg, file_path_proof.display()));
 
