@@ -290,7 +290,7 @@ impl ConstraintGenerator {
         let degree = min_lit.min(sum_lit);
         let constraint = ArbitraryLengthConstraint::new(lits, comparison, degree);
         assert!(
-            constraint.verify(model),
+            constraint.verify(model).is_ok(),
             "When generating from a sampled solution, every constraint needs to be satisfiable\nModel: {model}\nConstraint: {constraint}");
         Ok(Box::new(constraint))
     }

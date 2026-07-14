@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Display;
-use std::io::Result;
-use std::io::Write;
+use std::io;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -10,9 +9,11 @@ use itertools::Itertools;
 use log::info;
 use serde::Deserialize;
 use serde::Serialize;
+use thiserror::Error;
 
 use crate::fuzzer::constraint::Constraint;
 use crate::fuzzer::constraint::ConstraintKind;
+use crate::fuzzer::constraint::ConstraintViolation;
 use crate::fuzzer::domain::Comparison;
 use crate::fuzzer::domain::LiteralIdent;
 use crate::fuzzer::domain::MinFunction;
@@ -86,7 +87,7 @@ impl PBGrammar {
     /// Writes the generated PBGrammer into a writer
     ///
     /// Returns the duration of writing into the buffer
-    pub fn produce<W: Write>(&self, writer: &mut W) -> Result<Duration> {
+    pub fn produce<W: io::Write>(&self, writer: &mut W) -> io::Result<Duration> {
         let start = Instant::now();
         info!(
             "Generated PB grammar with {} vars and {} constraints.",
@@ -169,15 +170,15 @@ impl PBGrammar {
         }
     }
 
-    pub fn verify_solution(&self, true_vars: &SolutionModel) -> bool {
-        self.constraints.iter().all(|c| c.verify(true_vars))
+    pub fn verify_solution(&self, true_vars: &SolutionModel) -> Result<(), ConstraintViolation> {
+        self.constraints.iter().try_for_each(|c| c.verify(true_vars))
     }
 
     pub fn verify_min_constraint(
         &self,
         true_vars: &HashSet<LiteralIdent>,
-        objective: &MinObjectiveValue,
-    ) -> bool {
+        objective: MinObjectiveValue,
+    ) -> Result<(), MinObjectiveInvalid> {
         if let GenerationSource::FromSolution {
             model: _,
             objective: objective_from_solution,
@@ -185,19 +186,32 @@ impl PBGrammar {
         {
             info!("Generated objective value from solution: {obj}; found minimum:  {objective}")
         }
-        self.min_constraint
-            .as_ref()
-            .map(|c| -> MinObjectiveValue {
-                c.get_literals()
+        match self.min_constraint.as_ref() {
+            Some(mf) => {
+                let eval_min = mf.get_literals()
                     .iter()
                     .filter(|a| true_vars.contains(&a.literal_id))
                     .map(|a| a.coeff)
                     .sum::<i32>()
-                    .into()
-            })
-            .map(|min| &min == objective)
-            .unwrap_or(false)
+                    .into();
+                if eval_min == objective {
+                    Ok(())
+                } else {
+                    Err(MinObjectiveInvalid {
+                        evaluated: eval_min, expected: objective
+                    })
+                }
+            },
+            None => unreachable!("Minimize objective should always exist, when running in pbo mode"),
+        }
     }
+}
+
+#[derive(Debug, Error)]
+#[error("Minimum objective differs: evaluated from model: {evaluated}, solver found: {expected}")]
+pub struct MinObjectiveInvalid {
+    evaluated: MinObjectiveValue,
+    expected: MinObjectiveValue,
 }
 
 pub enum GenerationSource {

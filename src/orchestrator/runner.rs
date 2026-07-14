@@ -252,7 +252,7 @@ impl Orchestrator {
             );
         }
         if let IterationOutcome::Bug { reason } = outcome {
-            info!("Found bug with seed ({}))!\nBug: {}", seed, reason)
+            info!("Found bug with seed {})!\nBug: {}", seed, reason)
         }
         let mut files_to_move = vec![];
         let output_file = work_result.pb_file;

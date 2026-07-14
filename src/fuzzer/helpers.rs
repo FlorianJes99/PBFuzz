@@ -144,8 +144,8 @@ pub fn move_file(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::rename(src, dst).map_err(|e| {
         format!(
             "Could not move file from {} to {}\n Error: {}",
-            &src.display(),
-            &dst.display(),
+            src.display(),
+            dst.display(),
             e
         )
     })

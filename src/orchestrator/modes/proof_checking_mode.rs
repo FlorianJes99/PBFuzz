@@ -1,29 +1,29 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use log::error;
+use thiserror::Error;
 use veripb::{self, args::Args, run_checker};
 
-pub fn check_proof(formula: &Path, derivation: &Path) -> bool {
-    assert!(
-        formula.exists(),
-        "Expected formula at path {} to exist",
-        formula.display()
-    );
-    assert!(
-        derivation.exists(),
-        "Expected proof derivation at path {} to exist",
-        derivation.display()
-    );
+pub fn check_proof(formula: &Path, derivation: &Path) -> Result<(), ProofError> {
+    let formula = formula.to_path_buf();
+    let derivation = derivation.to_path_buf();
+    if !formula.exists() {
+        return Err(ProofError::FileDoesNotExist("formula".into(), formula));
+    }
+    if !derivation.exists() {
+        return Err(ProofError::FileDoesNotExist("proof".into(), derivation));
+    }
     let args = Args {
-        formula: formula.to_path_buf(),
-        derivation: derivation.to_path_buf(),
+        formula,
+        derivation,
         ..Default::default()
     };
-    match run_checker(args) {
-        Ok(_) => true,
-        Err(e) => {
-            error!("{e}");
-            false
-        }
-    }
+    run_checker(args).map_err(|e| ProofError::VeriPB(e.into_boxed_dyn_error()))
+}
+
+#[derive(Error, Debug)]
+pub enum ProofError {
+    #[error("Expected {0} at path {p} to exist", p = (.1).display())]
+    FileDoesNotExist(String, PathBuf),
+    #[error(transparent)]
+    VeriPB(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }

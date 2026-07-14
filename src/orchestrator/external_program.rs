@@ -16,15 +16,16 @@ use thiserror::Error;
 
 use crate::{
     fuzzer::{
+        constraint::ConstraintViolation,
         domain::{MinObjectiveValue, SolutionModel},
-        grammar::{PBGrammar, PBKind},
+        grammar::{MinObjectiveInvalid, PBGrammar, PBKind},
     },
     orchestrator::{
         default_parser::DefaultParser,
         folders::{
             BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
         },
-        modes::proof_checking_mode::check_proof,
+        modes::proof_checking_mode::{check_proof, ProofError},
         parser::{OutputParsingError, Parser, ParserKind},
         scip_parser::ScipParser,
     },
@@ -346,15 +347,29 @@ pub enum SolverSolution {
 }
 
 impl SolverSolution {
-    fn is_valid(&self, grammar: &PBGrammar) -> bool {
+    fn is_valid(&self, grammar: &PBGrammar) -> Result<(), ValidationError> {
         match self {
-            SolverSolution::PBS(solution_model) => grammar.verify_solution(solution_model),
-            SolverSolution::PBO(solution_model, min_objective_value) => {
-                grammar.verify_solution(solution_model)
-                    && grammar.verify_min_constraint(solution_model, min_objective_value)
-            }
+            SolverSolution::PBS(solution_model) => grammar
+                .verify_solution(solution_model)
+                .map_err(|e| e.into()),
+            SolverSolution::PBO(solution_model, min_objective_value) => grammar
+                .verify_solution(solution_model)
+                .map_err(|e| e.into())
+                .and_then(|_| {
+                    grammar
+                        .verify_min_constraint(solution_model, min_objective_value.clone())
+                        .map_err(|e| e.into())
+                }),
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum ValidationError {
+    #[error(transparent)]
+    Constraint(#[from] ConstraintViolation),
+    #[error(transparent)]
+    Objective(#[from] MinObjectiveInvalid),
 }
 
 #[derive(Debug, Clone)]
@@ -383,16 +398,17 @@ impl SolverStatus {
                 conflicts,
                 solution,
             } => {
-                if !solution.is_valid(grammar) {
+                if let Err(e) = solution.is_valid(grammar) {
                     return IterationOutcome::Bug {
-                        reason: BugReason::InvalidSolution {
+                        reason: BugReason::Solution(InvalidSolution {
                             solver_name: solver_name.into(),
-                        },
+                            violation: e,
+                        }),
                     };
                 }
-                if !check_proof(formula, derivation) {
+                if let Err(e) = check_proof(formula, derivation) {
                     return IterationOutcome::Bug {
-                        reason: BugReason::ProofCheckerFailed,
+                        reason: BugReason::ProofCheckerFailed(e),
                     };
                 }
                 match solution {
@@ -411,9 +427,9 @@ impl SolverStatus {
                 }
             }
             SolverStatus::Unsat { conflicts } => {
-                if !check_proof(formula, derivation) {
+                if let Err(e) = check_proof(formula, derivation) {
                     return IterationOutcome::Bug {
-                        reason: BugReason::ProofCheckerFailed,
+                        reason: BugReason::ProofCheckerFailed(e),
                     };
                 }
                 IterationOutcome::Unsat { conflicts }
@@ -443,20 +459,20 @@ impl SolverStatus {
                     solution: s2,
                 },
             ) => {
-                let v1 = s1.is_valid(grammar);
-                if !v1 {
+                if let Err(e) = s1.is_valid(grammar) {
                     return IterationOutcome::Bug {
-                        reason: BugReason::InvalidSolution {
+                        reason: BugReason::Solution(InvalidSolution {
                             solver_name: self_name.into(),
-                        },
+                            violation: e,
+                        }),
                     };
                 }
-                let v2 = s2.is_valid(grammar);
-                if !v2 {
+                if let Err(e) = s2.is_valid(grammar) {
                     return IterationOutcome::Bug {
-                        reason: BugReason::InvalidSolution {
+                        reason: BugReason::Solution(InvalidSolution {
                             solver_name: other_name.into(),
-                        },
+                            violation: e,
+                        }),
                     };
                 }
                 let conflicts = c1.max(c2);
@@ -474,8 +490,16 @@ impl SolverStatus {
                                 optimum: Some(min1),
                             }
                         } else {
+                            let i1 = ObjectiveInfo {
+                                solver_name: self_name.into(),
+                                min_objective: min1,
+                            };
+                            let i2 = ObjectiveInfo {
+                                solver_name: other_name.into(),
+                                min_objective: min2,
+                            };
                             IterationOutcome::Bug {
-                                reason: BugReason::DifferentObjectives(min1, min2),
+                                reason: BugReason::DifferentObjectives(i1, i2),
                             }
                         }
                     }
@@ -570,29 +594,47 @@ impl IterationOutcome {
     }
 }
 
+pub struct ObjectiveInfo {
+    solver_name: String,
+    min_objective: MinObjectiveValue,
+}
+
+pub struct InvalidSolution {
+    solver_name: String,
+    violation: ValidationError,
+}
 pub enum BugReason {
-    InvalidSolution { solver_name: String },
-    DifferentObjectives(MinObjectiveValue, MinObjectiveValue),
+    Solution(InvalidSolution),
+    DifferentObjectives(ObjectiveInfo, ObjectiveInfo),
     OutputStatusDiffers(String, String),
-    ProofCheckerFailed,
+    ProofCheckerFailed(ProofError),
 }
 
 impl Display for BugReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BugReason::InvalidSolution {
-                solver_name: program_name,
-            } => {
-                write!(f, "Invalid solution provided by solver {program_name}")
+            BugReason::Solution(err) => {
+                write!(
+                    f,
+                    "Invalid solution provided by solver {}: {}",
+                    err.solver_name, err.violation
+                )
             }
-            BugReason::DifferentObjectives(m1, m2) => {
-                write!(f, "Different objectives found: {m1} and {m2}")
+            BugReason::DifferentObjectives(i1, i2) => {
+                write!(
+                    f,
+                    "Different objectives found: {} ({}) and {} ({})",
+                    i1.min_objective, i1.solver_name, i2.min_objective, i2.solver_name
+                )
             }
             BugReason::OutputStatusDiffers(s1, s2) => {
                 write!(f, "Different status found: {s1} and {s2}")
             }
-            BugReason::ProofCheckerFailed => {
-                f.write_str("Proof checker showed that generated prove is invalid")
+            BugReason::ProofCheckerFailed(e) => {
+                write!(
+                    f,
+                    "Proof checker showed that generated prove is invalid: {e}"
+                )
             }
         }
     }

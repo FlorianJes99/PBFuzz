@@ -45,7 +45,7 @@ impl Parser for DefaultParser {
                 let status = match rest {
                     "UNSATISFIABLE" => StatusKind::Unsat,
                     "SATISFIABLE" => StatusKind::Sat,
-                    "OPTIMUM FOUND" => StatusKind::Sat,
+                    "OPTIMUM FOUND" => StatusKind::Optimum,
                     "TIMELIMIT" => StatusKind::TimeLimit,
                     _ => StatusKind::Unknown,
                 };

@@ -50,13 +50,15 @@ pub trait Parser: Sync {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
-                StatusKind::Sat => Ok(SolverStatus::Sat {
+                StatusKind::Optimum => Ok(SolverStatus::Sat {
                     conflicts: result.conflicts.unwrap_or(0),
                     solution: SolverSolution::PBS(result.solution.into()),
                 }),
                 StatusKind::Unsat => Ok(SolverStatus::Unsat {
                     conflicts: result.conflicts.unwrap_or(0),
                 }),
+                // only sat means we could not find optimum in given time limit
+                StatusKind::Sat => Ok(SolverStatus::TimeLimit),
                 StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
                 StatusKind::Unknown => Ok(SolverStatus::Unknown),
             },
@@ -67,16 +69,18 @@ pub trait Parser: Sync {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
-                StatusKind::Sat => match result.objective {
-                    Some(o) => Ok(SolverStatus::Sat {
+                StatusKind::Optimum => result
+                    .objective
+                    .ok_or(OutputParsingError::ObjectiveMissing)
+                    .map(|obj| SolverStatus::Sat {
                         conflicts: result.conflicts.unwrap_or(0),
-                        solution: SolverSolution::PBO(result.solution.into(), o.into()),
+                        solution: SolverSolution::PBO(result.solution.into(), obj.into()),
                     }),
-                    None => Ok(SolverStatus::TimeLimit),
-                },
                 StatusKind::Unsat => Ok(SolverStatus::Unsat {
                     conflicts: result.conflicts.unwrap_or(0),
                 }),
+                // only sat means we could not find optimum in given time limit
+                StatusKind::Sat => Ok(SolverStatus::TimeLimit),
                 StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
                 StatusKind::Unknown => Ok(SolverStatus::Unknown),
             },
@@ -85,7 +89,7 @@ pub trait Parser: Sync {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ScannedResult {
     status: Option<StatusKind>,
     solution: HashSet<LiteralIdent>,
@@ -93,8 +97,10 @@ pub struct ScannedResult {
     conflicts: Option<u32>,
 }
 
+#[derive(Debug)]
 pub enum StatusKind {
     Sat,
+    Optimum,
     Unsat,
     TimeLimit,
     Unknown,
@@ -104,6 +110,7 @@ impl Display for StatusKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StatusKind::Sat => write!(f, "sat"),
+            StatusKind::Optimum => write!(f, "optimum found"),
             StatusKind::Unsat => write!(f, "unsat"),
             StatusKind::TimeLimit => write!(f, "timelimit"),
             StatusKind::Unknown => write!(f, "unknown"),
@@ -123,6 +130,8 @@ pub enum StatusLine {
 pub enum OutputParsingError {
     #[error("Status was not parsed from solver output")]
     StatusMissing,
+    #[error("Objective minimum wasn't parsed, but problem is of kind PBO")]
+    ObjectiveMissing,
     #[error("Failed to parse line {line} into solution: source: {source}")]
     ParseSolution {
         line: String,

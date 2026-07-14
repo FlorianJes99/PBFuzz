@@ -34,14 +34,22 @@ pub trait Constraint: Display + Send {
     /// Checks if the constraint is satisfied for a given set of true variables in a grammar
     ///
     /// This can be used in order to verify the results of a solver
-    fn verify(&self, true_vars: &SolutionModel) -> bool {
-        self.satisfied(
-            self.literals()
-                .iter()
-                .filter(|a| true_vars.contains(&a.literal_id))
-                .map(|a| a.coeff as i64)
-                .sum::<i64>(),
-        )
+    fn verify(&self, true_vars: &SolutionModel) -> Result<(), ConstraintViolation> {
+        let eval = self
+            .literals()
+            .iter()
+            .filter(|a| true_vars.contains(&a.literal_id))
+            .map(|a| a.coeff as i64)
+            .sum::<i64>();
+        if self.satisfied(eval) {
+            Ok(())
+        } else {
+            Err(ConstraintViolation {
+                evaluated: eval,
+                expected: self.degree(),
+                comp: *self.comparison(),
+            })
+        }
     }
 
     /// Checks if the constructed constraint is solvable.
@@ -67,6 +75,14 @@ pub trait Constraint: Display + Send {
         }
         write!(f, " {} {};", self.comparison(), self.degree())
     }
+}
+
+#[derive(Debug, Error)]
+#[error("Constraint violated: evaluated {evaluated}, expected {comp} {expected}")]
+pub struct ConstraintViolation {
+    pub evaluated: i64,
+    pub expected: i64,
+    pub comp: Comparison,
 }
 
 /// Extension of the Constraint type
@@ -488,11 +504,11 @@ mod test {
         let literals = [Literal::new(1, 5), Literal::new(3, -1), Literal::new(5, 3)];
         let c = ThreeLiteralConstraint::new(literals, Comparison::GrEqual, 0);
         let true_vars = HashSet::from([LiteralIdent::new(1)]).into();
-        assert!(c.verify(&true_vars));
+        assert!(c.verify(&true_vars).is_ok());
         let true_vars = HashSet::from([LiteralIdent::new(1), LiteralIdent::new(3)]).into();
-        assert!(c.verify(&true_vars));
+        assert!(c.verify(&true_vars).is_ok());
         let true_vars = HashSet::from([LiteralIdent::new(3)]).into();
-        assert!(!c.verify(&true_vars));
+        assert!(c.verify(&true_vars).is_err());
 
         let literals = vec![
             Literal::new(1, -1),
@@ -501,13 +517,13 @@ mod test {
         ];
         let c = CardinalityConstraint::new(literals, Comparison::GrEqual, 0).expect("Test method");
         let true_vars = HashSet::new().into();
-        assert!(c.verify(&true_vars));
+        assert!(c.verify(&true_vars).is_ok());
 
         let true_vars = HashSet::from([LiteralIdent::new(1)]).into();
-        assert!(!c.verify(&true_vars));
+        assert!(c.verify(&true_vars).is_err());
 
         let true_vars = HashSet::from([LiteralIdent::new(1), LiteralIdent::new(3)]).into();
-        assert!(!c.verify(&true_vars));
+        assert!(c.verify(&true_vars).is_err());
     }
     #[test]
     fn test_choose_zero() {
