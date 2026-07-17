@@ -31,7 +31,18 @@ use crate::{
     },
 };
 
+/// The parsed and verified outcome of the  solved problem provided by a specific PB solver
+///
+/// The happy path returns the parsed status of the solver output as well as information about found model (if SAT) and
+/// minimum objective (if PBO)
+/// An valid outcome is either SAT/UNSAT or a timeout of the solver
+///
+/// Errors can be either a found bug, some error due to parsing or solver crashing and the result "UNKNONW"
+pub type SolverResult = Result<SolverOutcome, IterationError>;
+
+/// Trait, which holds methods a specific solver needs to implement in order to be able to run and parse its output
 pub trait Solver {
+    /// every solver needs to have a name, which works as an identifier
     fn get_name(&self) -> &str;
 
     fn external_execution_error(&self, source: std::io::Error) -> ExternalProgramError {
@@ -41,24 +52,29 @@ pub trait Solver {
         }
     }
 
+    /// returns the specific parser needed in order to extract the output of the solver
     fn parser(&self) -> &dyn Parser;
 
+    /// Makes use of the underlying parser for the solver in order to extract the computed status of the problem
     fn parse(
         &self,
-        ext_result: SolverOutcome,
+        ext_result: SolverState,
         pb_kind: &PBKind,
     ) -> Result<SolverStatus, ExternalProgramError> {
         match ext_result {
-            SolverOutcome::Terminated(output) => match pb_kind {
+            SolverState::Terminated(output) => match pb_kind {
                 PBKind::PBS => self.parser().parse_pbs(&output),
                 PBKind::PBO => self.parser().parse_pbo(&output),
             }
             .map_err(Into::into),
-            SolverOutcome::Timeout => Ok(SolverStatus::TimeLimit),
+            SolverState::Timeout => Ok(SolverStatus::TimeLimit),
         }
     }
 
-    fn run_with_timeout(&self, cmd: &mut Command, timeout: Duration) -> io::Result<SolverOutcome> {
+    /// starts the solver in a child process and terminates this process after the given output
+    ///
+    /// Because we use libc crate to kill the child process, this method makes use of `unsafe` code
+    fn run_with_timeout(&self, cmd: &mut Command, timeout: Duration) -> io::Result<SolverState> {
         let child = cmd.stdout(Stdio::piped()).spawn()?;
         let (tx, rx) = mpsc::channel();
         let pid = child.id();
@@ -68,14 +84,14 @@ pub trait Solver {
         });
 
         match rx.recv_timeout(timeout) {
-            Ok(result) => result.map(SolverOutcome::Terminated),
+            Ok(result) => result.map(SolverState::Terminated),
             Err(_) => {
                 info!("Terminating solver {}...", self.get_name());
                 #[cfg(unix)]
                 unsafe {
                     libc::kill(pid as i32, libc::SIGTERM);
                 }
-                Ok(SolverOutcome::Timeout)
+                Ok(SolverState::Timeout)
             }
         }
     }
@@ -177,8 +193,8 @@ impl ArgumentType {
 }
 
 impl ExternalProgramSer {
-    pub fn to_external_program(self, timelimit: Duration) -> ExternalProgram {
-        ExternalProgram {
+    pub fn to_external_program(self, timelimit: Duration) -> SolverData {
+        SolverData {
             parser: self.create_parser(),
             binary: self.binary,
             args: self.args,
@@ -191,9 +207,9 @@ impl ExternalProgramSer {
     pub fn to_external_program_with_proof(
         self,
         timelimit: Duration,
-    ) -> Result<ExternalProgramWithProof, ExternalProgramError> {
+    ) -> Result<SolverDataWithProof, ExternalProgramError> {
         match self.proof_arg.as_ref() {
-            Some(proof_arg) => Ok(ExternalProgramWithProof {
+            Some(proof_arg) => Ok(SolverDataWithProof {
                 proof_arg: proof_arg.to_string(),
                 program: self.to_external_program(timelimit),
             }),
@@ -213,7 +229,8 @@ impl ExternalProgramSer {
     }
 }
 
-pub struct ExternalProgram {
+/// This struct holds all the relevant data in order to execute a Solver
+pub struct SolverData {
     /// path to the binary of the solver to execute
     binary: PathBuf,
     /// essential args needed in order to run the solver
@@ -228,12 +245,12 @@ pub struct ExternalProgram {
     timelimit: Duration,
 }
 
-pub struct ExternalProgramWithProof {
-    program: ExternalProgram,
+pub struct SolverDataWithProof {
+    program: SolverData,
     proof_arg: String,
 }
 
-impl Solver for ExternalProgramWithProof {
+impl Solver for SolverDataWithProof {
     fn get_name(&self) -> &str {
         &self.program.name
     }
@@ -243,13 +260,13 @@ impl Solver for ExternalProgramWithProof {
     }
 }
 
-impl ExternalProgramWithProof {
+impl SolverDataWithProof {
     pub fn run_with_proof(
         &self,
         file_path_pb: &Path,
         file_path_proof: &Path,
         with_option_fuzzing: bool,
-    ) -> Result<SolverOutcome, ExternalProgramError> {
+    ) -> Result<SolverState, ExternalProgramError> {
         let mut command = Command::new(self.program.binary.as_os_str());
         // TODO: remove later, when profiling analysis is done
         let _prof_file_name = file_path_pb
@@ -278,7 +295,7 @@ impl ExternalProgramWithProof {
     }
 }
 
-impl Solver for ExternalProgram {
+impl Solver for SolverData {
     fn get_name(&self) -> &str {
         &self.name
     }
@@ -288,12 +305,12 @@ impl Solver for ExternalProgram {
     }
 }
 
-impl ExternalProgram {
+impl SolverData {
     pub fn run(
         &self,
         file_path: &Path,
         with_option_fuzzing: bool,
-    ) -> Result<SolverOutcome, ExternalProgramError> {
+    ) -> Result<SolverState, ExternalProgramError> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
             command.arg(arg);
@@ -327,7 +344,7 @@ impl ExternalProgram {
     }
 }
 
-pub enum SolverOutcome {
+pub enum SolverState {
     Terminated(Output),
     Timeout,
 }
@@ -382,7 +399,10 @@ pub enum SolverStatus {
         conflicts: u32,
     },
     TimeLimit,
-    Unknown,
+    Unknown {
+        solver_name: String,
+        status: String,
+    },
 }
 
 impl SolverStatus {
@@ -392,50 +412,51 @@ impl SolverStatus {
         formula: &Path,
         derivation: &Path,
         solver_name: &str,
-    ) -> IterationOutcome {
+    ) -> SolverResult {
         match self {
             SolverStatus::Sat {
                 conflicts,
                 solution,
             } => {
                 if let Err(e) = solution.is_valid(grammar) {
-                    return IterationOutcome::Bug {
-                        reason: BugReason::Solution(InvalidSolution {
-                            solver_name: solver_name.into(),
-                            violation: e,
-                        }),
-                    };
+                    return Err(BugReason::Solution(InvalidSolution {
+                        solver_name: solver_name.into(),
+                        violation: e,
+                    })
+                    .into());
                 }
                 if let Err(e) = check_proof(formula, derivation) {
-                    return IterationOutcome::Bug {
-                        reason: BugReason::ProofCheckerFailed(e),
-                    };
+                    return Err(BugReason::ProofCheckerFailed(e).into());
                 }
                 match solution {
-                    SolverSolution::PBS(solution_model) => IterationOutcome::Sat {
+                    SolverSolution::PBS(solution_model) => Ok(SolverOutcome::Sat {
                         conflicts,
                         solution: SatModel::Proof(solution_model),
                         optimum: None,
-                    },
+                    }),
                     SolverSolution::PBO(solution_model, min_objective_value) => {
-                        IterationOutcome::Sat {
+                        Ok(SolverOutcome::Sat {
                             conflicts,
                             solution: SatModel::Proof(solution_model),
                             optimum: Some(min_objective_value),
-                        }
+                        })
                     }
                 }
             }
             SolverStatus::Unsat { conflicts } => {
                 if let Err(e) = check_proof(formula, derivation) {
-                    return IterationOutcome::Bug {
-                        reason: BugReason::ProofCheckerFailed(e),
-                    };
+                    return Err(BugReason::ProofCheckerFailed(e).into());
                 }
-                IterationOutcome::Unsat { conflicts }
+                Ok(SolverOutcome::Unsat { conflicts })
             }
-            SolverStatus::TimeLimit => IterationOutcome::TimeLimit,
-            SolverStatus::Unknown => IterationOutcome::Unknown,
+            SolverStatus::TimeLimit => Ok(SolverOutcome::TimeLimit),
+            SolverStatus::Unknown {
+                solver_name,
+                status,
+            } => Err(IterationError::Unknown {
+                solver_name,
+                status,
+            }),
         }
     }
     pub fn verify_and_compare_status(
@@ -445,7 +466,7 @@ impl SolverStatus {
         //TODO: we probably want to save the name somewhere inside self and other
         self_name: &str,
         other_name: &str,
-    ) -> IterationOutcome {
+    ) -> SolverResult {
         let status_str1 = self.get_status_string().to_string();
         let status_str2 = other.get_status_string().to_string();
         match (self, other) {
@@ -460,35 +481,33 @@ impl SolverStatus {
                 },
             ) => {
                 if let Err(e) = s1.is_valid(grammar) {
-                    return IterationOutcome::Bug {
-                        reason: BugReason::Solution(InvalidSolution {
-                            solver_name: self_name.into(),
-                            violation: e,
-                        }),
-                    };
+                    return Err(BugReason::Solution(InvalidSolution {
+                        solver_name: self_name.into(),
+                        violation: e,
+                    })
+                    .into());
                 }
                 if let Err(e) = s2.is_valid(grammar) {
-                    return IterationOutcome::Bug {
-                        reason: BugReason::Solution(InvalidSolution {
-                            solver_name: other_name.into(),
-                            violation: e,
-                        }),
-                    };
+                    return Err(BugReason::Solution(InvalidSolution {
+                        solver_name: other_name.into(),
+                        violation: e,
+                    })
+                    .into());
                 }
                 let conflicts = c1.max(c2);
                 match (s1, s2) {
-                    (SolverSolution::PBS(m1), SolverSolution::PBS(m2)) => IterationOutcome::Sat {
+                    (SolverSolution::PBS(m1), SolverSolution::PBS(m2)) => Ok(SolverOutcome::Sat {
                         conflicts,
                         solution: SatModel::Comparison(m1, m2),
                         optimum: None,
-                    },
+                    }),
                     (SolverSolution::PBO(m1, min1), SolverSolution::PBO(m2, min2)) => {
                         if min1 == min2 {
-                            IterationOutcome::Sat {
+                            Ok(SolverOutcome::Sat {
                                 conflicts,
                                 solution: SatModel::Comparison(m1, m2),
                                 optimum: Some(min1),
-                            }
+                            })
                         } else {
                             let i1 = ObjectiveInfo {
                                 solver_name: self_name.into(),
@@ -498,25 +517,32 @@ impl SolverStatus {
                                 solver_name: other_name.into(),
                                 min_objective: min2,
                             };
-                            IterationOutcome::Bug {
-                                reason: BugReason::DifferentObjectives(i1, i2),
-                            }
+                            Err(BugReason::DifferentObjectives(i1, i2).into())
                         }
                     }
                     _ => unreachable!("cant compare pbs with pbo"),
                 }
             }
             (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: c2 }) => {
-                IterationOutcome::Unsat {
+                Ok(SolverOutcome::Unsat {
                     conflicts: c1.max(c2),
-                }
+                })
             }
-            (SolverStatus::Unknown, SolverStatus::Unknown) => IterationOutcome::Unknown,
-            (SolverStatus::TimeLimit, _) => IterationOutcome::TimeLimit,
-            (_, SolverStatus::TimeLimit) => IterationOutcome::TimeLimit,
-            _ => IterationOutcome::Bug {
-                reason: BugReason::OutputStatusDiffers(status_str1, status_str2),
-            },
+            (
+                SolverStatus::Unknown {
+                    solver_name: n1,
+                    status,
+                },
+                SolverStatus::Unknown {
+                    solver_name: n2, ..
+                },
+            ) => Err(IterationError::Unknown {
+                solver_name: format!("{n1} + {n2}"),
+                status,
+            }),
+            (SolverStatus::TimeLimit, _) => Ok(SolverOutcome::TimeLimit),
+            (_, SolverStatus::TimeLimit) => Ok(SolverOutcome::TimeLimit),
+            _ => Err(BugReason::OutputStatusDiffers(status_str1, status_str2).into()),
         }
     }
 
@@ -525,7 +551,7 @@ impl SolverStatus {
             SolverStatus::Sat { .. } => "SAT",
             SolverStatus::Unsat { .. } => "UNSAT",
             SolverStatus::TimeLimit => "Timeout",
-            SolverStatus::Unknown => "Unknown",
+            SolverStatus::Unknown { .. } => "Unknown",
         }
     }
 }
@@ -535,8 +561,44 @@ pub enum SatModel {
     Proof(SolutionModel),
 }
 
+pub trait IterationResult {
+    fn get_folder_name(&self) -> &'static str;
+    fn get_status_as_string(&self) -> &'static str;
+    fn get_file_name_prefix(&self) -> &'static str {
+        self.get_status_as_string()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum IterationError {
+    #[error(transparent)]
+    Bug(#[from] BugReason),
+    #[error(transparent)]
+    Error(#[from] ExternalProgramError),
+    #[error("{solver_name} - Unknown status: {status}")]
+    Unknown { solver_name: String, status: String },
+}
+
+impl IterationResult for IterationError {
+    fn get_folder_name(&self) -> &'static str {
+        match self {
+            IterationError::Bug(_) => BUG_FOLDER.name,
+            IterationError::Error(_) => ERROR_FOLDER.name,
+            IterationError::Unknown { .. } => UNKNOWN_FOLDER.name,
+        }
+    }
+
+    fn get_status_as_string(&self) -> &'static str {
+        match self {
+            IterationError::Bug(_) => "bug",
+            IterationError::Error(_) => "error",
+            IterationError::Unknown { .. } => "unknown",
+        }
+    }
+}
+
 /// Models the different states of one iteration in the orchestration pipeline
-pub enum IterationOutcome {
+pub enum SolverOutcome {
     /// result SAT containts data about the solution and in the Optimization case the found minimum value
     Sat {
         conflicts: u32,
@@ -546,63 +608,68 @@ pub enum IterationOutcome {
     Unsat {
         conflicts: u32,
     },
-    Unknown,
     TimeLimit,
-    Bug {
-        reason: BugReason,
-    },
-    Error {
-        error: ExternalProgramError,
-    },
 }
 
-impl IterationOutcome {
-    pub fn get_folder_name(&self) -> &'static str {
+impl IterationResult for SolverResult {
+    fn get_folder_name(&self) -> &'static str {
         match self {
-            IterationOutcome::Sat { .. } => SAT_FOLDER.name,
-            IterationOutcome::Unsat { .. } => UNSAT_FOLDER.name,
-            IterationOutcome::Unknown => UNKNOWN_FOLDER.name,
-            IterationOutcome::Bug { .. } => BUG_FOLDER.name,
-            IterationOutcome::Error { .. } => ERROR_FOLDER.name,
-            IterationOutcome::TimeLimit => TIMEOUT_FOLDER.name,
-        }
-    }
-    pub fn get_file_name_prefix(&self) -> &'static str {
-        self.get_status_as_string()
-    }
-
-    pub fn get_status_as_string(&self) -> &'static str {
-        match self {
-            IterationOutcome::Sat { .. } => "sat",
-            IterationOutcome::Unsat { .. } => "unsat",
-            IterationOutcome::Unknown => "unknown",
-            IterationOutcome::Bug { .. } => "bug",
-            IterationOutcome::Error { .. } => "error",
-            IterationOutcome::TimeLimit => "timeout",
+            Ok(ok) => ok.get_folder_name(),
+            Err(err) => err.get_folder_name(),
         }
     }
 
+    fn get_status_as_string(&self) -> &'static str {
+        match self {
+            Ok(ok) => ok.get_status_as_string(),
+            Err(err) => err.get_status_as_string(),
+        }
+    }
+}
+
+impl IterationResult for SolverOutcome {
+    fn get_folder_name(&self) -> &'static str {
+        match self {
+            SolverOutcome::Sat { .. } => SAT_FOLDER.name,
+            SolverOutcome::Unsat { .. } => UNSAT_FOLDER.name,
+            SolverOutcome::TimeLimit => TIMEOUT_FOLDER.name,
+        }
+    }
+
+    fn get_status_as_string(&self) -> &'static str {
+        match self {
+            SolverOutcome::Sat { .. } => "sat",
+            SolverOutcome::Unsat { .. } => "unsat",
+            SolverOutcome::TimeLimit => "timeout",
+        }
+    }
+}
+impl SolverOutcome {
     pub fn get_conflicts(&self) -> u32 {
         match self {
-            IterationOutcome::Sat { conflicts, .. } => *conflicts,
-            IterationOutcome::Unsat { conflicts } => *conflicts,
-            IterationOutcome::Unknown => 0,
-            IterationOutcome::Bug { .. } => 0,
-            IterationOutcome::Error { .. } => 0,
-            IterationOutcome::TimeLimit => 0,
+            SolverOutcome::Sat { conflicts, .. } => *conflicts,
+            SolverOutcome::Unsat { conflicts } => *conflicts,
+            SolverOutcome::TimeLimit => 0,
         }
     }
 }
 
+#[derive(Debug, Error)]
+#[error("{solver_name} - minimum: {min_objective}")]
 pub struct ObjectiveInfo {
     solver_name: String,
     min_objective: MinObjectiveValue,
 }
 
+#[derive(Debug, Error)]
+#[error("{solver_name}: {violation}")]
 pub struct InvalidSolution {
     solver_name: String,
+    #[source]
     violation: ValidationError,
 }
+
+#[derive(Debug, Error)]
 pub enum BugReason {
     Solution(InvalidSolution),
     DifferentObjectives(ObjectiveInfo, ObjectiveInfo),

@@ -47,7 +47,7 @@ impl Parser for DefaultParser {
                     "SATISFIABLE" => StatusKind::Sat,
                     "OPTIMUM FOUND" => StatusKind::Optimum,
                     "TIMELIMIT" => StatusKind::TimeLimit,
-                    _ => StatusKind::Unknown,
+                    _ => StatusKind::Unknown(rest.to_string()),
                 };
                 debug!("Parsed statusline {line} to status: {status}");
                 StatusLine::Status(status)

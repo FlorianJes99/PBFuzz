@@ -7,8 +7,8 @@ use thiserror::Error;
 use crate::{
     fuzzer::domain::{LiteralIdent, ParseLiteralError},
     orchestrator::{
-        external_program::{SolverSolution, SolverStatus},
         scip_parser::ScipParsingError,
+        solver::{SolverSolution, SolverStatus},
     },
 };
 
@@ -60,7 +60,10 @@ pub trait Parser: Sync {
                 // only sat means we could not find optimum in given time limit
                 StatusKind::Sat => Ok(SolverStatus::TimeLimit),
                 StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
-                StatusKind::Unknown => Ok(SolverStatus::Unknown),
+                StatusKind::Unknown(s) => Ok(SolverStatus::Unknown {
+                    solver_name: self.name().to_string(),
+                    status: s,
+                }),
             },
             None => Err(OutputParsingError::StatusMissing),
         }
@@ -82,7 +85,10 @@ pub trait Parser: Sync {
                 // only sat means we could not find optimum in given time limit
                 StatusKind::Sat => Ok(SolverStatus::TimeLimit),
                 StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
-                StatusKind::Unknown => Ok(SolverStatus::Unknown),
+                StatusKind::Unknown(s) => Ok(SolverStatus::Unknown {
+                    solver_name: self.name().to_string(),
+                    status: s,
+                }),
             },
             None => Err(OutputParsingError::StatusMissing),
         }
@@ -103,17 +109,17 @@ pub enum StatusKind {
     Optimum,
     Unsat,
     TimeLimit,
-    Unknown,
+    Unknown(String),
 }
 
 impl Display for StatusKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StatusKind::Sat => write!(f, "sat"),
-            StatusKind::Optimum => write!(f, "optimum found"),
-            StatusKind::Unsat => write!(f, "unsat"),
-            StatusKind::TimeLimit => write!(f, "timelimit"),
-            StatusKind::Unknown => write!(f, "unknown"),
+            StatusKind::Sat => f.write_str("sat"),
+            StatusKind::Optimum => f.write_str("optimum found"),
+            StatusKind::Unsat => f.write_str("unsat"),
+            StatusKind::TimeLimit => f.write_str("timelimit"),
+            StatusKind::Unknown(s) => write!(f, "unknown ({s})"),
         }
     }
 }

@@ -1,14 +1,16 @@
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile};
 use crate::fuzzer::pb_settings::{GenerationMethod, GeneratorSettings, GeneratorSettingsBuilder};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
-use crate::orchestrator::external_program::ExternalProgramWithProof;
+use crate::orchestrator::solver::{
+    IterationError, IterationResult, SolverDataWithProof, SolverOutcome, SolverResult,
+};
 use crate::{
     fuzzer::helpers::{get_hms_parts, RunningAverage, RunningAverageDuration},
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        external_program::{ExternalProgram, ExternalProgramSer, IterationOutcome, Solver},
         folders::{prepare_output_folder, DATA_FOLDER},
         orchestrator_args::OrchestratorArgs,
+        solver::{ExternalProgramSer, Solver, SolverData},
     },
 };
 use std::path::Path;
@@ -117,8 +119,8 @@ pub fn run_orchestrator(
 }
 
 enum OrchestrationMode {
-    Comparison(ExternalProgram, ExternalProgram),
-    ProofChecking(ExternalProgramWithProof),
+    Comparison(SolverData, SolverData),
+    ProofChecking(SolverDataWithProof),
 }
 
 struct Orchestrator {
@@ -245,14 +247,21 @@ impl Orchestrator {
         print_block(&format!("Iteration {iteration}"), body);
         let seed = work_result.record.get_seed();
         let outcome = &work_result.outcome;
-        if let IterationOutcome::Error { error: err } = outcome {
-            error!(
-                "Some error occured in iteration for seed {})!\nError: {}",
-                seed, err
-            );
-        }
-        if let IterationOutcome::Bug { reason } = outcome {
-            info!("Found bug with seed {})!\nBug: {}", seed, reason)
+
+        if let Err(e) = outcome {
+            match e {
+                IterationError::Bug(bug_reason) => {
+                    info!("Found bug with seed {})!\nBug: {}", seed, bug_reason)
+                }
+                IterationError::Error(external_program_error) => error!(
+                    "Some error occured in iteration for seed {})!\nError: {}",
+                    seed, external_program_error
+                ),
+                IterationError::Unknown {
+                    solver_name,
+                    status,
+                } => info!("Solver {solver_name} outputted 'Unknown': {status}"),
+            }
         }
         let mut files_to_move = vec![];
         let output_file = work_result.pb_file;
@@ -276,13 +285,10 @@ impl Orchestrator {
         }
         let file_manipulation_result = match outcome {
             // Only save the file if bug or error or `unknown` occurred
-            IterationOutcome::Bug { .. }
-            | IterationOutcome::Error { .. }
-            | IterationOutcome::TimeLimit
-            | IterationOutcome::Unknown => move_files(&files_to_move),
-            _ if self.save_all_files => move_files(&files_to_move),
+            Err(_) => move_files(&files_to_move),
+            Ok(_) if self.save_all_files => move_files(&files_to_move),
             // Delete the generated fuzzing result if not needed anymore
-            _ => remove_files(&files_to_move).map_err(|e| e.to_string()),
+            Ok(_) => remove_files(&files_to_move).map_err(|e| e.to_string()),
         };
         if let Err(err) = file_manipulation_result {
             error!("{err}");
@@ -377,17 +383,18 @@ fn work_iteration(
                     p1.get_name(),
                     p2.get_name(),
                 ),
-                (Err(err), _) => IterationOutcome::Error { error: err },
-                (_, Err(err)) => IterationOutcome::Error { error: err },
+                (Err(err), _) => Err(IterationError::Error(err)),
+                (_, Err(err)) => Err(IterationError::Error(err)),
             };
             let time_output_extraction = start_output_extraction.elapsed();
+            let conflicts = outcome.as_ref().map_or(0, |o| o.get_conflicts());
             let comparison_record = ComparisonRecord {
                 result: outcome.get_status_as_string(),
                 problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
                 problem_solving_duration_solver1_ms: time_bin1.as_secs_f32() * 1000.0,
                 problem_solving_duration_solver2_ms: time_bin2.as_secs_f32() * 1000.0,
                 problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
-                conflicts: outcome.get_conflicts(),
+                conflicts,
                 seed,
             };
             Ok(WorkResult {
@@ -407,25 +414,26 @@ fn work_iteration(
             let parsing_result = p.parse(output, &pb_kind);
             let duration_output_parsing = start_output_parsing.elapsed();
             let proof_checking_start = Instant::now();
-            let outcome = parsing_result.map_or_else(
-                |err| IterationOutcome::Error { error: err },
-                |r| r.verify_with_proof_checking(&grammar, &output_file, &proof_file, p.get_name()),
-            );
+            let iteration_result: SolverResult =
+                parsing_result.map_err(|e| e.into()).and_then(|r| {
+                    r.verify_with_proof_checking(&grammar, &output_file, &proof_file, p.get_name())
+                });
             let proof_checking_duration = proof_checking_start.elapsed();
+            let conflicts = iteration_result.as_ref().map_or(0, |o| o.get_conflicts());
             let proof_record = ProofRecord {
-                result: outcome.get_status_as_string(),
+                result: iteration_result.get_status_as_string(),
                 problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
                 problem_solving_duration_program: problem_solving_duration.as_secs_f32() * 1000.0,
                 problem_parsing_duration_ms: duration_output_parsing.as_secs_f32() * 1000.0,
                 problem_checking_duration_ms: proof_checking_duration.as_secs_f32() * 1000.0,
-                conflicts: outcome.get_conflicts(),
+                conflicts,
                 seed,
             };
             Ok(WorkResult {
                 start_worker,
                 pb_file: output_file,
                 proof_file: Some(proof_file),
-                outcome,
+                outcome: iteration_result,
                 record: CsvRecord::Proof(proof_record),
             })
         }
@@ -436,7 +444,7 @@ struct WorkResult {
     start_worker: Instant,
     pb_file: PathBuf,
     proof_file: Option<PathBuf>,
-    outcome: IterationOutcome,
+    outcome: SolverResult,
     record: CsvRecord,
 }
 
@@ -511,26 +519,31 @@ impl Stats {
         self.average_iteration_duration.update(iteration_duration);
     }
 
-    fn update(&mut self, outcome: &IterationOutcome) {
+    fn update(&mut self, outcome: &SolverResult) {
         match outcome {
-            IterationOutcome::Sat {
-                conflicts: c,
-                solution: _,
-                optimum: _,
-            } => {
-                self.amount_sat += 1;
-                self.average_conflicts.update(*c);
-            }
-            IterationOutcome::Unsat { conflicts: c } => {
-                self.amount_unsat += 1;
-                self.average_conflicts.update(*c);
-            }
-            IterationOutcome::Unknown => self.amount_unknown += 1,
-            IterationOutcome::Bug { .. } => self.bugs_found += 1,
-            IterationOutcome::Error { .. } => self.errors += 1,
-            IterationOutcome::TimeLimit => self.timeouts += 1,
+            Ok(o) => match o {
+                SolverOutcome::Sat {
+                    conflicts,
+                    solution: _,
+                    optimum: _,
+                } => {
+                    self.amount_sat += 1;
+                    self.average_conflicts.update(*conflicts);
+                }
+                SolverOutcome::Unsat { conflicts } => {
+                    self.amount_unsat += 1;
+                    self.average_conflicts.update(*conflicts);
+                }
+                SolverOutcome::TimeLimit => self.timeouts += 1,
+            },
+            Err(e) => match e {
+                IterationError::Bug(_) => self.bugs_found += 1,
+                IterationError::Error(_) => self.errors += 1,
+                IterationError::Unknown { .. } => self.amount_unknown += 1,
+            },
         }
     }
+
     fn amount_runs(&self) -> u32 {
         self.amount_sat + self.amount_unsat + self.amount_unknown + self.bugs_found + self.timeouts
     }
@@ -614,28 +627,28 @@ impl Display for Stats {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{fuzzer::helpers::float_equals, orchestrator::external_program::SatModel};
+    use crate::{fuzzer::helpers::float_equals, orchestrator::solver::SatModel};
 
     use super::*;
     #[test]
     fn test_stats() {
         let mut stats = Stats::new();
-        let res = IterationOutcome::Sat {
+        let res = SolverOutcome::Sat {
             conflicts: 0,
             solution: SatModel::Proof(HashSet::new().into()),
             optimum: None,
         };
 
-        stats.update(&res);
+        stats.update(&Ok(res));
         assert_eq!(1, stats.amount_runs());
         assert_eq!(1, stats.amount_sat);
         assert_eq!(0, stats.amount_unsat);
         assert_eq!(0, stats.amount_unknown);
         float_equals(4.0, stats.average_conflicts.get_average(), 0.0001);
 
-        let res = IterationOutcome::Unsat { conflicts: 1 };
+        let res = SolverOutcome::Unsat { conflicts: 1 };
 
-        stats.update(&res);
+        stats.update(&Ok(res));
         assert_eq!(2, stats.amount_runs());
         assert_eq!(1, stats.amount_sat);
         assert_eq!(1, stats.amount_unsat);
