@@ -187,7 +187,7 @@ impl Orchestrator {
             for (iteration, work_result) in receiver.iter().enumerate() {
                 let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
                 let percentage_range_sat = 0.20..0.7;
-                if self.check_for_early_termination(iteration, &stats, &percentage_range_sat) {
+                if self.terminate_early(iteration, &stats, &percentage_range_sat) {
                     println!("Terminating early!");
                     println!(
                         "Percentage SAT Instances not in range ({}..{})",
@@ -215,18 +215,22 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// Terminate early if amount sat instances not in range
-    /// and more than 1000 iterations are scheduled
-    fn check_for_early_termination(
+    /// Terminate early if:
+    /// - random constraint generation and
+    /// - amount sat instances not in range and
+    /// - more than 1000 iterations are scheduled
+    fn terminate_early(
         &self,
         iteration: u32,
         stats: &Stats,
         percentage_range_sat: &Range<f32>,
     ) -> bool {
-        if self.generator_settings.get_generation_method() == &GenerationMethod::FromSolution {
-            return false;
+        match self.generator_settings.get_generation_method() {
+            GenerationMethod::FromSolution => false,
+            GenerationMethod::Random => {
+                iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
+            }
         }
-        iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
     }
 
     fn process_result(

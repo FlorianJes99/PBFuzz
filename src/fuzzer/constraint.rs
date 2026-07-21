@@ -1,3 +1,4 @@
+use log::error;
 use thiserror::Error;
 
 use crate::fuzzer::domain::Comparison;
@@ -54,14 +55,23 @@ pub trait Constraint: Display + Send {
 
     /// Checks if the constructed constraint is solvable.
     /// A solvable constraint needs to have at least one assignment, which fulfill the degree.
-    fn is_solvable(&self) -> bool {
-        self.satisfied(
-            self.literals()
-                .iter()
-                .filter(|literal| literal.coeff > 0)
-                .map(|literal| literal.coeff as i64)
-                .sum::<i64>(),
-        )
+    fn is_solvable(&self) -> Result<(), ConstraintViolation> {
+        let lhs = self
+            .literals()
+            .iter()
+            .filter(|literal| literal.coeff > 0)
+            .map(|literal| Into::<i64>::into(literal.coeff))
+            .sum::<i64>();
+
+        if self.satisfied(lhs) {
+            Ok(())
+        } else {
+            Err(ConstraintViolation {
+                evaluated: lhs,
+                expected: self.degree(),
+                comp: *self.comparison(),
+            })
+        }
     }
 
     /// Can be used in every implementation of the trait in order to get a formatted version of the
@@ -186,10 +196,10 @@ impl ArbitraryLengthConstraint {
             degree,
         };
 
-        debug_assert!(
-            constraint.is_solvable(),
-            "A constraint on each own should be solvable"
-        );
+        #[cfg(debug_assertions)]
+        if let Err(e) = constraint.is_solvable() {
+            panic!("Constraint is not solvable: {e}");
+        }
         constraint
     }
 }
@@ -317,7 +327,8 @@ impl CardinalityConstraint {
             degree,
             amount_unsat: OnceCell::new(),
         };
-        if !c.is_solvable() {
+        if let Err(e) = c.is_solvable() {
+            error!("{e}");
             return Err(InvalidConstraintConstruction(
                 "A constraint on itself needs to be solvable".to_string(),
                 ConstraintKind::Cardinality,

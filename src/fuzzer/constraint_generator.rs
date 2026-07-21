@@ -325,27 +325,41 @@ impl ConstraintGenerator {
         }
     }
 
-    /// Generate n ids to use for creation of literals in a single constraint
     fn get_n_ids_sorted(&mut self, n: u32) -> Result<Vec<LiteralIdent>, ConstraintGenerationError> {
-        index::sample(
+        self.get_n_ids(n, true)
+    }
+
+    /// Generate n ids to use for creation of literals in a single constraint
+    fn get_n_ids(
+        &mut self,
+        n: u32,
+        sort: bool,
+    ) -> Result<Vec<LiteralIdent>, ConstraintGenerationError> {
+        let mut indices: Vec<_> = index::sample(
             &mut self.rand,
             self.settings.max_vars.try_into()?,
             n.try_into()?,
         )
         .iter()
-        // sort the indices in increasing oder
-        .sorted()
-        .map(|x| -> Result<LiteralIdent, ConstraintGenerationError> {
-            // Add +1 because we want ids from 1..=len and sample are from 0..len
-            (x + 1)
-                .try_into()
-                .map(LiteralIdent::new)
-                .map_err(Into::into)
-        })
-        .collect()
+        .collect();
+
+        if sort {
+            // sort the indices in increasing oder
+            indices.sort_unstable();
+        }
+
+        indices
+            .into_iter()
+            .map(|x| -> Result<LiteralIdent, ConstraintGenerationError> {
+                // Add +1 because we want ids from 1..=len and sample are from 0..len
+                (x + 1)
+                    .try_into()
+                    .map(LiteralIdent::new)
+                    .map_err(Into::into)
+            })
+            .collect()
     }
 
-    /// Methods specifically design for ThreeLiteralConstraints
     fn get_three_ids_sorted(&mut self) -> Result<[LiteralIdent; 3], ConstraintGenerationError> {
         let mut ids: [LiteralIdent; 3] =
             index::sample_array(&mut self.rand, self.settings.max_vars.try_into()?)
@@ -358,6 +372,40 @@ impl ConstraintGenerator {
                 .map(LiteralIdent::new);
         ids.sort();
         Ok(ids)
+    }
+
+    /// Generates constraint with the following structure
+    ///
+    /// `x_1 + y_1 + 2 x_2 + 2 y_2 + ... + 2^n x_n + 2^n y_n >= 2^(n+1)`
+    fn generate_doubling_pairs_constraint(
+        &mut self,
+        constraint_length: u32,
+    ) -> Result<ArbitraryLengthConstraint, ConstraintGenerationError> {
+        assert!(
+            constraint_length.is_multiple_of(2),
+            "This type of constraint expects to have an even amount of literals"
+        );
+        let ids = self.get_n_ids(constraint_length, false)?;
+        let n: u32 = (ids.len() / 2).try_into()?;
+        let literals = ids
+            .chunks(2)
+            .enumerate()
+            .flat_map(|(exponent, chunk)| {
+                chunk
+                    .iter()
+                    .map(move |id| -> Result<Literal, ConstraintGenerationError> {
+                        Ok(id.to_literal(2_i32.pow(exponent.try_into()?)))
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        // n pairs use exponents 0..=n-1, so highest coefficient is 2^(n-1)
+        // therefore RHS needs to be 2^(n-1 + 1) = 2^n
+        let degree = 2_i64.pow(n);
+        Ok(ArbitraryLengthConstraint::new(
+            literals,
+            Comparison::GrEqual,
+            degree,
+        ))
     }
 }
 
@@ -477,5 +525,58 @@ impl ConstraintSettings {
             upper_bound_degree,
             constraint_distribution,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use rand::SeedableRng;
+
+    #[test]
+    fn test_pairs_constraint() {
+        let settings = ConstraintSettings {
+            max_vars: 50,
+            max_unsat_for_single_constraint: 3,
+            amount_literals_per_constraint: 10,
+            coeff_lower_bound: 2,
+            coeff_upper_bound: 5,
+            lower_bound_degree: 0.3,
+            upper_bound_degree: 0.5,
+            constraint_distribution: ConstraintDistribution {
+                three_literal_weight: 3,
+                cardinality_weight: 1,
+                arbitrary_weight: 1,
+                exactly_one_weight: 0,
+            },
+        };
+        let mut generator = ConstraintGenerator::new(StdRng::seed_from_u64(42), settings);
+        let literal_size = 6;
+        let constraint = generator.generate_pairs_constraint(literal_size).unwrap();
+        assert!(
+            constraint.literals().len().is_multiple_of(2),
+            "We expect amount of literals in this constraint to be even"
+        );
+        assert_eq!(constraint.literals().len(), literal_size as usize);
+        assert_eq!(constraint.degree(), 2_i64.pow(literal_size / 2));
+        constraint
+            .literals()
+            .chunks(2)
+            .enumerate()
+            .for_each(|(i, chunk)| {
+                let [l1, l2] = chunk else {
+                    panic!("Expected pairs to be of length 2");
+                };
+
+                let (c1, c2) = (l1.coeff, l2.coeff);
+                let expected = 2_i32.pow(i as u32);
+                assert_eq!(c1, expected, "Expected {expected}, but {c1}");
+                assert_eq!(
+                    c1, c2,
+                    "Both coeffs of a pair should be equal, but was: {} and {}",
+                    c1, c2
+                )
+            });
     }
 }
