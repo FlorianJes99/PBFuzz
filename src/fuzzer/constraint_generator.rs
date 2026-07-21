@@ -553,7 +553,9 @@ mod tests {
         };
         let mut generator = ConstraintGenerator::new(StdRng::seed_from_u64(42), settings);
         let literal_size = 6;
-        let constraint = generator.generate_pairs_constraint(literal_size).unwrap();
+        let constraint = generator
+            .generate_doubling_pairs_constraint(literal_size)
+            .unwrap();
         assert!(
             constraint.literals().len().is_multiple_of(2),
             "We expect amount of literals in this constraint to be even"
