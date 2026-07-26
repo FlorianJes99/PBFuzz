@@ -6,6 +6,8 @@ use std::{
     time::Duration,
 };
 
+use serde::{Deserialize, Serialize};
+
 /// Wrap a printable Item in a block of equal-signs and a header
 pub fn print_block<T: Display>(heading: &str, item: T) {
     let amount_signs = 40;
@@ -71,7 +73,7 @@ pub fn compute_running_average(current_average: f32, sample: u32, total_runs: u3
 ///
 /// When updating the average with a new value the struct automatically updates the sample_count as
 /// well
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct RunningAverage {
     average: f32,
     sample_count: u32,
@@ -95,7 +97,7 @@ impl RunningAverage {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct RunningAverageDuration {
     average: Duration,
     sample_count: u32,

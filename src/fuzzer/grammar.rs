@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::constraint::Constraint;
 use crate::fuzzer::constraint::ConstraintKind;
 use crate::fuzzer::constraint::ConstraintViolation;
@@ -52,6 +53,7 @@ impl Display for PBKind {
 }
 
 pub struct PBGrammar {
+    program_info: MetaData,
     seed: u64,
     amount_vars: u32,
     amount_constraints: u32,
@@ -63,6 +65,7 @@ pub struct PBGrammar {
 
 impl PBGrammar {
     pub fn new(
+        program_info: MetaData,
         seed: u64,
         amount_distinct_vars: u32,
         constraints: Vec<Box<dyn Constraint>>,
@@ -75,6 +78,7 @@ impl PBGrammar {
             .try_into()
             .expect("We should never generate more constraints than 2**32");
         Self {
+            program_info,
             seed,
             amount_vars: amount_distinct_vars,
             amount_constraints,
@@ -88,23 +92,27 @@ impl PBGrammar {
     ///
     /// Returns the duration of writing into the buffer
     pub fn produce<W: io::Write>(&self, writer: &mut W) -> io::Result<Duration> {
+        let Self { program_info, seed, amount_vars, amount_constraints, constraints, min_constraint, generation_time, generation_source } = self;
         let start = Instant::now();
         info!(
             "Generated PB grammar with {} vars and {} constraints.",
-            self.amount_vars, self.amount_constraints
+            amount_vars, amount_constraints
         );
-        let amount_equal_constraints = self
-            .constraints
+        let amount_equal_constraints = constraints
             .iter()
             .filter(|c| c.comparison() == &Comparison::Equal)
             .count();
         writeln!(
             writer,
             "* #variable= {} #constraint= {} #equal= {} intsize= 32",
-            self.amount_vars, self.amount_constraints, amount_equal_constraints
+            amount_vars, amount_constraints, amount_equal_constraints
         )?;
-        writeln!(writer, "* Used seed: {}", self.seed)?;
-        match &self.generation_source {
+        let MetaData { program_version, commit_hash } = program_info;
+        writeln!(writer, "* Program version: {program_version}")?;
+        writeln!(writer, "* Commit Hash: {commit_hash}")?;
+        writeln!(writer, "* Used seed: {}", seed)?;
+        writeln!(writer, "* Generation time: {}ms", generation_time.as_millis())?;
+        match generation_source {
             GenerationSource::Random {
                 amount_unsat_assignments,
             } => {
@@ -129,12 +137,12 @@ impl PBGrammar {
         writeln!(writer, "{}", self.get_statistics())?;
 
         // write min constraint, if present
-        if let Some(c) = &self.min_constraint {
+        if let Some(c) = min_constraint {
             writeln!(writer, "{}", c)?;
         }
 
         // write every constraint into the buffer
-        for constraint in &self.constraints {
+        for constraint in constraints {
             writeln!(writer, "{}", constraint)?;
         }
         writer.flush()?;
@@ -316,7 +324,12 @@ mod test {
             .into_iter()
             .map(|a| Box::new(a) as Box<dyn Constraint>)
             .collect();
+        let program_info = MetaData {
+            program_version: "1.0.0".into(),
+            commit_hash: "unknown".into(),
+        };
         let grammar = PBGrammar::new(
+            program_info,
             42,
             4,
             constraints,

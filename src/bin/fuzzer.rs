@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::BufWriter;
 
 use clap::Parser;
+use fuzzer_pseudo_bool::fuzzer::app_info::MetaData;
 use fuzzer_pseudo_bool::fuzzer::fuzzer_args::FuzzerArgs;
 use fuzzer_pseudo_bool::fuzzer::helpers::current_time_as_timestamp;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
@@ -12,8 +13,12 @@ use log::info;
 use log::Level;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // initialize the logger
+    let program_version = env!("CARGO_PKG_VERSION");
+    let git_hash = env!("GIT_HASH");
+    println!("Program version: {program_version}");
+    println!("Program commit: {git_hash}");
 
+    // initialize the logger
     init_logger()?;
     // start of actual program
     let args = FuzzerArgs::parse();
@@ -30,7 +35,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(mode) = args.mode {
         settings = settings.pb_kind(mode);
     }
-    let grammar = PBGenerator::create_grammar(args.seed, settings.build())?;
+    let meta_data = MetaData {
+        program_version: program_version.into(),
+        commit_hash: git_hash.into(),
+    };
+    let grammar = PBGenerator::create_grammar(args.seed, settings.build(), meta_data)?;
     if args.print_statistics {
         print_block("Grammar Statistics", grammar.get_statistics());
     }

@@ -1,4 +1,5 @@
 use crate::fuzzer::{
+    app_info::MetaData,
     constraint::Constraint,
     constraint_generator::{ConstraintGenerationError, ConstraintGenerator, FromSolutionData},
     domain::LiteralIdent,
@@ -32,11 +33,15 @@ impl PBGenerator {
     pub fn create_grammar(
         seed: u64,
         settings: GeneratorSettings,
+        program_info: MetaData,
     ) -> Result<PBGrammar, ConstraintGenerationError> {
-        Self::new(seed, settings).random_grammar()
+        Self::new(seed, settings).random_grammar(program_info)
     }
 
-    fn random_grammar(&mut self) -> Result<PBGrammar, ConstraintGenerationError> {
+    fn random_grammar(
+        &mut self,
+        program_info: super::app_info::MetaData,
+    ) -> Result<PBGrammar, ConstraintGenerationError> {
         let start = Instant::now();
         let cancel_condition = self.settings.get_cancel_condition();
         match cancel_condition {
@@ -58,6 +63,7 @@ impl PBGenerator {
                     ),
                 };
                 Ok(PBGrammar::new(
+                    program_info,
                     self.seed,
                     distinct_literal_ids.len() as u32,
                     constraints,
@@ -96,6 +102,7 @@ impl PBGenerator {
                                 .into()
                         });
                         Ok(PBGrammar::new(
+                            program_info,
                             self.seed,
                             distinct_literal_ids.len() as u32,
                             constraints,
@@ -124,6 +131,7 @@ impl PBGenerator {
                             ),
                         };
                         Ok(PBGrammar::new(
+                            program_info,
                             self.seed,
                             distinct_literal_ids.len() as u32,
                             constraints,

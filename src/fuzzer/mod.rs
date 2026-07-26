@@ -1,3 +1,4 @@
+pub mod app_info;
 pub mod constraint;
 mod constraint_generator;
 pub mod domain;

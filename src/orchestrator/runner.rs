@@ -1,3 +1,4 @@
+use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile};
 use crate::fuzzer::pb_settings::{GenerationMethod, GeneratorSettings, GeneratorSettingsBuilder};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
@@ -29,9 +30,9 @@ use std::{
 };
 
 use csv::Writer;
-use itertools::Itertools;
 use log::{debug, error, info};
 use rand::{self, RngExt};
+use serde::Serialize;
 
 use crate::fuzzer::{helpers::print_block, pb_generator::PBGenerator};
 
@@ -66,6 +67,7 @@ use crate::fuzzer::{helpers::print_block, pb_generator::PBGenerator};
 /// - write relevant data points to the CSV file
 pub fn run_orchestrator(
     time_stamp_as_str: &str,
+    meta_data: MetaData,
     args: OrchestratorArgs,
 ) -> Result<(), Box<dyn Error>> {
     let thread_count = args.thread_count.unwrap_or(1);
@@ -85,8 +87,8 @@ pub fn run_orchestrator(
                 .to_external_program_with_proof(timelimit)?,
         ),
     };
-    let mut generator_settings_builder = match args.settings_file {
-        Some(file) => GeneratorSettingsBuilder::load_from_file(&file)?,
+    let mut generator_settings_builder = match &args.settings_file {
+        Some(file) => GeneratorSettingsBuilder::load_from_file(file)?,
         None => GeneratorSettingsBuilder::default(),
     };
 
@@ -107,15 +109,16 @@ pub fn run_orchestrator(
     )?;
     print_block("Settings to use", generator_settings);
 
+    let save_all_files = args.save_all_files;
     Orchestrator {
         fuzzer_output_dir,
         generator_settings,
         orchestrator_start: Instant::now(),
-        save_all_files: args.save_all_files,
+        save_all_files,
         mode,
         thread_count,
     }
-    .run(stop_condition)
+    .run(stop_condition, meta_data)
 }
 
 enum OrchestrationMode {
@@ -132,14 +135,32 @@ struct Orchestrator {
     thread_count: u8,
 }
 
+#[derive(Serialize)]
+struct Summary {
+    meta_data: MetaData,
+    duration_program: Duration,
+    statistics_run: AccumulatedStatsAllRuns,
+}
+
+impl Summary {
+    fn save_to_file(self, file: &Path) -> std::io::Result<()> {
+        let data = toml::ser::to_string_pretty(&self).map_err(std::io::Error::other)?;
+        File::create(file).and_then(|mut f| f.write_all(data.as_bytes()))
+    }
+}
+
 impl Orchestrator {
-    fn run(&self, stop_condition: StopCondition) -> Result<(), Box<dyn Error>> {
+    fn run(
+        &self,
+        stop_condition: StopCondition,
+        meta_data: MetaData,
+    ) -> Result<(), Box<dyn Error>> {
         let csv_file_path = &self
             .fuzzer_output_dir
             .join(DATA_FOLDER.name)
             .join(format!("{}.csv", ORCHESTRATOR_DATA_FILE_PREFIX,));
         let mut csv_writer = csv::Writer::from_path(csv_file_path)?;
-        let mut stats = Stats::new();
+        let mut stats = AccumulatedStatsAllRuns::new();
         let stop_condtion = Arc::new(stop_condition);
         let cancelled = Arc::new(AtomicBool::new(false));
         let ctrc_flag = cancelled.clone();
@@ -169,6 +190,7 @@ impl Orchestrator {
                                 &self.fuzzer_output_dir,
                                 self.generator_settings,
                                 &self.mode,
+                                meta_data,
                                 i,
                             ) {
                                 Ok(work_result) => {
@@ -204,13 +226,33 @@ impl Orchestrator {
                 error!("Could not flush to file\n Error: {}", err);
             }
 
-            if let Err(e) = self.save_settings(&stats) {
-                error!("{e}");
-            }
             // print out settings
             print_block("Settings", self.generator_settings);
             // print out stats
             print_block("Run Statistics", &stats);
+
+            println!();
+            let duration_program = self.orchestrator_start.elapsed();
+            let (h, m, s) = get_hms_parts(&duration_program);
+            println!("Duration of run: {h}h, {m}m, {s}s",);
+
+            // save important files
+            if let Err(e) = self.save_settings() {
+                error!("{e}");
+            }
+
+            let summary = Summary {
+                meta_data,
+                duration_program,
+                statistics_run: stats,
+            };
+            let summary_file = self
+                .fuzzer_output_dir
+                .join(DATA_FOLDER.name)
+                .join("summary.toml");
+            if let Err(e) = summary.save_to_file(&summary_file) {
+                error!("{e}");
+            }
         });
         Ok(())
     }
@@ -222,7 +264,7 @@ impl Orchestrator {
     fn terminate_early(
         &self,
         iteration: u32,
-        stats: &Stats,
+        stats: &AccumulatedStatsAllRuns,
         percentage_range_sat: &Range<f32>,
     ) -> bool {
         match self.generator_settings.get_generation_method() {
@@ -238,7 +280,7 @@ impl Orchestrator {
         work_result: WorkResult,
         iteration: u32,
         csv_writer: &mut Writer<File>,
-        stats: &mut Stats,
+        stats: &mut AccumulatedStatsAllRuns,
     ) {
         let elapsed_since_start = self.orchestrator_start.elapsed();
         let (h, m, s) = get_hms_parts(&elapsed_since_start);
@@ -317,20 +359,14 @@ impl Orchestrator {
         }
     }
 
-    fn save_settings(&self, stats: &Stats) -> std::io::Result<()> {
-        let dir = self.fuzzer_output_dir.join(DATA_FOLDER.name);
+    fn save_settings(&self) -> std::io::Result<()> {
         let data =
             toml::ser::to_string_pretty(&self.generator_settings).map_err(std::io::Error::other)?;
-        let file_name = dir.join("settings.toml");
-        let mut file = File::create(file_name)?;
-        file.write_all(data.as_bytes())?;
-        file.write_all("\n".as_bytes())?;
-        let commented_stats: String = stats
-            .to_string()
-            .lines()
-            .map(|line| format!("# {}", line)) // # denotes a comment in toml
-            .join("\n");
-        file.write_all(commented_stats.as_bytes())
+        let file_name = self
+            .fuzzer_output_dir
+            .join(DATA_FOLDER.name)
+            .join("settings.toml");
+        File::create(file_name).and_then(|mut f| f.write_all(data.as_bytes()))
     }
 }
 
@@ -342,6 +378,7 @@ fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: GeneratorSettings,
     mode: &OrchestrationMode,
+    program_info: MetaData,
     thread_id: u8,
 ) -> Result<WorkResult, Box<dyn Error>> {
     let start_worker = Instant::now();
@@ -349,7 +386,7 @@ fn work_iteration(
     let file_name = format!("{thread_id}_test_{seed}");
     let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
     debug!("Running Fuzzer with seed {seed}...");
-    let grammar = PBGenerator::create_grammar(seed, settings)?;
+    let grammar = PBGenerator::create_grammar(seed, settings, program_info)?;
     let duration_write_to_file = File::create(&output_file)
         .map(BufWriter::new)
         .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))?;
@@ -492,7 +529,8 @@ impl StopCondition {
     }
 }
 
-struct Stats {
+#[derive(Serialize)]
+struct AccumulatedStatsAllRuns {
     amount_sat: u32,
     amount_unsat: u32,
     amount_unknown: u32,
@@ -501,10 +539,9 @@ struct Stats {
     bugs_found: u32,
     errors: u32,
     timeouts: u32,
-    start: Instant,
 }
 
-impl Stats {
+impl AccumulatedStatsAllRuns {
     fn new() -> Self {
         Self {
             amount_sat: 0,
@@ -515,7 +552,6 @@ impl Stats {
             bugs_found: 0,
             errors: 0,
             timeouts: 0,
-            start: Instant::now(),
         }
     }
 
@@ -565,7 +601,7 @@ impl Stats {
     }
 }
 
-impl Display for Stats {
+impl Display for AccumulatedStatsAllRuns {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
@@ -616,13 +652,6 @@ impl Display for Stats {
             f,
             "Average Time per Instance                : {:.3}ms",
             self.average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
-        )?;
-        let program_duration = self.start.elapsed();
-        let (h, m, s) = get_hms_parts(&program_duration);
-        write!(
-            f,
-            "Duration of program                      : {}h {}m {}s",
-            h, m, s
         )
     }
 }
@@ -636,7 +665,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_stats() {
-        let mut stats = Stats::new();
+        let mut stats = AccumulatedStatsAllRuns::new();
         let res = SolverOutcome::Sat {
             conflicts: 0,
             solution: SatModel::Proof(HashSet::new().into()),

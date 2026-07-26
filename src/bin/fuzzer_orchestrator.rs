@@ -2,17 +2,25 @@ use std::{error::Error, fs, path::Path};
 
 use clap::Parser;
 use fuzzer_pseudo_bool::{
-    fuzzer::helpers::current_time_as_timestamp,
+    fuzzer::{app_info::MetaData, helpers::current_time_as_timestamp},
     orchestrator::{orchestrator_args::OrchestratorArgs, runner::run_orchestrator},
 };
 use log::Level;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let program_version = env!("CARGO_PKG_VERSION");
+    let commit_hash = env!("GIT_HASH");
+    println!("Program version: {program_version}");
+    println!("Program commit: {commit_hash}");
     let args = OrchestratorArgs::parse();
     let start_as_str = current_time_as_timestamp();
 
     init_logger(args.log, &start_as_str)?;
-    run_orchestrator(&start_as_str, args)
+    let meta_data = MetaData {
+        program_version: program_version.into(),
+        commit_hash: commit_hash.into(),
+    };
+    run_orchestrator(&start_as_str, meta_data, args)
 }
 
 fn init_logger(level: Option<Level>, timestamp: &str) -> Result<(), fern::InitError> {

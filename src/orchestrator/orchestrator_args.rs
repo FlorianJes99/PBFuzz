@@ -1,12 +1,13 @@
 use crate::fuzzer::grammar::PBKind;
 use clap::Parser;
+use serde::Serialize;
 use std::path::PathBuf;
 
 /// Arguments that can be passed to the orchestration pipeline for testing multiple solvers against
 /// their outputs.
 /// IMPORTANT: if both settings file and parameters are provided, then parameters will override
 /// settings specified in the file
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Serialize)]
 #[command(version, about, long_about = None)]
 pub struct OrchestratorArgs {
     /// Set logging level (debug, info, warn, error). Default is 'error'
