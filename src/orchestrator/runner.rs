@@ -1,5 +1,5 @@
 use crate::fuzzer::app_info::MetaData;
-use crate::fuzzer::helpers::{move_files, remove_files, MoveFile};
+use crate::fuzzer::helpers::{move_files, remove_files, MoveFile, OFFSET};
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::solver::{
@@ -237,8 +237,8 @@ impl Orchestrator {
             print_block(
                 "Distribution Generation",
                 format!(
-                    "FromSolution: {}\nRandom: {}",
-                    from_solution_count, random_count
+                    "{:<OFFSET$}: {}\n{:<OFFSET$}: {}",
+                    "FromSolution", from_solution_count, "Random", random_count
                 ),
             );
 
@@ -619,52 +619,44 @@ impl Display for AccumulatedStatsAllRuns {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "Total amount of instances generated      : {}",
+            "{:<OFFSET$}: {}",
+            "Total amount of instances generated",
             self.amount_runs()
         )?;
         writeln!(
             f,
-            "Generated amount of SAT instances        : {}",
-            self.amount_sat
+            "{:<OFFSET$}: {}",
+            "Generated amount of SAT instances", self.amount_sat
         )?;
         writeln!(
             f,
-            "Generated amount of UNSAT instances      : {}",
-            self.amount_unsat
+            "{:<OFFSET$}: {}",
+            "Generated amount of UNSAT instances", self.amount_unsat
         )?;
         writeln!(
             f,
-            "Generated amount of unknown instances    : {}",
-            self.amount_unknown
+            "{:<OFFSET$}: {}",
+            "Generated amount of unknown instances", self.amount_unknown
         )?;
         writeln!(
             f,
-            "Percentage SAT                           : {}%",
+            "{:<OFFSET$}: {}%",
+            "Percentage SAT",
             self.percentage_sat() * 100.0
         )?;
         writeln!(
             f,
-            "Average conflicts to solve               : {}",
+            "{:<OFFSET$}: {}",
+            "Average conflicts to solve",
             self.average_conflicts.get_average()
         )?;
-        writeln!(
+        writeln!(f, "{:<OFFSET$}: {}", "Bugs found", self.bugs_found)?;
+        writeln!(f, "{:<OFFSET$}: {}", "Errors occured", self.errors)?;
+        writeln!(f, "{:<OFFSET$}: {}", "Timeouts", self.timeouts)?;
+        write!(
             f,
-            "Bugs found                               : {}",
-            self.bugs_found
-        )?;
-        writeln!(
-            f,
-            "Errors occured                           : {}",
-            self.errors
-        )?;
-        writeln!(
-            f,
-            "Timeouts                                 : {}",
-            self.timeouts
-        )?;
-        writeln!(
-            f,
-            "Average Time per Instance                : {:.3}ms",
+            "{:<OFFSET$}: {:.3}ms",
+            "Average Time per Instance",
             self.average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
         )
     }

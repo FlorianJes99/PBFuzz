@@ -8,18 +8,14 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+/// const to stretch strings to a specific length
+pub const OFFSET: usize = 50;
+
 /// Wrap a printable Item in a block of equal-signs and a header
 pub fn print_block<T: Display>(heading: &str, item: T) {
     let amount_signs = 40;
-    let len_heading = heading.chars().count();
-    let remaining_signs = amount_signs - len_heading;
-    let halved: f32 = remaining_signs as f32 / 2_f32;
     println!();
-    println!(
-        "{}{heading}{}",
-        "=".repeat(halved.floor() as usize),
-        "=".repeat(halved.ceil() as usize),
-    );
+    println!("{:=^amount_signs$}", heading);
     println!("{item}");
     println!("{}", "=".repeat(amount_signs));
     println!()

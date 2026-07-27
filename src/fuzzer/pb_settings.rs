@@ -1,3 +1,4 @@
+use crate::fuzzer::helpers::OFFSET;
 use std::io;
 use std::path::Path;
 
@@ -57,11 +58,18 @@ impl Display for PbConfigFile {
             random,
             from_solution,
         } = self;
-        writeln!(f, "{:<50}: {}", "Mode", grammar_kind)?;
+        writeln!(f, "{:<OFFSET$}: {}", "Mode", grammar_kind)?;
         if let Some(method) = generation_method {
-            writeln!(f, "{:<50}: {}", "Constraint generation method", method)?;
+            writeln!(f, "{:<OFFSET$}: {}", "Constraint generation method", method)?;
         }
+        writeln!(f)?;
+        writeln!(f, "Settings used for random constraint generation:")?;
         writeln!(f, "{}", random)?;
+        writeln!(f)?;
+        writeln!(
+            f,
+            "Settings used for constraint generation from existing solution:"
+        )?;
         writeln!(f, "{}", from_solution)
     }
 }
@@ -139,14 +147,12 @@ impl Display for CancelCondition {
                 max_unsat_assignments,
             } => write!(
                 f,
-                "Max unsat assignments                        : {}",
-                max_unsat_assignments
+                "{:<OFFSET$}: {}",
+                "Max unsat assignments", max_unsat_assignments
             ),
-            CancelCondition::CountConstraints { max_constraints } => write!(
-                f,
-                "Max constraints                              : {}",
-                max_constraints
-            ),
+            CancelCondition::CountConstraints { max_constraints } => {
+                write!(f, "{:<OFFSET$}: {}", "Max constraints", max_constraints)
+            }
         }
     }
 }
@@ -201,42 +207,37 @@ impl Display for GeneratorSettings {
             upper_bound_degree,
             constraint_distribution,
         } = self;
-        writeln!(f, "Used Settings for Generator:")?;
-        writeln!(
-            f,
-            "Max used vars                                : {}",
-            max_vars
-        )?;
+        writeln!(f, "{:<OFFSET$}: {}", "Max used vars", max_vars)?;
         writeln!(f, "{}", cancel_condition)?;
         writeln!(
             f,
-            "Literals per constraint                      : {}",
-            amount_literals_per_constraint
+            "{:<OFFSET$}: {}",
+            "Literals per constraint", amount_literals_per_constraint
         )?;
         writeln!(
             f,
-            "Max unsat assignments for a single constraint: {}",
-            max_unsat_for_single_constraint
+            "{:<OFFSET$}: {}",
+            "Max unsat assignments for a single constraint", max_unsat_for_single_constraint
         )?;
         writeln!(
             f,
-            "Coefficient range                            : {}..{}",
-            coeff_lower_bound, coeff_upper_bound
+            "{:<OFFSET$}: {}..{}",
+            "Coefficient range", coeff_lower_bound, coeff_upper_bound
         )?;
         writeln!(
             f,
-            "Lower bound for RHS of constraint            : {}",
-            lower_bound_degree
+            "{:<OFFSET$}: {}",
+            "Lower bound for RHS of constraint", lower_bound_degree
         )?;
         writeln!(
             f,
-            "Upper bound for RHS of constraint            : {}",
-            upper_bound_degree
+            "{:<OFFSET$}: {}",
+            "Upper bound for RHS of constraint", upper_bound_degree
         )?;
         write!(
             f,
-            "Constraint distribution                      : {}",
-            constraint_distribution
+            "{:<OFFSET$}: {}",
+            "Constraint distribution", constraint_distribution
         )
     }
 }
