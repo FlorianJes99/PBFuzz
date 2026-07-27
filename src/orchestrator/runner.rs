@@ -1,6 +1,6 @@
 use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile};
-use crate::fuzzer::pb_settings::{GenerationMethod, GeneratorSettings, GeneratorSettingsBuilder};
+use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::solver::{
     IterationError, IterationResult, SolverDataWithProof, SolverOutcome, SolverResult,
@@ -87,15 +87,7 @@ pub fn run_orchestrator(
                 .to_external_program_with_proof(timelimit)?,
         ),
     };
-    let mut generator_settings_builder = match &args.settings_file {
-        Some(file) => GeneratorSettingsBuilder::load_from_file(file)?,
-        None => GeneratorSettingsBuilder::default(),
-    };
-
-    if let Some(pb_kind) = args.mode {
-        generator_settings_builder = generator_settings_builder.pb_kind(pb_kind);
-    }
-    let generator_settings = generator_settings_builder.build();
+    let config = PbConfigFile::load_from_file(&args.settings_file)?;
     let stop_condition = StopCondition::new(
         args.iterations,
         args.timeout_min.map(|v| Duration::from_mins(v as u64)),
@@ -105,14 +97,14 @@ pub fn run_orchestrator(
     let fuzzer_output_dir = prepare_output_folder(
         output_dir,
         time_stamp_as_str,
-        generator_settings.get_problem_kind().get_short_str(),
+        config.grammar_kind.get_short_str(),
     )?;
-    print_block("Settings to use", generator_settings);
+    print_block("Configuration", config);
 
     let save_all_files = args.save_all_files;
     Orchestrator {
         fuzzer_output_dir,
-        generator_settings,
+        config,
         orchestrator_start: Instant::now(),
         save_all_files,
         mode,
@@ -128,7 +120,7 @@ enum OrchestrationMode {
 
 struct Orchestrator {
     fuzzer_output_dir: PathBuf,
-    generator_settings: GeneratorSettings,
+    config: PbConfigFile,
     save_all_files: bool,
     orchestrator_start: Instant,
     mode: OrchestrationMode,
@@ -188,7 +180,7 @@ impl Orchestrator {
                             }
                             match work_iteration(
                                 &self.fuzzer_output_dir,
-                                self.generator_settings,
+                                self.config.generate_settings(),
                                 &self.mode,
                                 meta_data,
                                 i,
@@ -206,10 +198,20 @@ impl Orchestrator {
             }
             // immediately drop the initial sender reference, only the clones inside the worker threads are kept alive
             drop(sender);
+            let (mut random_count, mut from_solution_count) = (0, 0);
             for (iteration, work_result) in receiver.iter().enumerate() {
                 let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
+                match &work_result.generation_method {
+                    GenerationMethod::Random => random_count += 1,
+                    GenerationMethod::FromSolution => from_solution_count += 1,
+                }
                 let percentage_range_sat = 0.20..0.7;
-                if self.terminate_early(iteration, &stats, &percentage_range_sat) {
+                if terminate_early(
+                    iteration,
+                    &work_result.generation_method,
+                    &stats,
+                    &percentage_range_sat,
+                ) {
                     println!("Terminating early!");
                     println!(
                         "Percentage SAT Instances not in range ({}..{})",
@@ -227,9 +229,18 @@ impl Orchestrator {
             }
 
             // print out settings
-            print_block("Settings", self.generator_settings);
+            print_block("Settings", self.config);
             // print out stats
             print_block("Run Statistics", &stats);
+
+            // print out distribution generation mode
+            print_block(
+                "Distribution Generation",
+                format!(
+                    "FromSolution: {}\nRandom: {}",
+                    from_solution_count, random_count
+                ),
+            );
 
             println!();
             let duration_program = self.orchestrator_start.elapsed();
@@ -255,24 +266,6 @@ impl Orchestrator {
             }
         });
         Ok(())
-    }
-
-    /// Terminate early if:
-    /// - random constraint generation and
-    /// - amount sat instances not in range and
-    /// - more than 1000 iterations are scheduled
-    fn terminate_early(
-        &self,
-        iteration: u32,
-        stats: &AccumulatedStatsAllRuns,
-        percentage_range_sat: &Range<f32>,
-    ) -> bool {
-        match self.generator_settings.get_generation_method() {
-            GenerationMethod::FromSolution => false,
-            GenerationMethod::Random => {
-                iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
-            }
-        }
     }
 
     fn process_result(
@@ -360,8 +353,7 @@ impl Orchestrator {
     }
 
     fn save_settings(&self) -> std::io::Result<()> {
-        let data =
-            toml::ser::to_string_pretty(&self.generator_settings).map_err(std::io::Error::other)?;
+        let data = toml::ser::to_string_pretty(&self.config).map_err(std::io::Error::other)?;
         let file_name = self
             .fuzzer_output_dir
             .join(DATA_FOLDER.name)
@@ -374,9 +366,27 @@ fn get_seed() -> u64 {
     rand::rng().random()
 }
 
+/// Terminate early if:
+/// - random constraint generation and
+/// - amount sat instances not in range and
+/// - more than 1000 iterations are scheduled
+fn terminate_early(
+    iteration: u32,
+    generation_method: &GenerationMethod,
+    stats: &AccumulatedStatsAllRuns,
+    percentage_range_sat: &Range<f32>,
+) -> bool {
+    match generation_method {
+        GenerationMethod::FromSolution => false,
+        GenerationMethod::Random => {
+            iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
+        }
+    }
+}
+
 fn work_iteration(
     fuzzer_output_dir: &Path,
-    settings: GeneratorSettings,
+    settings: PbSetting,
     mode: &OrchestrationMode,
     program_info: MetaData,
     thread_id: u8,
@@ -403,6 +413,7 @@ fn work_iteration(
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
+    let generation_method = *settings.get_generation_method();
     match mode {
         OrchestrationMode::Comparison(p1, p2) => {
             let start_bin1 = Instant::now();
@@ -415,8 +426,8 @@ fn work_iteration(
             let time_bin2 = start_bin2.elapsed();
 
             let start_output_extraction = Instant::now();
-            let res_program1 = p1.parse(output_bin1, &pb_kind);
-            let res_program2 = p2.parse(output_bin2, &pb_kind);
+            let res_program1 = p1.parse(output_bin1, pb_kind);
+            let res_program2 = p2.parse(output_bin2, pb_kind);
             let outcome = match (res_program1, res_program2) {
                 (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(
                     status2,
@@ -444,6 +455,7 @@ fn work_iteration(
                 proof_file: None,
                 outcome,
                 record: CsvRecord::Comparison(comparison_record),
+                generation_method,
             })
         }
         OrchestrationMode::ProofChecking(p) => {
@@ -452,7 +464,7 @@ fn work_iteration(
             let output = p.run_with_proof(&output_file, &proof_file, with_option_fuzzing)?;
             let problem_solving_duration = problem_solving_start.elapsed();
             let start_output_parsing = Instant::now();
-            let parsing_result = p.parse(output, &pb_kind);
+            let parsing_result = p.parse(output, pb_kind);
             let duration_output_parsing = start_output_parsing.elapsed();
             let proof_checking_start = Instant::now();
             let iteration_result: SolverResult =
@@ -476,6 +488,7 @@ fn work_iteration(
                 proof_file: Some(proof_file),
                 outcome: iteration_result,
                 record: CsvRecord::Proof(proof_record),
+                generation_method,
             })
         }
     }
@@ -487,6 +500,7 @@ struct WorkResult {
     proof_file: Option<PathBuf>,
     outcome: SolverResult,
     record: CsvRecord,
+    generation_method: GenerationMethod,
 }
 
 /// Cancel iterations of fuzzing runs

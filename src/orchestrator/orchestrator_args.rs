@@ -42,7 +42,7 @@ pub struct OrchestratorArgs {
     /// After a successful run the used settings are stored in the current working space and can be
     /// used for the next run.
     #[arg(long)]
-    pub(crate) settings_file: Option<PathBuf>,
+    pub(crate) settings_file: PathBuf,
 
     /// Specify the config file in toml format for program 1
     #[arg(long)]

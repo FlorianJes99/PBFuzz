@@ -4,7 +4,7 @@ use crate::fuzzer::{
     constraint_generator::{ConstraintGenerationError, ConstraintGenerator, FromSolutionData},
     domain::LiteralIdent,
     grammar::{GenerationSource, PBGrammar, PBKind},
-    pb_settings::{CancelCondition, GenerationMethod, GeneratorSettings},
+    pb_settings::{CancelCondition, GenerationMethod, PbSetting},
 };
 use itertools::Itertools;
 use log::info;
@@ -16,13 +16,15 @@ use rand::{rngs::StdRng, SeedableRng};
 pub struct PBGenerator {
     seed: u64,
     constraint_generator: ConstraintGenerator,
-    settings: GeneratorSettings,
+    settings: PbSetting,
 }
 
 impl PBGenerator {
-    fn new(seed: u64, settings: GeneratorSettings) -> Self {
-        let constr_generator =
-            ConstraintGenerator::new(StdRng::seed_from_u64(seed), settings.into());
+    fn new(seed: u64, settings: PbSetting) -> Self {
+        let constr_generator = ConstraintGenerator::new(
+            StdRng::seed_from_u64(seed),
+            settings.get_generator_settings().into(),
+        );
         Self {
             seed,
             constraint_generator: constr_generator,
@@ -32,7 +34,7 @@ impl PBGenerator {
 
     pub fn create_grammar(
         seed: u64,
-        settings: GeneratorSettings,
+        settings: PbSetting,
         program_info: MetaData,
     ) -> Result<PBGrammar, ConstraintGenerationError> {
         Self::new(seed, settings).random_grammar(program_info)
@@ -43,8 +45,11 @@ impl PBGenerator {
         program_info: super::app_info::MetaData,
     ) -> Result<PBGrammar, ConstraintGenerationError> {
         let start = Instant::now();
-        let cancel_condition = self.settings.get_cancel_condition();
-        match cancel_condition {
+        match self
+            .settings
+            .get_generator_settings()
+            .get_cancel_condition()
+        {
             CancelCondition::CountUnsat {
                 max_unsat_assignments,
             } => {
