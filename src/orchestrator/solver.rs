@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use itertools::Itertools;
 use log::info;
 use rand::{seq::IndexedRandom, RngExt};
 use serde::Deserialize;
@@ -60,21 +61,25 @@ pub trait Solver {
         &self,
         ext_result: SolverState,
         pb_kind: &PBKind,
-    ) -> Result<SolverStatus, ExternalProgramError> {
+    ) -> Result<ParsedSolverOutput, ExternalProgramError> {
         match ext_result {
-            SolverState::Terminated(output) => match pb_kind {
+            SolverState::Terminated(_, output) => match pb_kind {
                 PBKind::PBS => self.parser().parse_pbs(&output),
                 PBKind::PBO => self.parser().parse_pbo(&output),
             }
+            .map(|s| ParsedSolverOutput::new(self.get_name().into(), s))
             .map_err(Into::into),
-            SolverState::Timeout => Ok(SolverStatus::TimeLimit),
+            SolverState::Timeout(_) => Ok(ParsedSolverOutput::new(
+                self.get_name().into(),
+                SolverStatus::TimeLimit,
+            )),
         }
     }
 
     /// starts the solver in a child process and terminates this process after the given output
     ///
     /// Because we use libc crate to kill the child process, this method makes use of `unsafe` code
-    fn run_with_timeout(&self, cmd: &mut Command, timeout: Duration) -> io::Result<SolverState> {
+    fn run_with_timeout(&self, mut cmd: Command, timeout: Duration) -> io::Result<SolverState> {
         let child = cmd.stdout(Stdio::piped()).spawn()?;
         let (tx, rx) = mpsc::channel();
         let pid = child.id();
@@ -84,14 +89,14 @@ pub trait Solver {
         });
 
         match rx.recv_timeout(timeout) {
-            Ok(result) => result.map(SolverState::Terminated),
+            Ok(result) => result.map(|o| SolverState::Terminated(cmd, o)),
             Err(_) => {
                 info!("Terminating solver {}...", self.get_name());
                 #[cfg(unix)]
                 unsafe {
                     libc::kill(pid as i32, libc::SIGTERM);
                 }
-                Ok(SolverState::Timeout)
+                Ok(SolverState::Timeout(cmd))
             }
         }
     }
@@ -290,7 +295,7 @@ impl SolverDataWithProof {
         }
 
         command.arg(file_path_pb);
-        self.run_with_timeout(&mut command, self.program.timelimit)
+        self.run_with_timeout(command, self.program.timelimit)
             .map_err(|e| self.external_execution_error(e))
     }
 }
@@ -325,7 +330,7 @@ impl SolverData {
             }
         }
         command.arg(file_path);
-        self.run_with_timeout(&mut command, self.timelimit)
+        self.run_with_timeout(command, self.timelimit)
             .map_err(|e| self.external_execution_error(e))
     }
 
@@ -345,8 +350,22 @@ impl SolverData {
 }
 
 pub enum SolverState {
-    Terminated(Output),
-    Timeout,
+    Terminated(Command, Output),
+    Timeout(Command),
+}
+
+impl SolverState {
+    pub fn get_command_as_string(&self) -> String {
+        let command = match self {
+            SolverState::Terminated(command, _) => command,
+            SolverState::Timeout(command) => command,
+        };
+        format!(
+            "{} {}",
+            command.get_program().display(),
+            command.get_args().map(|a| a.display()).join(" ")
+        )
+    }
 }
 
 fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display) {
@@ -389,23 +408,104 @@ pub enum ValidationError {
     Objective(#[from] MinObjectiveInvalid),
 }
 
-#[derive(Debug, Clone)]
-pub enum SolverStatus {
-    Sat {
-        conflicts: u32,
-        solution: SolverSolution,
-    },
-    Unsat {
-        conflicts: u32,
-    },
-    TimeLimit,
-    Unknown {
-        solver_name: String,
-        status: String,
-    },
+pub struct ParsedSolverOutput {
+    name: String,
+    parsed_status: SolverStatus,
 }
 
-impl SolverStatus {
+impl ParsedSolverOutput {
+    pub fn new(name: String, parsed_status: SolverStatus) -> Self {
+        Self {
+            name,
+            parsed_status,
+        }
+    }
+
+    pub fn verify_and_compare_status(
+        self,
+        other: ParsedSolverOutput,
+        grammar: &PBGrammar,
+    ) -> SolverResult {
+        let status_self = self.parsed_status;
+        let status_other = other.parsed_status;
+        let status_str1 = status_self.get_status_string();
+        let status_str2 = status_other.get_status_string();
+        match (status_self, status_other) {
+            (
+                SolverStatus::Sat {
+                    conflicts: c1,
+                    solution: s1,
+                },
+                SolverStatus::Sat {
+                    conflicts: c2,
+                    solution: s2,
+                },
+            ) => {
+                if let Err(e) = s1.is_valid(grammar) {
+                    return Err(BugReason::Solution(InvalidSolution {
+                        solver_name: self.name,
+                        violation: e,
+                    })
+                    .into());
+                }
+                if let Err(e) = s2.is_valid(grammar) {
+                    return Err(BugReason::Solution(InvalidSolution {
+                        solver_name: other.name,
+                        violation: e,
+                    })
+                    .into());
+                }
+                let conflicts = c1.max(c2);
+                match (s1, s2) {
+                    (SolverSolution::PBS(m1), SolverSolution::PBS(m2)) => Ok(SolverOutcome::Sat {
+                        conflicts,
+                        solution: SatModel::Comparison(m1, m2),
+                        optimum: None,
+                    }),
+                    (SolverSolution::PBO(m1, min1), SolverSolution::PBO(m2, min2)) => {
+                        if min1 == min2 {
+                            Ok(SolverOutcome::Sat {
+                                conflicts,
+                                solution: SatModel::Comparison(m1, m2),
+                                optimum: Some(min1),
+                            })
+                        } else {
+                            let i1 = ObjectiveInfo {
+                                solver_name: self.name,
+                                min_objective: min1,
+                            };
+                            let i2 = ObjectiveInfo {
+                                solver_name: other.name,
+                                min_objective: min2,
+                            };
+                            Err(BugReason::DifferentObjectives(i1, i2).into())
+                        }
+                    }
+                    _ => unreachable!("cant compare pbs with pbo"),
+                }
+            }
+            (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: c2 }) => {
+                Ok(SolverOutcome::Unsat {
+                    conflicts: c1.max(c2),
+                })
+            }
+            (
+                SolverStatus::Unknown {
+                    solver_name: n1,
+                    status,
+                },
+                SolverStatus::Unknown {
+                    solver_name: n2, ..
+                },
+            ) => Err(IterationError::Unknown {
+                solver_name: format!("{n1} + {n2}"),
+                status,
+            }),
+            (SolverStatus::TimeLimit, _) => Ok(SolverOutcome::TimeLimit),
+            (_, SolverStatus::TimeLimit) => Ok(SolverOutcome::TimeLimit),
+            _ => Err(BugReason::OutputStatusDiffers(status_str1.into(), status_str2.into()).into()),
+        }
+    }
     pub fn verify_with_proof_checking(
         self,
         grammar: &PBGrammar,
@@ -413,7 +513,8 @@ impl SolverStatus {
         derivation: &Path,
         solver_name: &str,
     ) -> SolverResult {
-        match self {
+        let status = self.parsed_status;
+        match status {
             SolverStatus::Sat {
                 conflicts,
                 solution,
@@ -459,93 +560,25 @@ impl SolverStatus {
             }),
         }
     }
-    pub fn verify_and_compare_status(
-        self,
-        other: SolverStatus,
-        grammar: &PBGrammar,
-        //TODO: we probably want to save the name somewhere inside self and other
-        self_name: &str,
-        other_name: &str,
-    ) -> SolverResult {
-        let status_str1 = self.get_status_string().to_string();
-        let status_str2 = other.get_status_string().to_string();
-        match (self, other) {
-            (
-                SolverStatus::Sat {
-                    conflicts: c1,
-                    solution: s1,
-                },
-                SolverStatus::Sat {
-                    conflicts: c2,
-                    solution: s2,
-                },
-            ) => {
-                if let Err(e) = s1.is_valid(grammar) {
-                    return Err(BugReason::Solution(InvalidSolution {
-                        solver_name: self_name.into(),
-                        violation: e,
-                    })
-                    .into());
-                }
-                if let Err(e) = s2.is_valid(grammar) {
-                    return Err(BugReason::Solution(InvalidSolution {
-                        solver_name: other_name.into(),
-                        violation: e,
-                    })
-                    .into());
-                }
-                let conflicts = c1.max(c2);
-                match (s1, s2) {
-                    (SolverSolution::PBS(m1), SolverSolution::PBS(m2)) => Ok(SolverOutcome::Sat {
-                        conflicts,
-                        solution: SatModel::Comparison(m1, m2),
-                        optimum: None,
-                    }),
-                    (SolverSolution::PBO(m1, min1), SolverSolution::PBO(m2, min2)) => {
-                        if min1 == min2 {
-                            Ok(SolverOutcome::Sat {
-                                conflicts,
-                                solution: SatModel::Comparison(m1, m2),
-                                optimum: Some(min1),
-                            })
-                        } else {
-                            let i1 = ObjectiveInfo {
-                                solver_name: self_name.into(),
-                                min_objective: min1,
-                            };
-                            let i2 = ObjectiveInfo {
-                                solver_name: other_name.into(),
-                                min_objective: min2,
-                            };
-                            Err(BugReason::DifferentObjectives(i1, i2).into())
-                        }
-                    }
-                    _ => unreachable!("cant compare pbs with pbo"),
-                }
-            }
-            (SolverStatus::Unsat { conflicts: c1 }, SolverStatus::Unsat { conflicts: c2 }) => {
-                Ok(SolverOutcome::Unsat {
-                    conflicts: c1.max(c2),
-                })
-            }
-            (
-                SolverStatus::Unknown {
-                    solver_name: n1,
-                    status,
-                },
-                SolverStatus::Unknown {
-                    solver_name: n2, ..
-                },
-            ) => Err(IterationError::Unknown {
-                solver_name: format!("{n1} + {n2}"),
-                status,
-            }),
-            (SolverStatus::TimeLimit, _) => Ok(SolverOutcome::TimeLimit),
-            (_, SolverStatus::TimeLimit) => Ok(SolverOutcome::TimeLimit),
-            _ => Err(BugReason::OutputStatusDiffers(status_str1, status_str2).into()),
-        }
-    }
+}
 
+#[derive(Debug, Clone)]
+pub enum SolverStatus {
+    Sat {
+        conflicts: u32,
+        solution: SolverSolution,
+    },
+    Unsat {
+        conflicts: u32,
+    },
+    TimeLimit,
+    Unknown {
+        solver_name: String,
+        status: String,
+    },
+}
+
+impl SolverStatus {
     fn get_status_string(&self) -> &'static str {
         match self {
             SolverStatus::Sat { .. } => "SAT",
@@ -671,40 +704,14 @@ pub struct InvalidSolution {
 
 #[derive(Debug, Error)]
 pub enum BugReason {
+    #[error("Invalid solution: {0}")]
     Solution(InvalidSolution),
+    #[error("Different objectives in solver: {0} and {1}")]
     DifferentObjectives(ObjectiveInfo, ObjectiveInfo),
+    #[error("Output status differs: {0} != {1}")]
     OutputStatusDiffers(String, String),
+    #[error(transparent)]
     ProofCheckerFailed(ProofError),
-}
-
-impl Display for BugReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BugReason::Solution(err) => {
-                write!(
-                    f,
-                    "Invalid solution provided by solver {}: {}",
-                    err.solver_name, err.violation
-                )
-            }
-            BugReason::DifferentObjectives(i1, i2) => {
-                write!(
-                    f,
-                    "Different objectives found: {} ({}) and {} ({})",
-                    i1.min_objective, i1.solver_name, i2.min_objective, i2.solver_name
-                )
-            }
-            BugReason::OutputStatusDiffers(s1, s2) => {
-                write!(f, "Different status found: {s1} and {s2}")
-            }
-            BugReason::ProofCheckerFailed(e) => {
-                write!(
-                    f,
-                    "Proof checker showed that generated prove is invalid: {e}"
-                )
-            }
-        }
-    }
 }
 
 #[derive(Debug, Error)]

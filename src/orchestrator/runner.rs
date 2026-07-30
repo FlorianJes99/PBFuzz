@@ -14,6 +14,7 @@ use crate::{
         solver::{ExternalProgramSer, Solver, SolverData},
     },
 };
+use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -135,8 +136,8 @@ struct Summary {
 }
 
 impl Summary {
-    fn save_to_file(self, file: &Path) -> std::io::Result<()> {
-        let data = toml::ser::to_string_pretty(&self).map_err(std::io::Error::other)?;
+    fn save_to_file(self, file: &Path) -> io::Result<()> {
+        let data = toml::ser::to_string_pretty(&self).map_err(io::Error::other)?;
         File::create(file).and_then(|mut f| f.write_all(data.as_bytes()))
     }
 }
@@ -301,6 +302,18 @@ impl Orchestrator {
                     status,
                 } => info!("Solver {solver_name} outputted 'Unknown': {status}"),
             }
+            let file = self.fuzzer_output_dir.join(format!(
+                "{}/{}_{}_{}_report.md",
+                e.get_folder_name(),
+                e.get_file_name_prefix(),
+                seed,
+                iteration
+            ));
+            if let Err(e) = File::create(file)
+                .and_then(|mut f| create_error_report(&mut f, &work_result.command_used, e))
+            {
+                error!("{e}")
+            }
         }
         let mut files_to_move = vec![];
         let output_file = work_result.pb_file;
@@ -352,8 +365,8 @@ impl Orchestrator {
         }
     }
 
-    fn save_settings(&self) -> std::io::Result<()> {
-        let data = toml::ser::to_string_pretty(&self.config).map_err(std::io::Error::other)?;
+    fn save_settings(&self) -> io::Result<()> {
+        let data = toml::ser::to_string_pretty(&self.config).map_err(io::Error::other)?;
         let file_name = self
             .fuzzer_output_dir
             .join(DATA_FOLDER.name)
@@ -382,6 +395,29 @@ fn terminate_early(
             iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
         }
     }
+}
+
+fn create_error_report<W: Write>(
+    writer: &mut W,
+    command_used: &CommandUsed,
+    error: &IterationError,
+) -> io::Result<()> {
+    let mut write_command = |cmd: &str| -> io::Result<()> {
+        writeln!(writer, "Used command:")?;
+        writeln!(writer, "{}", cmd)
+    };
+    match command_used {
+        CommandUsed::Proof(cmd) => write_command(cmd)?,
+        CommandUsed::Comparison(cmd1, cmd2) => {
+            write_command(cmd1)?;
+            write_command(cmd2)?;
+        }
+    }
+    writeln!(writer)?;
+    writeln!(writer, "{}", "=".repeat(50))?;
+    writeln!(writer)?;
+    writeln!(writer, "Error message:")?;
+    writeln!(writer, "{error}")
 }
 
 fn work_iteration(
@@ -424,17 +460,16 @@ fn work_iteration(
             let start_bin2 = Instant::now();
             let output_bin2 = p2.run(&output_file, with_option_fuzzing)?;
             let time_bin2 = start_bin2.elapsed();
+            let command_used = CommandUsed::Comparison(
+                output_bin1.get_command_as_string(),
+                output_bin2.get_command_as_string(),
+            );
 
             let start_output_extraction = Instant::now();
             let res_program1 = p1.parse(output_bin1, pb_kind);
             let res_program2 = p2.parse(output_bin2, pb_kind);
             let outcome = match (res_program1, res_program2) {
-                (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(
-                    status2,
-                    &grammar,
-                    p1.get_name(),
-                    p2.get_name(),
-                ),
+                (Ok(status1), Ok(status2)) => status1.verify_and_compare_status(status2, &grammar),
                 (Err(err), _) => Err(IterationError::Error(err)),
                 (_, Err(err)) => Err(IterationError::Error(err)),
             };
@@ -456,12 +491,14 @@ fn work_iteration(
                 outcome,
                 record: CsvRecord::Comparison(comparison_record),
                 generation_method,
+                command_used,
             })
         }
         OrchestrationMode::ProofChecking(p) => {
             let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
             let problem_solving_start = Instant::now();
             let output = p.run_with_proof(&output_file, &proof_file, with_option_fuzzing)?;
+            let command_used = CommandUsed::Proof(output.get_command_as_string());
             let problem_solving_duration = problem_solving_start.elapsed();
             let start_output_parsing = Instant::now();
             let parsing_result = p.parse(output, pb_kind);
@@ -489,6 +526,7 @@ fn work_iteration(
                 outcome: iteration_result,
                 record: CsvRecord::Proof(proof_record),
                 generation_method,
+                command_used,
             })
         }
     }
@@ -501,6 +539,12 @@ struct WorkResult {
     outcome: SolverResult,
     record: CsvRecord,
     generation_method: GenerationMethod,
+    command_used: CommandUsed,
+}
+
+pub enum CommandUsed {
+    Proof(String),
+    Comparison(String, String),
 }
 
 /// Cancel iterations of fuzzing runs
