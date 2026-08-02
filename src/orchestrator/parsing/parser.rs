@@ -7,8 +7,11 @@ use thiserror::Error;
 use crate::{
     fuzzer::domain::{LiteralIdent, ParseLiteralError},
     orchestrator::{
-        scip_parser::ScipParsingError,
-        solver::{SolverSolution, SolverStatus},
+        parsing::{
+            default_parser::DefaultParser,
+            scip_parser::{ScipParser, ScipParsingError},
+        },
+        solving::solver::{SolverSolution, SolverStatus},
     },
 };
 
@@ -17,6 +20,15 @@ pub enum ParserKind {
     #[default]
     Default,
     Scip,
+}
+
+impl ParserKind {
+    pub fn create_parser(&self, name: String) -> Box<dyn Parser> {
+        match self {
+            ParserKind::Default => Box::new(DefaultParser::new(name)),
+            ParserKind::Scip => Box::new(ScipParser::new(name)),
+        }
+    }
 }
 
 pub trait Parser: Sync {

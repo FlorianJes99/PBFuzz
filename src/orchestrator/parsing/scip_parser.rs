@@ -1,12 +1,12 @@
 use thiserror::Error;
 
-use crate::orchestrator::parser::OutputParsingError;
-use crate::orchestrator::parser::StatusKind;
-use crate::orchestrator::parser::StatusLine;
+use crate::orchestrator::parsing::parser::OutputParsingError;
+use crate::orchestrator::parsing::parser::StatusKind;
+use crate::orchestrator::parsing::parser::StatusLine;
 use std::collections::HashSet;
 use std::num::ParseFloatError;
 
-use crate::orchestrator::parser::Parser;
+use crate::orchestrator::parsing::parser::Parser;
 
 pub struct ScipParser {
     name: String,

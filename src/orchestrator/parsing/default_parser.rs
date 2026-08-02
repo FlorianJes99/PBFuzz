@@ -4,7 +4,7 @@ use log::{debug, error};
 
 use crate::{
     fuzzer::domain::LiteralIdent,
-    orchestrator::parser::{OutputParsingError, Parser, StatusKind, StatusLine},
+    orchestrator::parsing::parser::{OutputParsingError, Parser, StatusKind, StatusLine},
 };
 
 pub struct DefaultParser {

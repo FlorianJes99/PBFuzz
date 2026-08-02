@@ -22,13 +22,11 @@ use crate::{
         grammar::{MinObjectiveInvalid, PBGrammar, PBKind},
     },
     orchestrator::{
-        default_parser::DefaultParser,
         folders::{
             BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
         },
         modes::proof_checking_mode::{check_proof, ProofError},
-        parser::{OutputParsingError, Parser, ParserKind},
-        scip_parser::ScipParser,
+        parsing::parser::{OutputParsingError, Parser, ParserKind},
     },
 };
 
@@ -200,7 +198,7 @@ impl ArgumentType {
 impl ExternalProgramSer {
     pub fn to_external_program(self, timelimit: Duration) -> SolverData {
         SolverData {
-            parser: self.create_parser(),
+            parser: self.parser_kind.create_parser(self.name.clone()),
             binary: self.binary,
             args: self.args,
             optional_args: self.optional_args,
@@ -224,13 +222,6 @@ impl ExternalProgramSer {
     pub fn load_from_file(path: &Path) -> std::io::Result<Self> {
         let s = std::fs::read_to_string(path)?;
         toml::from_str(&s).map_err(std::io::Error::other)
-    }
-
-    fn create_parser(&self) -> Box<dyn Parser> {
-        match self.parser_kind {
-            ParserKind::Default => Box::new(DefaultParser::new(self.name.clone())),
-            ParserKind::Scip => Box::new(ScipParser::new(self.name.clone())),
-        }
     }
 }
 

@@ -2,7 +2,7 @@ use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile, OFFSET};
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
-use crate::orchestrator::solver::{
+use crate::orchestrator::solving::solver::{
     IterationError, IterationResult, SolverDataWithProof, SolverOutcome, SolverResult,
 };
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         folders::{prepare_output_folder, DATA_FOLDER},
         orchestrator_args::OrchestratorArgs,
-        solver::{ExternalProgramSer, Solver, SolverData},
+        solving::solver::{ExternalProgramSer, Solver, SolverData},
     },
 };
 use std::io;
@@ -710,7 +710,7 @@ impl Display for AccumulatedStatsAllRuns {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{fuzzer::helpers::float_equals, orchestrator::solver::SatModel};
+    use crate::{fuzzer::helpers::float_equals, orchestrator::solving::solver::SatModel};
 
     use super::*;
     #[test]

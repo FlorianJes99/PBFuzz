@@ -1,9 +1,7 @@
 pub mod csv_data;
-pub mod default_parser;
 pub mod folders;
 pub mod modes;
 pub mod orchestrator_args;
-pub mod parser;
+pub mod parsing;
 pub mod runner;
-pub mod scip_parser;
-pub mod solver;
+pub mod solving;
