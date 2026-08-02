@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fmt::Display, num::ParseIntError, process::Output};
 
 use log::debug;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
@@ -15,7 +15,12 @@ use crate::{
     },
 };
 
-#[derive(Default, Serialize, Deserialize)]
+/// Different Kinds of solver output, we can parse
+///
+/// For normal pb solvers, which have a standardized output
+/// format, make use of the default parser.
+/// Currently also SCIP output is supported.
+#[derive(Default, Deserialize)]
 pub enum ParserKind {
     #[default]
     Default,
@@ -23,7 +28,7 @@ pub enum ParserKind {
 }
 
 impl ParserKind {
-    pub fn create_parser(&self, name: String) -> Box<dyn Parser> {
+    pub fn create_parser(self, name: String) -> Box<dyn Parser> {
         match self {
             ParserKind::Default => Box::new(DefaultParser::new(name)),
             ParserKind::Scip => Box::new(ScipParser::new(name)),

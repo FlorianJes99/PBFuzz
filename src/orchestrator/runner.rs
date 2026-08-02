@@ -3,15 +3,16 @@ use crate::fuzzer::helpers::{move_files, remove_files, MoveFile, OFFSET};
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::solving::solver::{
-    IterationError, IterationResult, SolverDataWithProof, SolverOutcome, SolverResult,
+    IterationError, IterationResult, SolverOutcome, SolverResult, WithProof,
 };
+use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
     fuzzer::helpers::{get_hms_parts, RunningAverage, RunningAverageDuration},
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         folders::{prepare_output_folder, DATA_FOLDER},
         orchestrator_args::OrchestratorArgs,
-        solving::solver::{ExternalProgramSer, Solver, SolverData},
+        solving::solver::SolverData,
     },
 };
 use std::io;
@@ -79,14 +80,14 @@ pub fn run_orchestrator(
     let timelimit = Duration::from_secs(args.timeout_external_program_secs);
     let mode = match &args.program_config2 {
         Some(p2) => OrchestrationMode::Comparison(
-            ExternalProgramSer::load_from_file(&args.program_config1)?
-                .to_external_program(timelimit),
-            ExternalProgramSer::load_from_file(p2)?.to_external_program(timelimit),
+            SolverConfig::load_from_file(&args.program_config1)
+                .map(|c| SolverData::into_solver(c, timelimit))?,
+            SolverConfig::load_from_file(p2).map(|c| SolverData::into_solver(c, timelimit))?,
         ),
-        None => OrchestrationMode::ProofChecking(
-            ExternalProgramSer::load_from_file(&args.program_config1)?
-                .to_external_program_with_proof(timelimit)?,
-        ),
+        None => {
+            let config = SolverConfig::load_from_file(&args.program_config1)?;
+            OrchestrationMode::ProofChecking(SolverData::into_proof_solver(config, timelimit)?)
+        }
     };
     let config = PbConfigFile::load_from_file(&args.settings_file)?;
     let stop_condition = StopCondition::new(
@@ -116,7 +117,7 @@ pub fn run_orchestrator(
 
 enum OrchestrationMode {
     Comparison(SolverData, SolverData),
-    ProofChecking(SolverDataWithProof),
+    ProofChecking(SolverData<WithProof>),
 }
 
 struct Orchestrator {

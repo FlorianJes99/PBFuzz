@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     io,
-    ops::{Not, RangeInclusive},
+    ops::Not,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::mpsc,
@@ -11,8 +11,6 @@ use std::{
 
 use itertools::Itertools;
 use log::info;
-use rand::{seq::IndexedRandom, RngExt};
-use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
@@ -26,7 +24,8 @@ use crate::{
             BUG_FOLDER, ERROR_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER,
         },
         modes::proof_checking_mode::{check_proof, ProofError},
-        parsing::parser::{OutputParsingError, Parser, ParserKind},
+        parsing::parser::{OutputParsingError, Parser},
+        solving::solver_config::{OptionalArgs, SolverConfig},
     },
 };
 
@@ -40,9 +39,11 @@ use crate::{
 pub type SolverResult = Result<SolverOutcome, IterationError>;
 
 /// Trait, which holds methods a specific solver needs to implement in order to be able to run and parse its output
-pub trait Solver {
+impl<P> SolverData<P> {
     /// every solver needs to have a name, which works as an identifier
-    fn get_name(&self) -> &str;
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
 
     fn external_execution_error(&self, source: std::io::Error) -> ExternalProgramError {
         ExternalProgramError::ExecutionFailed {
@@ -52,10 +53,12 @@ pub trait Solver {
     }
 
     /// returns the specific parser needed in order to extract the output of the solver
-    fn parser(&self) -> &dyn Parser;
+    fn parser(&self) -> &dyn Parser {
+        &*self.parser
+    }
 
     /// Makes use of the underlying parser for the solver in order to extract the computed status of the problem
-    fn parse(
+    pub fn parse(
         &self,
         ext_result: SolverState,
         pb_kind: &PBKind,
@@ -100,133 +103,13 @@ pub trait Solver {
     }
 }
 
-#[derive(Deserialize)]
-pub struct ExternalProgramSer {
-    binary: PathBuf,
-    args: Vec<String>,
-    #[serde(default)]
-    optional_args: OptionalArgs,
-    name: String,
-    parser_kind: ParserKind,
-    proof_arg: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct OptionalArgs {
-    args: Vec<OptionalArg>,
-    /// if arg name and value are seperated by spaces, they need to be provided as separate arguments to the `Command` struct
-    /// default to false
-    #[serde(default)]
-    space_separated: bool,
-}
-
-#[derive(Deserialize)]
-struct OptionalArg {
-    arg_name: String,
-    arg_type: Option<ArgumentType>,
-}
-
-impl OptionalArg {
-    fn collect_into_string_args(
-        &self,
-        space_separated: bool,
-        rng: &mut impl RngExt,
-    ) -> Vec<String> {
-        match &self.arg_type {
-            Some(t) => {
-                let arg_type_as_string = t.sample_to_string(rng);
-                if space_separated {
-                    vec![self.arg_name.clone(), arg_type_as_string]
-                } else {
-                    vec![format!("{}{}", self.arg_name, arg_type_as_string)]
-                }
-            }
-            None => vec![self.arg_name.to_string()],
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(try_from = "ArgumentTypeRaw")]
-enum ArgumentType {
-    IntRange(RangeInclusive<i32>),
-    FloatRange(RangeInclusive<f32>),
-    Values(Vec<String>),
-}
-
-impl TryFrom<ArgumentTypeRaw> for ArgumentType {
-    type Error = ExternalProgramError;
-
-    fn try_from(value: ArgumentTypeRaw) -> Result<Self, Self::Error> {
-        match value {
-            ArgumentTypeRaw::Values(items) => Ok(ArgumentType::Values(items)),
-            ArgumentTypeRaw::IntRange(i1, i2) => {
-                if i1 > i2 {
-                    Err(ExternalProgramError::InvalidIntRange(i1, i2))
-                } else {
-                    Ok(ArgumentType::IntRange(i1..=i2))
-                }
-            }
-            ArgumentTypeRaw::FloatRange(f1, f2) => {
-                if f1 > f2 {
-                    Err(ExternalProgramError::InvalidFloatRange(f1, f2))
-                } else {
-                    Ok(ArgumentType::FloatRange(f1..=f2))
-                }
-            }
-        }
-    }
-}
-
-#[derive(Deserialize)]
-enum ArgumentTypeRaw {
-    IntRange(i32, i32),
-    FloatRange(f32, f32),
-    Values(Vec<String>),
-}
-
-impl ArgumentType {
-    fn sample_to_string(&self, rng: &mut impl RngExt) -> String {
-        match self {
-            ArgumentType::IntRange(r) => rng.random_range(r.clone()).to_string(),
-            ArgumentType::FloatRange(r) => rng.random_range(r.clone()).to_string(),
-            ArgumentType::Values(items) => items.choose(rng).cloned().unwrap_or_default(),
-        }
-    }
-}
-
-impl ExternalProgramSer {
-    pub fn to_external_program(self, timelimit: Duration) -> SolverData {
-        SolverData {
-            parser: self.parser_kind.create_parser(self.name.clone()),
-            binary: self.binary,
-            args: self.args,
-            optional_args: self.optional_args,
-            name: self.name,
-            timelimit,
-        }
-    }
-
-    pub fn to_external_program_with_proof(
-        self,
-        timelimit: Duration,
-    ) -> Result<SolverDataWithProof, ExternalProgramError> {
-        match self.proof_arg.as_ref() {
-            Some(proof_arg) => Ok(SolverDataWithProof {
-                proof_arg: proof_arg.to_string(),
-                program: self.to_external_program(timelimit),
-            }),
-            None => Err(ExternalProgramError::MissingProofLoggingArgument { program: self.name }),
-        }
-    }
-    pub fn load_from_file(path: &Path) -> std::io::Result<Self> {
-        let s = std::fs::read_to_string(path)?;
-        toml::from_str(&s).map_err(std::io::Error::other)
-    }
+pub struct NoProof;
+pub struct WithProof {
+    proof_arg: String,
 }
 
 /// This struct holds all the relevant data in order to execute a Solver
-pub struct SolverData {
+pub struct SolverData<P = NoProof> {
     /// path to the binary of the solver to execute
     binary: PathBuf,
     /// essential args needed in order to run the solver
@@ -239,31 +122,38 @@ pub struct SolverData {
     parser: Box<dyn Parser>,
     /// terminate running process of the solver after this duration
     timelimit: Duration,
+    /// wheter solver supports generation of proofs or not
+    proof: P,
 }
 
-pub struct SolverDataWithProof {
-    program: SolverData,
-    proof_arg: String,
-}
-
-impl Solver for SolverDataWithProof {
-    fn get_name(&self) -> &str {
-        &self.program.name
+impl SolverData<WithProof> {
+    pub fn into_proof_solver(
+        config: SolverConfig,
+        timelimit: Duration,
+    ) -> Result<Self, ExternalProgramError> {
+        config
+            .proof_arg
+            .ok_or(ExternalProgramError::MissingProofLoggingArgument {
+                program: config.name.clone(),
+            })
+            .map(|proof_arg| Self {
+                binary: config.binary,
+                args: config.args,
+                optional_args: config.optional_args,
+                name: config.name.clone(),
+                parser: config.parser_kind.create_parser(config.name),
+                timelimit,
+                proof: WithProof { proof_arg },
+            })
     }
 
-    fn parser(&self) -> &dyn Parser {
-        &*self.program.parser
-    }
-}
-
-impl SolverDataWithProof {
     pub fn run_with_proof(
         &self,
         file_path_pb: &Path,
         file_path_proof: &Path,
         with_option_fuzzing: bool,
     ) -> Result<SolverState, ExternalProgramError> {
-        let mut command = Command::new(self.program.binary.as_os_str());
+        let mut command = Command::new(self.binary.as_os_str());
         // TODO: remove later, when profiling analysis is done
         let _prof_file_name = file_path_pb
             .file_stem()
@@ -271,14 +161,19 @@ impl SolverDataWithProof {
             .display();
         // add_profiling_to_command(&mut command, &prof_file_name);
 
-        command.arg(format!("{}{}", self.proof_arg, file_path_proof.display()));
+        command.arg(format!(
+            "{}{}",
+            self.proof.proof_arg,
+            file_path_proof.display()
+        ));
 
-        for arg in &self.program.args {
+        for arg in &self.args {
             command.arg(arg);
         }
 
-        if with_option_fuzzing && !self.program.optional_args.args.is_empty() {
-            let sampled_args = &self.program.sample_optional_args();
+        if with_option_fuzzing && !self.optional_args.is_empty() {
+            let rng = &mut rand::rng();
+            let sampled_args = &self.optional_args.sample(3, rng);
             info!("Sampled args for this run: {}", sampled_args.join(", "));
             for arg in sampled_args {
                 command.arg(arg);
@@ -286,22 +181,23 @@ impl SolverDataWithProof {
         }
 
         command.arg(file_path_pb);
-        self.run_with_timeout(command, self.program.timelimit)
+        self.run_with_timeout(command, self.timelimit)
             .map_err(|e| self.external_execution_error(e))
     }
 }
 
-impl Solver for SolverData {
-    fn get_name(&self) -> &str {
-        &self.name
+impl SolverData<NoProof> {
+    pub fn into_solver(config: SolverConfig, timelimit: Duration) -> Self {
+        Self {
+            binary: config.binary,
+            args: config.args,
+            optional_args: config.optional_args,
+            name: config.name.clone(),
+            parser: config.parser_kind.create_parser(config.name),
+            timelimit,
+            proof: NoProof,
+        }
     }
-
-    fn parser(&self) -> &dyn Parser {
-        &*self.parser
-    }
-}
-
-impl SolverData {
     pub fn run(
         &self,
         file_path: &Path,
@@ -313,7 +209,8 @@ impl SolverData {
         }
 
         if with_option_fuzzing {
-            for arg in &self.sample_optional_args() {
+            let rng = &mut rand::rng();
+            for arg in &self.optional_args.sample(3, rng) {
                 // TODO: what to do if arg look like this `--myarg 10`
                 // Command structure wants every space seperated input as seperarate arg
                 // roundingsat conects arg name and arg with =
@@ -323,20 +220,6 @@ impl SolverData {
         command.arg(file_path);
         self.run_with_timeout(command, self.timelimit)
             .map_err(|e| self.external_execution_error(e))
-    }
-
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    fn sample_optional_args(&self) -> Vec<String> {
-        let rng = &mut rand::rng();
-        let amount = 3.min(self.optional_args.args.len());
-        self.optional_args
-            .args
-            .sample(rng, amount)
-            .flat_map(|arg| arg.collect_into_string_args(self.optional_args.space_separated, rng))
-            .collect()
     }
 }
 
@@ -715,55 +598,6 @@ pub enum ExternalProgramError {
     },
     #[error("{program}: missing required proof logging argument")]
     MissingProofLoggingArgument { program: String },
-    #[error("Invalid Range specified: {0} needs to be <= {1}")]
-    InvalidIntRange(i32, i32),
-    #[error("Invalid Range specified: {0} needs to be <= {1}")]
-    InvalidFloatRange(f32, f32),
     #[error("Failed to parse output of solver: {0}")]
     Parsing(#[from] OutputParsingError),
-}
-
-#[cfg(test)]
-mod tests {
-    use rand::{rngs::StdRng, SeedableRng};
-
-    use super::*;
-
-    #[test]
-    fn test_collect_arg_into_string_not_separated() {
-        let mut rng = StdRng::seed_from_u64(42);
-        let arg = OptionalArg {
-            arg_name: "--myArg=".into(),
-            arg_type: Some(ArgumentType::IntRange(1..=3)),
-        };
-
-        let args = arg.collect_into_string_args(false, &mut rng);
-        assert_eq!(1, args.len());
-        let (arg_name, arg_type) = args[0].split_once("=").unwrap();
-        assert_eq!("--myArg", arg_name);
-        assert!(
-            arg_type.parse::<i32>().is_ok(),
-            "should be able to parse int argument value: {}",
-            arg_type
-        );
-    }
-
-    #[test]
-    fn test_collect_arg_into_string_separated() {
-        let mut rng = StdRng::seed_from_u64(42);
-        let arg = OptionalArg {
-            arg_name: "--myArg".into(),
-            arg_type: Some(ArgumentType::FloatRange(1.0..=3.0)),
-        };
-
-        let args = arg.collect_into_string_args(true, &mut rng);
-        assert_eq!(args.len(), 2, "Expected Vec of size 2, but got: {:?}", args);
-        let [arg_name, arg_type]: &[String; 2] = args.as_slice().try_into().unwrap();
-        assert_eq!("--myArg", arg_name);
-        assert!(
-            arg_type.parse::<f32>().is_ok(),
-            "should be able to parse float argument value: {}",
-            arg_type
-        );
-    }
 }
