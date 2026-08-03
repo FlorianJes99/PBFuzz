@@ -25,9 +25,6 @@ pub enum ScipParsingError {
 }
 
 impl ScipParser {
-    pub fn new() -> Self {
-        Self
-    }
 
     /// Scip sometimes returns floats, which actually should be integers. This method will check for
     /// this type of inconsistency in Scip and will still parse the value correctly.

@@ -9,15 +9,8 @@ use crate::{
     orchestrator::{
         evaluation::proof_checking::ProofError,
         folders::{BUG_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER},
-        parsing::parser::ParsedStatus,
-        solving::solver::SolverExecutionRecord,
     },
 };
-
-pub struct VerificationData {
-    pub solver_data: SolverExecutionRecord,
-    pub parser_data: ParsedStatus,
-}
 
 pub enum VerificationOutcome {
     Sat,

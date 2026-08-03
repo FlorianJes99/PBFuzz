@@ -10,10 +10,6 @@ use crate::{
 pub struct DefaultParser;
 
 impl DefaultParser {
-    pub fn new() -> Self {
-        Self
-    }
-
     fn parse_solution(
         &self,
         solution_model_line: &str,

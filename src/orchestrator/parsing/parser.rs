@@ -28,8 +28,8 @@ pub enum ParserImpl {
 impl ParserImpl {
     pub fn from_kind(kind: &ParserKind) -> Self {
         match kind {
-            ParserKind::Default => Self::Default(DefaultParser::new()),
-            ParserKind::Scip => Self::Scip(ScipParser::new()),
+            ParserKind::Default => Self::Default(DefaultParser),
+            ParserKind::Scip => Self::Scip(ScipParser),
         }
     }
 
@@ -181,13 +181,13 @@ impl Display for ParsedStatus {
 }
 
 impl ParsedStatus {
-    pub fn get_conflicts(&self) -> u32 {
+    pub fn get_conflicts(&self) -> Option<u32> {
         match self {
-            ParsedStatus::Sat { conflicts, .. } => *conflicts,
-            ParsedStatus::Optimum { conflicts, .. } => *conflicts,
-            ParsedStatus::Unsat { conflicts } => *conflicts,
-            ParsedStatus::TimeLimit => 0,
-            ParsedStatus::Unknown { .. } => 0,
+            ParsedStatus::Sat { conflicts, .. } => Some(*conflicts),
+            ParsedStatus::Optimum { conflicts, .. } => Some(*conflicts),
+            ParsedStatus::Unsat { conflicts } => Some(*conflicts),
+            ParsedStatus::TimeLimit => None,
+            ParsedStatus::Unknown { .. } => None,
         }
     }
 }

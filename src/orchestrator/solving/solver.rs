@@ -13,67 +13,12 @@ use itertools::Itertools;
 use log::info;
 use thiserror::Error;
 
-use crate::{
-    fuzzer::{
-        constraint::ConstraintViolation,
-        domain::{MinObjectiveValue, SolutionModel},
-        grammar::MinObjectiveInvalid,
-    },
-    orchestrator::{
-        parsing::parser::OutputParsingError,
-        solving::solver_config::{OptionalArgs, SolverConfig},
-    },
-};
+use crate::orchestrator::solving::solver_config::{OptionalArgs, SolverConfig};
 
-/// Trait, which holds methods a specific solver needs to implement in order to be able to run and parse its output
-impl<P> SolverData<P> {
-    /// every solver needs to have a name, which works as an identifier
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    fn external_execution_error(&self, source: std::io::Error) -> ExternalProgramError {
-        ExternalProgramError::ExecutionFailed {
-            program: self.get_name().into(),
-            source,
-        }
-    }
-
-    /// starts the solver in a child process and terminates this process after the given output
-    ///
-    /// Because we use libc crate to kill the child process, this method makes use of `unsafe` code
-    fn run_with_timeout(&self, mut cmd: Command, timeout: Duration) -> io::Result<SolverRun> {
-        let child = cmd.stdout(Stdio::piped()).spawn()?;
-        let (tx, rx) = mpsc::channel();
-        let pid = child.id();
-
-        thread::spawn(move || {
-            let _ = tx.send(child.wait_with_output());
-        });
-
-        let name = self.name.clone();
-        let used_command = format!(
-            "{} {}",
-            cmd.get_program().display(),
-            cmd.get_args().map(|a| a.display()).join(" ")
-        );
-        let record = SolverExecutionRecord { name, used_command };
-        let state = match rx.recv_timeout(timeout) {
-            Ok(result) => result.map(SolverState::Terminated),
-            Err(_) => {
-                info!("Terminating solver {}...", self.get_name());
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(pid as i32, libc::SIGTERM);
-                }
-                Ok(SolverState::Timeout)
-            }
-        }?;
-        Ok(SolverRun { record, state })
-    }
-}
-
+/// Marker for Solvers, which do not support proofs
 pub struct NoProof;
+
+/// Marker for Solvers, which can generate proofs
 pub struct WithProof {
     proof_arg: String,
 }
@@ -92,6 +37,59 @@ pub struct SolverData<P = NoProof> {
     timelimit: Duration,
     /// wheter solver supports generation of proofs or not
     proof: P,
+}
+
+/// Shared behavior for all Solvers, no matter if they supports proofs or not
+impl<P> SolverData<P> {
+    /// every solver needs to have a name, which works as an identifier
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    fn external_execution_error(&self, source: std::io::Error) -> ExternalProgramError {
+        ExternalProgramError::ExecutionFailed {
+            program: self.get_name().into(),
+            source,
+        }
+    }
+
+    /// starts the solver in a child process and terminates this process after the given output
+    fn run_with_timeout(&self, mut cmd: Command, timeout: Duration) -> io::Result<SolverRun> {
+        let mut child = cmd.stdout(Stdio::piped()).spawn()?;
+        let mut stdout = child.stdout.take().expect("stdout was piped");
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
+            let _ = tx.send(buf);
+        });
+
+        let name = self.name.clone();
+        let used_command = format!(
+            "{} {}",
+            cmd.get_program().display(),
+            cmd.get_args().map(|a| a.display()).join(" ")
+        );
+        let record = SolverExecutionRecord { name, used_command };
+        let state = match rx.recv_timeout(timeout) {
+            Ok(stdout_buf) => {
+                let status = child.wait()?;
+                SolverState::Terminated(Output {
+                    status,
+                    stdout: stdout_buf,
+                    stderr: vec![],
+                })
+            }
+            Err(_) => {
+                info!("Terminating solver {}...", self.get_name());
+                child.kill()?;
+                let _ = child.wait(); // reap
+                SolverState::Timeout
+            }
+        };
+        Ok(SolverRun { record, state })
+    }
 }
 
 impl SolverData<WithProof> {
@@ -174,7 +172,7 @@ impl SolverData<NoProof> {
             command.arg(arg);
         }
 
-        if with_option_fuzzing {
+        if with_option_fuzzing && !self.optional_args.is_empty() {
             let rng = &mut rand::rng();
             for arg in &self.optional_args.sample(3, rng) {
                 // TODO: what to do if arg look like this `--myarg 10`
@@ -211,56 +209,6 @@ fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display
     command.env("LLVM_PROFILE_FILE", prof_file);
 }
 
-#[derive(Debug, Clone)]
-pub enum SolverSolution {
-    PBS(SolutionModel),
-    PBO(SolutionModel, MinObjectiveValue),
-}
-
-#[derive(Debug, Error)]
-pub enum ValidationError {
-    #[error(transparent)]
-    Constraint(#[from] ConstraintViolation),
-    #[error(transparent)]
-    Objective(#[from] MinObjectiveInvalid),
-}
-
-#[derive(Debug, Clone)]
-pub enum SolverStatus {
-    Sat {
-        conflicts: u32,
-        solution: SolverSolution,
-    },
-    Unsat {
-        conflicts: u32,
-    },
-    TimeLimit,
-    Unknown {
-        solver_name: String,
-        status: String,
-    },
-}
-
-pub enum SatModel {
-    Comparison(SolutionModel, SolutionModel),
-    Proof(SolutionModel),
-}
-
-#[derive(Debug, Error)]
-#[error("{solver_name} - minimum: {min_objective}")]
-pub struct ObjectiveInfo {
-    solver_name: String,
-    min_objective: MinObjectiveValue,
-}
-
-#[derive(Debug, Error)]
-#[error("{solver_name}: {violation}")]
-pub struct InvalidSolution {
-    solver_name: String,
-    #[source]
-    violation: ValidationError,
-}
-
 #[derive(Debug, Error)]
 pub enum ExternalProgramError {
     #[error("{program}: failed to execute: {source}")]
@@ -271,6 +219,4 @@ pub enum ExternalProgramError {
     },
     #[error("{program}: missing required proof logging argument")]
     MissingProofLoggingArgument { program: String },
-    #[error("Failed to parse output of solver: {0}")]
-    Parsing(#[from] OutputParsingError),
 }

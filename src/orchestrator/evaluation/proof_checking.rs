@@ -1,7 +1,7 @@
 use crate::{
     fuzzer::grammar::PBGrammar,
     orchestrator::{
-        evaluation::common::{wrap_violation, BugReason, VerificationData, VerificationOutcome},
+        evaluation::common::{wrap_violation, BugReason, VerificationOutcome},
         parsing::parser::{ParsedStatus, ParserRun},
     },
 };
@@ -12,17 +12,17 @@ use thiserror::Error;
 use veripb::{self, args::Args, run_checker};
 
 pub struct ProofRun {
-    pub v: VerificationData,
+    pub parser_run: ParserRun,
     pub outcome: VerificationOutcome,
 }
 
 pub fn verify_with_proof(
-    r: ParserRun,
+    parser_run: ParserRun,
     grammar: &PBGrammar,
     formula: &Path,
     derivation: &Path,
 ) -> ProofRun {
-    let outcome = match &r.parsed_status {
+    let outcome = match &parser_run.parsed_status {
         ParsedStatus::Sat {
             conflicts: _,
             solution,
@@ -32,7 +32,7 @@ pub fn verify_with_proof(
             solution,
             ..
         } => match grammar.verify_solution(&solution) {
-            Err(e) => VerificationOutcome::Bug(wrap_violation(e, r.record.name.clone())),
+            Err(e) => VerificationOutcome::Bug(wrap_violation(e, parser_run.record.name.clone())),
             Ok(()) => match check_proof(formula, derivation) {
                 Err(e) => VerificationOutcome::Bug(BugReason::ProofCheckerFailed(e)),
                 Ok(()) => VerificationOutcome::Sat,
@@ -45,11 +45,10 @@ pub fn verify_with_proof(
         ParsedStatus::TimeLimit => VerificationOutcome::Timelimit,
         ParsedStatus::Unknown { status: _ } => VerificationOutcome::Unknown,
     };
-    let v = VerificationData {
-        solver_data: r.record,
-        parser_data: r.parsed_status,
-    };
-    ProofRun { v, outcome }
+    ProofRun {
+        parser_run,
+        outcome,
+    }
 }
 
 pub fn check_proof(formula: &Path, derivation: &Path) -> Result<(), ProofError> {

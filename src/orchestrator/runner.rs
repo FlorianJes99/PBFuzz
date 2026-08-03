@@ -2,10 +2,10 @@ use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile, OFFSET};
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
-use crate::orchestrator::evaluation::common::{VerificationData, VerificationOutcome};
+use crate::orchestrator::evaluation::common::VerificationOutcome;
 use crate::orchestrator::evaluation::comparison::{compare_runs, ComparisonRun};
 use crate::orchestrator::evaluation::proof_checking::{verify_with_proof, ProofRun};
-use crate::orchestrator::parsing::parser::ParserImpl;
+use crate::orchestrator::parsing::parser::{ParserImpl, ParserRun};
 use crate::orchestrator::solving::solver::{
     ExternalProgramError, NoProof, SolverExecutionRecord, WithProof,
 };
@@ -384,10 +384,10 @@ impl Orchestrator {
             files_to_move.push(MoveFile::new(proof_file, new_file_location_proof));
         }
         let file_manipulation_result = match outcome {
-            // Only save the file if bug or error or `unknown` occurred
-            VerificationOutcome::Bug(_) | VerificationOutcome::Unknown => {
-                move_files(&files_to_move)
-            }
+            // Only save the file if bug or timelimit or unknown occurred
+            VerificationOutcome::Bug(_)
+            | VerificationOutcome::Unknown
+            | VerificationOutcome::Timelimit => move_files(&files_to_move),
             _ if self.save_all_files => move_files(&files_to_move),
             // Delete the generated fuzzing result if not needed anymore
             _ => remove_files(&files_to_move).map_err(|e| e.to_string()),
@@ -448,21 +448,21 @@ fn terminate_early(
 }
 
 fn create_report<W: Write>(writer: &mut W, outcome: &Outcome) -> io::Result<()> {
-    let mut write_verification_data = |data: &VerificationData| -> io::Result<()> {
-        let SolverExecutionRecord { name, used_command } = &data.solver_data;
+    let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
+        let SolverExecutionRecord { name, used_command } = &data.record;
         writeln!(writer, "{:=^50}", "Solving")?;
         writeln!(writer, "Solver: {}", name)?;
         writeln!(writer, "Command: {}", used_command)?;
         writeln!(writer)?;
         writeln!(writer, "{:=^50}", "Parsing")?;
-        writeln!(writer, "{}", data.parser_data)
+        writeln!(writer, "{}", data.parsed_status)
     };
     match outcome {
         Outcome::Comparison(comparison_run) => {
-            write_verification_data(&comparison_run.v1)?;
-            write_verification_data(&comparison_run.v2)?;
+            write_run_data(&comparison_run.parser_run1)?;
+            write_run_data(&comparison_run.parser_run2)?;
         }
-        Outcome::Proof(proof_run) => write_verification_data(&proof_run.v)?,
+        Outcome::Proof(proof_run) => write_run_data(&proof_run.parser_run)?,
     }
     writeln!(writer)?;
     writeln!(writer, "{:=^50}", "Parsing")?;

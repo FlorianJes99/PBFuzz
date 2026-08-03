@@ -1,30 +1,28 @@
 use crate::{
     fuzzer::grammar::PBGrammar,
     orchestrator::{
-        evaluation::common::{
-            wrap_objective, wrap_violation, BugReason, VerificationData, VerificationOutcome,
-        },
+        evaluation::common::{wrap_objective, wrap_violation, BugReason, VerificationOutcome},
         parsing::parser::{ParsedStatus, ParserRun},
     },
 };
 
 pub struct ComparisonRun {
-    pub v1: VerificationData,
-    pub v2: VerificationData,
+    pub parser_run1: ParserRun,
+    pub parser_run2: ParserRun,
     pub outcome: VerificationOutcome,
 }
 
-pub fn compare_runs(r1: ParserRun, r2: ParserRun, grammar: &PBGrammar) -> ComparisonRun {
-    let outcome = compare_status(&r1, &r2, grammar);
-    let v1 = VerificationData {
-        solver_data: r1.record,
-        parser_data: r1.parsed_status,
-    };
-    let v2 = VerificationData {
-        solver_data: r2.record,
-        parser_data: r2.parsed_status,
-    };
-    ComparisonRun { v1, v2, outcome }
+pub fn compare_runs(
+    parser_run1: ParserRun,
+    parser_run2: ParserRun,
+    grammar: &PBGrammar,
+) -> ComparisonRun {
+    let outcome = compare_status(&parser_run1, &parser_run2, grammar);
+    ComparisonRun {
+        parser_run1,
+        parser_run2,
+        outcome,
+    }
 }
 
 fn compare_status(r1: &ParserRun, r2: &ParserRun, grammar: &PBGrammar) -> VerificationOutcome {
