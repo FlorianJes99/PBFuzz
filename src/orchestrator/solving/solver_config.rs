@@ -6,8 +6,6 @@ use thiserror::Error;
 use rand::RngExt;
 use serde::Deserialize;
 
-use crate::orchestrator::parsing::parser::ParserKind;
-
 /// This holds all the necessary configuration in order to use an external solver for our use cases
 ///
 /// A solver is expected to solve PBS/PBO problems, when providing the correct binary and mandatory args.
@@ -32,6 +30,18 @@ impl SolverConfig {
         let s = std::fs::read_to_string(path)?;
         toml::from_str(&s).map_err(std::io::Error::other)
     }
+}
+
+/// Different Kinds of solver output, we can parse
+///
+/// For normal pb solvers, which have a standardized output
+/// format, make use of the default parser.
+/// Currently also SCIP output is supported.
+#[derive(Default, Deserialize)]
+pub enum ParserKind {
+    #[default]
+    Default,
+    Scip,
 }
 
 #[derive(Deserialize, Default)]

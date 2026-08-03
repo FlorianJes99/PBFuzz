@@ -4,16 +4,14 @@ use log::{debug, error};
 
 use crate::{
     fuzzer::domain::LiteralIdent,
-    orchestrator::parsing::parser::{OutputParsingError, Parser, StatusKind, StatusLine},
+    orchestrator::parsing::parser::{OutputParsingError, StatusKind, StatusLine},
 };
 
-pub struct DefaultParser {
-    name: String,
-}
+pub struct DefaultParser;
 
 impl DefaultParser {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new() -> Self {
+        Self
     }
 
     fn parse_solution(
@@ -32,14 +30,8 @@ impl DefaultParser {
             })
             .collect()
     }
-}
 
-impl Parser for DefaultParser {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn parse_line(&self, line: &str) -> StatusLine {
+    pub fn parse_line(&self, line: &str) -> StatusLine {
         match line.split_once(' ') {
             Some(("s", rest)) => {
                 let status = match rest {

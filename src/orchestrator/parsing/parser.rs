@@ -1,49 +1,98 @@
 use std::{collections::HashSet, fmt::Display, num::ParseIntError, process::Output};
 
 use log::debug;
-use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    fuzzer::domain::{LiteralIdent, ParseLiteralError},
+    fuzzer::{
+        domain::{LiteralIdent, MinObjectiveValue, ParseLiteralError, SolutionModel},
+        grammar::PBKind,
+    },
     orchestrator::{
         parsing::{
             default_parser::DefaultParser,
             scip_parser::{ScipParser, ScipParsingError},
         },
-        solving::solver::{SolverSolution, SolverStatus},
+        solving::{
+            solver::{SolverExecutionRecord, SolverRun, SolverState},
+            solver_config::ParserKind,
+        },
     },
 };
 
-/// Different Kinds of solver output, we can parse
-///
-/// For normal pb solvers, which have a standardized output
-/// format, make use of the default parser.
-/// Currently also SCIP output is supported.
-#[derive(Default, Deserialize)]
-pub enum ParserKind {
-    #[default]
-    Default,
-    Scip,
+pub enum ParserImpl {
+    Default(DefaultParser),
+    Scip(ScipParser),
 }
 
-impl ParserKind {
-    pub fn create_parser(self, name: String) -> Box<dyn Parser> {
-        match self {
-            ParserKind::Default => Box::new(DefaultParser::new(name)),
-            ParserKind::Scip => Box::new(ScipParser::new(name)),
+impl ParserImpl {
+    pub fn from_kind(kind: &ParserKind) -> Self {
+        match kind {
+            ParserKind::Default => Self::Default(DefaultParser::new()),
+            ParserKind::Scip => Self::Scip(ScipParser::new()),
         }
     }
-}
 
-pub trait Parser: Sync {
-    /// return the name of the parser
-    fn name(&self) -> &str;
+    pub fn parse(&self, run: SolverRun, pb_kind: &PBKind) -> Result<ParserRun, OutputParsingError> {
+        let SolverRun { record, state } = run;
 
-    /// Parse a single line of a solver output into one of the expected representations
-    fn parse_line(&self, line: &str) -> StatusLine;
+        let parsed_status = match state {
+            SolverState::Terminated(output) => match pb_kind {
+                PBKind::PBS => self.parse_pbs(&output)?,
+                PBKind::PBO => self.parse_pbo(&output)?,
+            },
+            SolverState::Timeout => ParsedStatus::TimeLimit,
+        };
 
-    /// Folds all the collected information into an aggregated result
+        Ok(ParserRun {
+            record,
+            parsed_status,
+        })
+    }
+    fn parse_pbs(&self, output: &Output) -> Result<ParsedStatus, OutputParsingError> {
+        let result = self.scan(output)?;
+        match result.status {
+            Some(s) => match s {
+                StatusKind::Optimum => Ok(ParsedStatus::Sat {
+                    conflicts: result.conflicts.unwrap_or(0),
+                    solution: result.solution.into(),
+                }),
+                StatusKind::Unsat => Ok(ParsedStatus::Unsat {
+                    conflicts: result.conflicts.unwrap_or(0),
+                }),
+                // only sat means we could not find optimum in given time limit
+                StatusKind::Sat => Ok(ParsedStatus::TimeLimit),
+                StatusKind::TimeLimit => Ok(ParsedStatus::TimeLimit),
+                StatusKind::Unknown(s) => Ok(ParsedStatus::Unknown { status: s }),
+            },
+            None => Err(OutputParsingError::StatusMissing),
+        }
+    }
+
+    fn parse_pbo(&self, output: &Output) -> Result<ParsedStatus, OutputParsingError> {
+        let result = self.scan(output)?;
+        match result.status {
+            Some(s) => match s {
+                StatusKind::Optimum => result
+                    .objective
+                    .ok_or(OutputParsingError::ObjectiveMissing)
+                    .map(|obj| ParsedStatus::Optimum {
+                        conflicts: result.conflicts.unwrap_or(0),
+                        solution: result.solution.into(),
+                        minimum: obj.into(),
+                    }),
+                StatusKind::Unsat => Ok(ParsedStatus::Unsat {
+                    conflicts: result.conflicts.unwrap_or(0),
+                }),
+                // only sat means we could not find optimum in given time limit
+                StatusKind::Sat => Ok(ParsedStatus::TimeLimit),
+                StatusKind::TimeLimit => Ok(ParsedStatus::TimeLimit),
+                StatusKind::Unknown(s) => Ok(ParsedStatus::Unknown { status: s }),
+            },
+            None => Err(OutputParsingError::StatusMissing),
+        }
+    }
+
     fn scan(&self, output: &Output) -> Result<ScannedResult, OutputParsingError> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         debug!("Output of program:\n {stdout}");
@@ -63,51 +112,82 @@ pub trait Parser: Sync {
             })
     }
 
-    fn parse_pbs(&self, output: &Output) -> Result<SolverStatus, OutputParsingError> {
-        let result = self.scan(output)?;
-        match result.status {
-            Some(s) => match s {
-                StatusKind::Optimum => Ok(SolverStatus::Sat {
-                    conflicts: result.conflicts.unwrap_or(0),
-                    solution: SolverSolution::PBS(result.solution.into()),
-                }),
-                StatusKind::Unsat => Ok(SolverStatus::Unsat {
-                    conflicts: result.conflicts.unwrap_or(0),
-                }),
-                // only sat means we could not find optimum in given time limit
-                StatusKind::Sat => Ok(SolverStatus::TimeLimit),
-                StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
-                StatusKind::Unknown(s) => Ok(SolverStatus::Unknown {
-                    solver_name: self.name().to_string(),
-                    status: s,
-                }),
-            },
-            None => Err(OutputParsingError::StatusMissing),
+    fn parse_line(&self, line: &str) -> StatusLine {
+        match self {
+            ParserImpl::Default(default_parser) => default_parser.parse_line(line),
+            ParserImpl::Scip(scip_parser) => scip_parser.parse_line(line),
         }
     }
-    fn parse_pbo(&self, output: &Output) -> Result<SolverStatus, OutputParsingError> {
-        let result = self.scan(output)?;
-        match result.status {
-            Some(s) => match s {
-                StatusKind::Optimum => result
-                    .objective
-                    .ok_or(OutputParsingError::ObjectiveMissing)
-                    .map(|obj| SolverStatus::Sat {
-                        conflicts: result.conflicts.unwrap_or(0),
-                        solution: SolverSolution::PBO(result.solution.into(), obj.into()),
-                    }),
-                StatusKind::Unsat => Ok(SolverStatus::Unsat {
-                    conflicts: result.conflicts.unwrap_or(0),
-                }),
-                // only sat means we could not find optimum in given time limit
-                StatusKind::Sat => Ok(SolverStatus::TimeLimit),
-                StatusKind::TimeLimit => Ok(SolverStatus::TimeLimit),
-                StatusKind::Unknown(s) => Ok(SolverStatus::Unknown {
-                    solver_name: self.name().to_string(),
-                    status: s,
-                }),
-            },
-            None => Err(OutputParsingError::StatusMissing),
+}
+
+pub struct ParserRun {
+    pub record: SolverExecutionRecord,
+    pub parsed_status: ParsedStatus,
+}
+
+pub enum ParsedStatus {
+    Sat {
+        conflicts: u32,
+        solution: SolutionModel,
+    },
+    Optimum {
+        conflicts: u32,
+        solution: SolutionModel,
+        minimum: MinObjectiveValue,
+    },
+
+    Unsat {
+        conflicts: u32,
+    },
+
+    TimeLimit,
+    Unknown {
+        status: String,
+    },
+}
+
+impl Display for ParsedStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParsedStatus::Sat {
+                conflicts,
+                solution,
+            } => {
+                writeln!(f, "Status: SAT")?;
+                writeln!(f, "Conflicts: {conflicts}")?;
+                writeln!(f, "Solution: {solution}")
+            }
+            ParsedStatus::Optimum {
+                conflicts,
+                solution,
+                minimum,
+            } => {
+                writeln!(f, "Status: Optimum found")?;
+                writeln!(f, "Conflicts: {conflicts}")?;
+                writeln!(f, "Solution: {solution}")?;
+                writeln!(f, "Minimum: {minimum}")
+            }
+            ParsedStatus::Unsat { conflicts } => {
+                writeln!(f, "Status: UNSAT")?;
+                writeln!(f, "Conflicts: {conflicts}")
+            }
+            ParsedStatus::TimeLimit => writeln!(f, "Status: TIMELIMIT"),
+            ParsedStatus::Unknown { status } => {
+                writeln!(f, "Status: Unknown")?;
+                writeln!(f, "Parsed: {status}")
+            }
+        }
+    }
+}
+
+impl ParsedStatus {
+    pub fn get_conflicts(&self) -> u32 {
+        match self {
+            ParsedStatus::Sat { conflicts, .. } => *conflicts,
+            ParsedStatus::Optimum { conflicts, .. } => *conflicts,
+            ParsedStatus::Unsat { conflicts } => *conflicts,
+            ParsedStatus::TimeLimit => 0,
+            ParsedStatus::Unknown { .. } => 0,
         }
     }
 }

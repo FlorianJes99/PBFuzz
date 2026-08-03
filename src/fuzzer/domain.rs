@@ -17,7 +17,7 @@ use thiserror::Error;
 pub struct LiteralIdent(u32);
 
 /// Wrapper type for the Minimum Objective in PBO
-#[derive(Debug, PartialOrd, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Copy)]
 pub struct MinObjectiveValue(i32);
 
 impl Display for MinObjectiveValue {

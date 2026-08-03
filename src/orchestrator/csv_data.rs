@@ -42,7 +42,8 @@ pub struct ComparisonRecord {
     pub problem_solving_duration_solver1_ms: f32,
     pub problem_solving_duration_solver2_ms: f32,
     pub problem_parsing_duration_ms: f32,
-    pub conflicts: u32,
+    pub conflicts1: u32,
+    pub conflicts2: u32,
     pub seed: u64,
 }
 
@@ -60,7 +61,8 @@ impl ComparisonRecord {
             problem_solving_duration_solver1_ms: self.problem_solving_duration_solver1_ms,
             problem_solving_duration_solver2_ms: self.problem_solving_duration_solver2_ms,
             problem_parsing_duration_ms: self.problem_parsing_duration_ms,
-            conflicts: self.conflicts,
+            conflicts1: self.conflicts1,
+            conflicts2: self.conflicts2,
             seed: self.seed,
         }
     }
@@ -75,7 +77,8 @@ pub struct IterationComparisonRecord {
     pub problem_solving_duration_solver1_ms: f32,
     pub problem_solving_duration_solver2_ms: f32,
     pub problem_parsing_duration_ms: f32,
-    pub conflicts: u32,
+    pub conflicts1: u32,
+    pub conflicts2: u32,
     pub seed: u64,
 }
 

@@ -6,11 +6,7 @@ use crate::orchestrator::parsing::parser::StatusLine;
 use std::collections::HashSet;
 use std::num::ParseFloatError;
 
-use crate::orchestrator::parsing::parser::Parser;
-
-pub struct ScipParser {
-    name: String,
-}
+pub struct ScipParser;
 
 #[derive(Debug, Error)]
 pub enum ScipParsingError {
@@ -29,8 +25,8 @@ pub enum ScipParsingError {
 }
 
 impl ScipParser {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Scip sometimes returns floats, which actually should be integers. This method will check for
@@ -51,14 +47,8 @@ impl ScipParser {
             })
         }
     }
-}
 
-impl Parser for ScipParser {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn parse_line(&self, line: &str) -> StatusLine {
+    pub fn parse_line(&self, line: &str) -> StatusLine {
         let line = line.trim();
 
         if line.contains("[infeasible]") {
