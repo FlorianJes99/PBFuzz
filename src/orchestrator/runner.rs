@@ -1,11 +1,12 @@
 use crate::fuzzer::app_info::MetaData;
+use crate::fuzzer::constraint_generator::ConstraintGenerationError;
 use crate::fuzzer::helpers::{move_files, remove_files, MoveFile, OFFSET};
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::evaluation::common::VerificationOutcome;
 use crate::orchestrator::evaluation::comparison::{compare_runs, ComparisonRun};
 use crate::orchestrator::evaluation::proof_checking::{verify_with_proof, ProofRun};
-use crate::orchestrator::parsing::parser::{ParserImpl, ParserRun};
+use crate::orchestrator::parsing::parser::{OutputParsingError, ParserImpl, ParserRun};
 use crate::orchestrator::solving::solver::{
     ExternalProgramError, NoProof, SolverExecutionRecord, WithProof,
 };
@@ -39,6 +40,7 @@ use csv::Writer;
 use log::{debug, error, info, warn};
 use rand::{self, RngExt};
 use serde::Serialize;
+use thiserror::Error;
 
 use crate::fuzzer::{helpers::print_block, pb_generator::PBGenerator};
 
@@ -195,7 +197,7 @@ impl Orchestrator {
             ctrc_flag.store(true, Ordering::Relaxed);
         })?;
         let count_runs = Arc::new(AtomicU32::new(0));
-        let (sender, receiver) = channel::<WorkResult>();
+        let (sender, receiver) = channel::<Result<WorkResult, WorkError>>();
         let start = Instant::now();
         thread::scope(|s| {
             for i in 1..=self.thread_count {
@@ -211,19 +213,15 @@ impl Orchestrator {
                             if stop_condition.is_done(iteration, start) {
                                 break;
                             }
-                            match work_iteration(
+                            let result = work_iteration(
                                 &self.fuzzer_output_dir,
                                 self.config.generate_settings(),
                                 &self.mode,
                                 meta_data,
                                 i,
-                            ) {
-                                Ok(work_result) => {
-                                    if let Err(e) = sender.send(work_result) {
-                                        error!("{e}");
-                                    }
-                                }
-                                Err(e) => error!("{e}"),
+                            );
+                            if let Err(e) = sender.send(result) {
+                                error!("{e}");
                             }
                         }
                     })
@@ -232,29 +230,44 @@ impl Orchestrator {
             // immediately drop the initial sender reference, only the clones inside the worker threads are kept alive
             drop(sender);
             let (mut random_count, mut from_solution_count) = (0, 0);
-            for (iteration, work_result) in receiver.iter().enumerate() {
+            for (iteration, res) in receiver.iter().enumerate() {
                 let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
-                match &work_result.generation_method {
-                    GenerationMethod::Random => random_count += 1,
-                    GenerationMethod::FromSolution => from_solution_count += 1,
+                match res {
+                    Ok(work_result) => {
+                        match &work_result.generation_method {
+                            GenerationMethod::Random => random_count += 1,
+                            GenerationMethod::FromSolution => from_solution_count += 1,
+                        }
+                        let percentage_range_sat = 0.20..0.7;
+                        if terminate_early(
+                            iteration,
+                            &work_result.generation_method,
+                            &stats,
+                            &percentage_range_sat,
+                        ) {
+                            println!("Terminating early!");
+                            println!(
+                                "Percentage SAT Instances not in range ({}..{})",
+                                percentage_range_sat.start, percentage_range_sat.end
+                            );
+                            cancelled.store(true, Ordering::Relaxed);
+                            // We don't break here, because we want to process the remaining running threads
+                            // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
+                        }
+                        self.process_result(work_result, iteration, &mut csv_writer, &mut stats);
+                    }
+                    Err(e) => handle_error(e, &mut stats),
                 }
-                let percentage_range_sat = 0.20..0.7;
-                if terminate_early(
-                    iteration,
-                    &work_result.generation_method,
-                    &stats,
-                    &percentage_range_sat,
-                ) {
-                    println!("Terminating early!");
-                    println!(
-                        "Percentage SAT Instances not in range ({}..{})",
-                        percentage_range_sat.start, percentage_range_sat.end
-                    );
-                    cancelled.store(true, Ordering::Relaxed);
-                    // We don't break here, because we want to process the remaining running threads
-                    // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
-                }
-                self.process_result(work_result, iteration, &mut csv_writer, &mut stats);
+
+                let elapsed_since_start = self.orchestrator_start.elapsed();
+                let (h, m, s) = get_hms_parts(&elapsed_since_start);
+                let throughput = iteration as f64 / elapsed_since_start.as_secs_f64();
+                #[rustfmt::skip]
+                let body = [
+                    format!("Throughput: {:.3} Iterations/s ({} threads)", throughput, self.thread_count),
+                    format!("Time elapsed: {}h {}m {}s", h, m, s),
+                ].join("\n");
+                print_block(&format!("Iteration {iteration}"), body);
             }
             let result = &mut csv_writer.flush();
             if let Err(err) = result {
@@ -308,15 +321,6 @@ impl Orchestrator {
         csv_writer: &mut Writer<File>,
         stats: &mut AccumulatedStatsAllRuns,
     ) {
-        let elapsed_since_start = self.orchestrator_start.elapsed();
-        let (h, m, s) = get_hms_parts(&elapsed_since_start);
-        let throughput = iteration as f64 / elapsed_since_start.as_secs_f64();
-        #[rustfmt::skip]
-        let body = [
-            format!("Throughput: {:.3} Iterations/s ({} threads)", throughput, self.thread_count),
-            format!("Time elapsed: {}h {}m {}s", h, m, s),
-        ].join("\n");
-        print_block(&format!("Iteration {iteration}"), body);
         let seed = work_result.record.get_seed();
         let outcome = work_result.outcome.get_outcome();
 
@@ -425,6 +429,11 @@ impl Orchestrator {
     }
 }
 
+fn handle_error(error: WorkError, stats: &mut AccumulatedStatsAllRuns) {
+    error!("{error}");
+    stats.errors += 1;
+}
+
 fn get_seed() -> u64 {
     rand::rng().random()
 }
@@ -475,7 +484,7 @@ fn work_iteration(
     mode: &OrchestrationMode,
     program_info: MetaData,
     thread_id: u8,
-) -> Result<WorkResult, Box<dyn Error>> {
+) -> Result<WorkResult, WorkError> {
     let start_worker = Instant::now();
     let seed = get_seed();
     let file_name = format!("{thread_id}_test_{seed}");
@@ -591,6 +600,17 @@ impl Outcome {
     }
 }
 
+#[derive(Debug, Error)]
+enum WorkError {
+    #[error("Error in fuzzer: {0}")]
+    Fuzzer(#[from] ConstraintGenerationError),
+    #[error("IO failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Solver failed: {0}")]
+    Solver(#[from] ExternalProgramError),
+    #[error("Parser failed: {0}")]
+    Parser(#[from] OutputParsingError),
+}
 struct WorkResult {
     start_worker: Instant,
     pb_file: PathBuf,
