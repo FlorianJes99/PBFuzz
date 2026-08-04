@@ -465,7 +465,7 @@ fn create_report<W: Write>(writer: &mut W, outcome: &Outcome) -> io::Result<()> 
         Outcome::Proof(proof_run) => write_run_data(&proof_run.parser_run)?,
     }
     writeln!(writer)?;
-    writeln!(writer, "{:=^50}", "Parsing")?;
+    writeln!(writer, "{:=^50}", "Outcome")?;
     writeln!(writer, "{}", outcome.get_outcome())
 }
 
@@ -598,11 +598,6 @@ struct WorkResult {
     outcome: Outcome,
     record: CsvRecord,
     generation_method: GenerationMethod,
-}
-
-pub enum CommandUsed {
-    Proof(String),
-    Comparison(String, String),
 }
 
 /// Cancel iterations of fuzzing runs
