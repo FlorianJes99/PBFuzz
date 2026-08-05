@@ -9,6 +9,7 @@ use crate::fuzzer::{
 use itertools::Itertools;
 use log::info;
 use std::time::Instant;
+use thiserror::Error;
 
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -36,8 +37,13 @@ impl PBGenerator {
         seed: u64,
         settings: PbSetting,
         program_info: MetaData,
-    ) -> Result<PBGrammar, ConstraintGenerationError> {
-        Self::new(seed, settings).random_grammar(program_info)
+    ) -> Result<PBGrammar, PbGenerationError> {
+        Self::new(seed, settings)
+            .random_grammar(program_info)
+            .map_err(|e| PbGenerationError {
+                seed,
+                error_type: e,
+            })
     }
 
     fn random_grammar(
@@ -177,4 +183,12 @@ fn distinct_literal_ids(constraints: &[Box<dyn Constraint>]) -> Vec<LiteralIdent
         .map(|a| a.literal_id)
         .unique()
         .collect()
+}
+
+#[derive(Debug, Error)]
+#[error("Error while generating pb problem with seed {seed}: {error_type}")]
+pub struct PbGenerationError {
+    seed: u64,
+    #[source]
+    error_type: ConstraintGenerationError,
 }

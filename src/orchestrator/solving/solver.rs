@@ -46,8 +46,8 @@ impl<P> SolverData<P> {
         &self.name
     }
 
-    fn external_execution_error(&self, source: std::io::Error) -> ExternalProgramError {
-        ExternalProgramError::ExecutionFailed {
+    fn external_execution_error(&self, source: std::io::Error) -> SolverExecutionFailed {
+        SolverExecutionFailed {
             program: self.get_name().into(),
             source,
         }
@@ -96,10 +96,10 @@ impl SolverData<WithProof> {
     pub fn into_proof_solver(
         config: SolverConfig,
         timelimit: Duration,
-    ) -> Result<Self, ExternalProgramError> {
+    ) -> Result<Self, MissingProofLoggingArgument> {
         config
             .proof_arg
-            .ok_or(ExternalProgramError::MissingProofLoggingArgument {
+            .ok_or(MissingProofLoggingArgument {
                 program: config.name.clone(),
             })
             .map(|proof_arg| Self {
@@ -117,7 +117,7 @@ impl SolverData<WithProof> {
         file_path_pb: &Path,
         file_path_proof: &Path,
         with_option_fuzzing: bool,
-    ) -> Result<SolverRun, ExternalProgramError> {
+    ) -> Result<SolverRun, SolverExecutionFailed> {
         let mut command = Command::new(self.binary.as_os_str());
         // TODO: remove later, when profiling analysis is done
         let _prof_file_name = file_path_pb
@@ -166,7 +166,7 @@ impl SolverData<NoProof> {
         &self,
         file_path: &Path,
         with_option_fuzzing: bool,
-    ) -> Result<SolverRun, ExternalProgramError> {
+    ) -> Result<SolverRun, SolverExecutionFailed> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
             command.arg(arg);
@@ -187,15 +187,19 @@ impl SolverData<NoProof> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SolverExecutionRecord {
     pub name: String,
     pub used_command: String,
 }
+
+#[derive(Debug)]
 pub struct SolverRun {
     pub record: SolverExecutionRecord,
     pub state: SolverState,
 }
 
+#[derive(Debug)]
 pub enum SolverState {
     Terminated(Output),
     Timeout,
@@ -210,13 +214,15 @@ fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display
 }
 
 #[derive(Debug, Error)]
-pub enum ExternalProgramError {
-    #[error("{program}: failed to execute: {source}")]
-    ExecutionFailed {
-        program: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("{program}: missing required proof logging argument")]
-    MissingProofLoggingArgument { program: String },
+#[error("{program}: missing required proof logging argument")]
+pub struct MissingProofLoggingArgument {
+    program: String,
+}
+
+#[derive(Debug, Error)]
+#[error("{program}: failed to execute: {source}")]
+pub struct SolverExecutionFailed {
+    program: String,
+    #[source]
+    source: std::io::Error,
 }

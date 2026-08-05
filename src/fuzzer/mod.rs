@@ -1,6 +1,6 @@
 pub mod app_info;
 pub mod constraint;
-pub mod constraint_generator;
+mod constraint_generator;
 pub mod domain;
 pub mod fuzzer_args;
 pub mod grammar;

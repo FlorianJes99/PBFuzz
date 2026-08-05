@@ -1,14 +1,17 @@
 use crate::fuzzer::app_info::MetaData;
-use crate::fuzzer::constraint_generator::ConstraintGenerationError;
-use crate::fuzzer::helpers::{move_files, remove_files, MoveFile, OFFSET};
+use crate::fuzzer::helpers::{move_file, move_files, remove_files, MoveFile, OFFSET};
+use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::evaluation::common::VerificationOutcome;
 use crate::orchestrator::evaluation::comparison::{compare_runs, ComparisonRun};
 use crate::orchestrator::evaluation::proof_checking::{verify_with_proof, ProofRun};
-use crate::orchestrator::parsing::parser::{OutputParsingError, ParserImpl, ParserRun};
+use crate::orchestrator::folders::ERROR_FOLDER;
+use crate::orchestrator::parsing::parser::{
+    OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
+};
 use crate::orchestrator::solving::solver::{
-    ExternalProgramError, NoProof, SolverExecutionRecord, WithProof,
+    MissingProofLoggingArgument, NoProof, SolverExecutionFailed, SolverExecutionRecord, WithProof,
 };
 use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
@@ -140,7 +143,7 @@ impl SolverAndParser<WithProof> {
     fn from_config_proof(
         config: SolverConfig,
         timelimit: Duration,
-    ) -> Result<Self, ExternalProgramError> {
+    ) -> Result<Self, MissingProofLoggingArgument> {
         let parser = ParserImpl::from_kind(&config.parser_kind);
         Ok(Self {
             solver: SolverData::into_proof_solver(config, timelimit)?,
@@ -256,7 +259,7 @@ impl Orchestrator {
                         }
                         self.process_result(work_result, iteration, &mut csv_writer, &mut stats);
                     }
-                    Err(e) => handle_error(e, &mut stats),
+                    Err(e) => self.handle_error(e, &mut stats),
                 }
 
                 let elapsed_since_start = self.orchestrator_start.elapsed();
@@ -427,11 +430,41 @@ impl Orchestrator {
             .join("settings.toml");
         File::create(file_name).and_then(|mut f| f.write_all(data.as_bytes()))
     }
-}
 
-fn handle_error(error: WorkError, stats: &mut AccumulatedStatsAllRuns) {
-    error!("{error}");
-    stats.errors += 1;
+    fn handle_error(&self, error: WorkError, stats: &mut AccumulatedStatsAllRuns) {
+        error!("{error}");
+        stats.errors += 1;
+        let context = &error.context;
+        if let Some(f) = &context.pb_file {
+            let dest = self
+                .fuzzer_output_dir
+                .join(format!("{}/{}_error.opb", ERROR_FOLDER.name, context.seed));
+            if let Err(e) = move_file(f, &dest) {
+                error!("{e}");
+            }
+        }
+        if let Some(f) = &context.proof_file {
+            let dest = self
+                .fuzzer_output_dir
+                .join(format!("{}/{}_error.pbp", ERROR_FOLDER.name, context.seed));
+            if let Err(e) = move_file(f, &dest) {
+                error!("{e}");
+            }
+        }
+        let report_path = self.fuzzer_output_dir.join(format!(
+            "{}/{}_error_report.md",
+            ERROR_FOLDER.name, context.seed
+        ));
+        if let Ok(mut w) = File::create(&report_path).map(BufWriter::new) {
+            let _ = writeln!(w, "Seed: {}", context.seed);
+            let _ = writeln!(w, "Error: {error}");
+            for (i, run) in context.solver_runs.iter().enumerate() {
+                let _ = writeln!(w, "Solver {}: {} — {}", i + 1, run.name, run.used_command);
+            }
+        } else {
+            error!("Failed to create error report for seed {}", context.seed);
+        }
+    }
 }
 
 fn get_seed() -> u64 {
@@ -490,10 +523,15 @@ fn work_iteration(
     let file_name = format!("{thread_id}_test_{seed}");
     let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
     debug!("Running Fuzzer with seed {seed}...");
-    let grammar = PBGenerator::create_grammar(seed, settings, program_info)?;
+    let mut context = WorkErrorContext::new(seed);
+    let grammar = PBGenerator::create_grammar(seed, settings, program_info)
+        .map_err(|kind| context.clone().into_error(kind.into()))?;
     let duration_write_to_file = File::create(&output_file)
         .map(BufWriter::new)
-        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))?;
+        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
+        .map_err(|e| context.clone().into_error(e.into()))?;
+
+    context.pb_file = Some(output_file.clone());
     let grammar_statistics = grammar.get_statistics();
     let output_generation_duration =
         *grammar_statistics.get_generation_time() + duration_write_to_file;
@@ -519,16 +557,33 @@ fn work_iteration(
                 solver: s2,
                 parser: p2,
             } = p2;
-            let output_bin1 = s1.run(&output_file, with_option_fuzzing)?;
+            let output_bin1 = s1
+                .run(&output_file, with_option_fuzzing)
+                .map_err(|e| context.clone().into_error(e.into()))?;
             let time_bin1 = start_bin1.elapsed();
 
+            context.solver_runs = vec![output_bin1.record.clone()];
+
             let start_bin2 = Instant::now();
-            let output_bin2 = s2.run(&output_file, with_option_fuzzing)?;
+            let output_bin2 = s2
+                .run(&output_file, with_option_fuzzing)
+                .map_err(|e| context.clone().into_error(e.into()))?;
             let time_bin2 = start_bin2.elapsed();
 
+            context.solver_runs = context
+                .solver_runs
+                .into_iter()
+                .chain(vec![output_bin1.record.clone()])
+                .collect();
+
             let start_output_extraction = Instant::now();
-            let r1 = p1.parse(output_bin1, pb_kind)?;
-            let r2 = p2.parse(output_bin2, pb_kind)?;
+            let r1 = p1
+                .parse(output_bin1, pb_kind)
+                .map_err(|e| context.clone().into_error(e.into()))?;
+            context.parser_status = Some(r1.parsed_status.clone());
+            let r2 = p2
+                .parse(output_bin2, pb_kind)
+                .map_err(|e| context.into_error(e.into()))?;
             let conflicts1 = r1.parsed_status.get_conflicts();
             let conflicts2 = r2.parsed_status.get_conflicts();
             let comparison_run = compare_runs(r1, r2, &grammar);
@@ -556,10 +611,19 @@ fn work_iteration(
             let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
             let problem_solving_start = Instant::now();
             let SolverAndParser { solver, parser } = solver_and_parser;
-            let output = solver.run_with_proof(&output_file, &proof_file, with_option_fuzzing)?;
+            let output = solver
+                .run_with_proof(&output_file, &proof_file, with_option_fuzzing)
+                .map_err(|e| context.clone().into_error(e.into()))?;
             let problem_solving_duration = problem_solving_start.elapsed();
+            let context = WorkErrorContext {
+                solver_runs: vec![output.record.clone()],
+                proof_file: Some(proof_file.clone()),
+                ..context
+            };
             let start_output_parsing = Instant::now();
-            let r = parser.parse(output, pb_kind)?;
+            let r = parser
+                .parse(output, pb_kind)
+                .map_err(|e| context.into_error(e.into()))?;
             let duration_output_parsing = start_output_parsing.elapsed();
             let conflicts = r.parsed_status.get_conflicts();
             let proof_checking_start = Instant::now();
@@ -600,17 +664,6 @@ impl Outcome {
     }
 }
 
-#[derive(Debug, Error)]
-enum WorkError {
-    #[error("Error in fuzzer: {0}")]
-    Fuzzer(#[from] ConstraintGenerationError),
-    #[error("IO failed: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Solver failed: {0}")]
-    Solver(#[from] ExternalProgramError),
-    #[error("Parser failed: {0}")]
-    Parser(#[from] OutputParsingError),
-}
 struct WorkResult {
     start_worker: Instant,
     pb_file: PathBuf,
@@ -618,6 +671,55 @@ struct WorkResult {
     outcome: Outcome,
     record: CsvRecord,
     generation_method: GenerationMethod,
+}
+
+#[derive(Debug, Error)]
+struct WorkError {
+    context: WorkErrorContext,
+    kind: WorkErrorKind,
+}
+
+impl Display for WorkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "[seed={}] {}", self.context.seed, self.kind)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkErrorContext {
+    seed: u64,
+    pb_file: Option<PathBuf>,
+    proof_file: Option<PathBuf>,
+    solver_runs: Vec<SolverExecutionRecord>,
+    parser_status: Option<ParsedStatus>,
+}
+
+impl WorkErrorContext {
+    fn new(seed: u64) -> Self {
+        WorkErrorContext {
+            seed,
+            ..Default::default()
+        }
+    }
+
+    fn into_error(self, kind: WorkErrorKind) -> WorkError {
+        WorkError {
+            context: self,
+            kind,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+enum WorkErrorKind {
+    #[error("Error in fuzzer: {0}")]
+    Fuzzer(#[from] PbGenerationError),
+    #[error("IO failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Solver failed: {0}")]
+    Solver(#[from] SolverExecutionFailed),
+    #[error("Parser failed: {0}")]
+    Parser(#[from] OutputParsingError),
 }
 
 /// Cancel iterations of fuzzing runs

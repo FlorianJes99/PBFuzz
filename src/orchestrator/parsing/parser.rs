@@ -125,6 +125,7 @@ pub struct ParserRun {
     pub parsed_status: ParsedStatus,
 }
 
+#[derive(Debug, Clone)]
 pub enum ParsedStatus {
     Sat {
         conflicts: u32,
@@ -241,13 +242,12 @@ pub enum OutputParsingError {
         #[source]
         source: ParseLiteralError,
     },
-    #[error("Faile to parse line {line} into valid objective: source: {source}")]
+    #[error("Failed to parse line {line} into valid objective: source: {source}")]
     ParseObjective {
         line: String,
         #[source]
         source: ParseIntError,
     },
-    // TODO: get rid of circular dependency
     #[error("Parsing scip output failed")]
     Scip(#[from] ScipParsingError),
 }
