@@ -1,5 +1,5 @@
 binary = "software/hitpbo"
-args = ["--no-rc"]
+args = ["--proof-compatible"]
 name = "hitpbo"
 parser_kind = "Default"
-# proof_arg = "--proof-log="
+proof_arg = "--prooffile"

@@ -20,7 +20,47 @@ pub struct NoProof;
 
 /// Marker for Solvers, which can generate proofs
 pub struct WithProof {
-    proof_arg: String,
+    proof_arg: ProofArg,
+}
+
+enum ProofArg {
+    Joined(String),
+    Separate(String),
+}
+
+impl Display for ProofArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ProofArg::Joined(s) => s,
+                ProofArg::Separate(s) => s,
+            }
+        )
+    }
+}
+
+impl ProofArg {
+    pub fn new(arg: String) -> Self {
+        // TODO: ugly hack, look for better solution
+        if arg.ends_with("=") {
+            ProofArg::Joined(arg)
+        } else {
+            ProofArg::Separate(arg)
+        }
+    }
+
+    fn apply(&self, command: &mut Command, proof_file: &Path) {
+        match self {
+            ProofArg::Joined(prefix) => {
+                command.arg(format!("{prefix}{}", proof_file.display()));
+            }
+            ProofArg::Separate(flag) => {
+                command.args([flag.as_str(), &proof_file.display().to_string()]);
+            }
+        }
+    }
 }
 
 /// This struct holds all the relevant data in order to execute a Solver
@@ -108,7 +148,9 @@ impl SolverData<WithProof> {
                 optional_args: config.optional_args,
                 name: config.name.clone(),
                 timelimit,
-                proof: WithProof { proof_arg },
+                proof: WithProof {
+                    proof_arg: ProofArg::new(proof_arg),
+                },
             })
     }
 
@@ -126,11 +168,7 @@ impl SolverData<WithProof> {
             .display();
         // add_profiling_to_command(&mut command, &prof_file_name);
 
-        command.arg(format!(
-            "{}{}",
-            self.proof.proof_arg,
-            file_path_proof.display()
-        ));
+        self.proof.proof_arg.apply(&mut command, file_path_proof);
 
         for arg in &self.args {
             command.arg(arg);
@@ -191,6 +229,13 @@ impl SolverData<NoProof> {
 pub struct SolverExecutionRecord {
     pub name: String,
     pub used_command: String,
+}
+
+impl Display for SolverExecutionRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let SolverExecutionRecord { name, used_command } = &self;
+        write!(f, "Solver {}: {}", name, used_command)
+    }
 }
 
 #[derive(Debug)]

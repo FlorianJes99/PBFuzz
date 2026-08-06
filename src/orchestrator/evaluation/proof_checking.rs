@@ -31,7 +31,7 @@ pub fn verify_with_proof(
             conflicts: _,
             solution,
             ..
-        } => match grammar.verify_solution(&solution) {
+        } => match grammar.verify_solution(solution) {
             Err(e) => VerificationOutcome::Bug(wrap_violation(e, parser_run.record.name.clone())),
             Ok(()) => match check_proof(formula, derivation) {
                 Err(e) => VerificationOutcome::Bug(BugReason::ProofCheckerFailed(e)),

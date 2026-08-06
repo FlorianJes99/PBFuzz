@@ -1,5 +1,17 @@
 binary = "software/Exact"
-args = ["--print-sol", "--print-uniform=0", "--timeout=6"]
+args = ["--print-sol", "--print-uniform=0"] # "--timeout=6", exact outputs UNKNOWN when timeouting
 name = "exact"
 parser_kind = "Default"
 proof_arg = "--proof-log="
+
+[optional_args]
+
+args = [
+    { arg_name = "--var-constraint=", arg_type = { Values = ["conflict", "learned", "both"]} },
+    { arg_name = "--var-random=", arg_type = { Values = ["off", "restart", "inprocess"]} },
+    { arg_name = "--var-polarity=", arg_type = { Values = ["phase", "inverse", "random"] } },
+    { arg_name = "--db-cleaning=", arg_type = { Values = ["random", "lbd", "activity", "combo"] } },
+    { arg_name = "--db-weight=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--ca-division=", arg_type = { Values = ["rto", "slack+1", "mindiv"] } },
+]
+space_separated = false

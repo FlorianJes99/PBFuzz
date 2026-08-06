@@ -37,11 +37,11 @@ fn compare_status(r1: &ParserRun, r2: &ParserRun, grammar: &PBGrammar) -> Verifi
                 solution: s2,
             },
         ) => {
-            if let Err(e) = grammar.verify_solution(&s1) {
+            if let Err(e) = grammar.verify_solution(s1) {
                 return VerificationOutcome::Bug(wrap_violation(e, r1.record.name.clone()));
             }
 
-            if let Err(e) = grammar.verify_solution(&s2) {
+            if let Err(e) = grammar.verify_solution(s2) {
                 return VerificationOutcome::Bug(wrap_violation(e, r2.record.name.clone()));
             }
             VerificationOutcome::Sat
@@ -58,11 +58,11 @@ fn compare_status(r1: &ParserRun, r2: &ParserRun, grammar: &PBGrammar) -> Verifi
                 minimum: m2,
             },
         ) => {
-            if let Err(e) = grammar.verify_solution(&s1) {
+            if let Err(e) = grammar.verify_solution(s1) {
                 return VerificationOutcome::Bug(wrap_violation(e, r1.record.name.clone()));
             }
 
-            if let Err(e) = grammar.verify_solution(&s2) {
+            if let Err(e) = grammar.verify_solution(s2) {
                 return VerificationOutcome::Bug(wrap_violation(e, r2.record.name.clone()));
             }
             if m1 != m2 {

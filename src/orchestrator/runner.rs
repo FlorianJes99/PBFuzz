@@ -200,7 +200,7 @@ impl Orchestrator {
             ctrc_flag.store(true, Ordering::Relaxed);
         })?;
         let count_runs = Arc::new(AtomicU32::new(0));
-        let (sender, receiver) = channel::<Result<WorkResult, WorkError>>();
+        let (sender, receiver) = channel::<Result<WorkResult, Box<WorkError>>>();
         let start = Instant::now();
         thread::scope(|s| {
             for i in 1..=self.thread_count {
@@ -259,7 +259,7 @@ impl Orchestrator {
                         }
                         self.process_result(work_result, iteration, &mut csv_writer, &mut stats);
                     }
-                    Err(e) => self.handle_error(e, &mut stats),
+                    Err(e) => self.handle_error(*e, &mut stats),
                 }
 
                 let elapsed_since_start = self.orchestrator_start.elapsed();
@@ -458,8 +458,8 @@ impl Orchestrator {
         if let Ok(mut w) = File::create(&report_path).map(BufWriter::new) {
             let _ = writeln!(w, "Seed: {}", context.seed);
             let _ = writeln!(w, "Error: {error}");
-            for (i, run) in context.solver_runs.iter().enumerate() {
-                let _ = writeln!(w, "Solver {}: {} — {}", i + 1, run.name, run.used_command);
+            for run in context.solver_runs.iter() {
+                let _ = writeln!(w, "{run}");
             }
         } else {
             error!("Failed to create error report for seed {}", context.seed);
@@ -517,7 +517,7 @@ fn work_iteration(
     mode: &OrchestrationMode,
     program_info: MetaData,
     thread_id: u8,
-) -> Result<WorkResult, WorkError> {
+) -> Result<WorkResult, Box<WorkError>> {
     let start_worker = Instant::now();
     let seed = get_seed();
     let file_name = format!("{thread_id}_test_{seed}");
@@ -541,7 +541,7 @@ fn work_iteration(
     );
 
     let pb_kind = settings.get_problem_kind();
-    let with_option_fuzzing = rand::random_bool(0.1); // option fuzzing with 10% probability
+    let with_option_fuzzing = rand::random_bool(0.3); // option fuzzing with 10% probability
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
