@@ -3,3 +3,18 @@ args = ["--proof-compatible"]
 name = "hitpbo"
 parser_kind = "Default"
 proof_arg = "--prooffile"
+
+[optional_args]
+
+args = [
+    { arg_name = "--learn-cores" },
+    { arg_name = "--min" },
+    { arg_name = "--cs" },
+    # { arg_name = "--break-symmetries" }, NOT IMPLEMENTED FOR PROOF LOGGING
+    { arg_name = "--ce-oracle", arg_type = { Values = ["roundingsat", "exact", "satsolver"]} },
+    { arg_name = "--ce-strategy", arg_type = { Values = ["obo", "disjoint", "wce", "wce2", "hit-once"]} },
+    { arg_name = "--optimizer", arg_type = { Values = ["scip", "roundingsat-sh", "roundingsat-ss", "roundingsat-cg", "localsearch", "greedy"]} },
+
+    # { arg_name = "--db-weight=", arg_type = { FloatRange = [0.0, 1.0] } },
+]
+space_separated = true
