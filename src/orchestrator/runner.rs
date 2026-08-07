@@ -327,19 +327,18 @@ impl Orchestrator {
         let seed = work_result.record.get_seed();
         let outcome = work_result.outcome.get_outcome();
 
+        let outcome_folder = outcome.get_sub_folder(&self.fuzzer_output_dir);
+
+        if !outcome_folder.exists() && let Err(e) = std::fs::create_dir(&outcome_folder) {
+            error!("{e}");
+        }
         match outcome {
             VerificationOutcome::Sat
             | VerificationOutcome::Unsat
             | VerificationOutcome::Timelimit => {}
             VerificationOutcome::Bug(bug_reason) => {
                 info!("Found bug with seed {})!\nBug: {}", seed, bug_reason);
-                let file = self.fuzzer_output_dir.join(format!(
-                    "{}/{}_{}_{}_report.md",
-                    outcome.get_folder_name(),
-                    outcome.get_file_name_prefix(),
-                    seed,
-                    iteration
-                ));
+                let file = outcome_folder.join(format!("{}_{}_report.md", seed, iteration));
                 let writer = File::create(file).map(BufWriter::new);
                 match writer {
                     Ok(mut w) => {
@@ -352,13 +351,7 @@ impl Orchestrator {
             }
             VerificationOutcome::Unknown => {
                 warn!("Solver outputted 'Unknown'");
-                let file = self.fuzzer_output_dir.join(format!(
-                    "{}/{}_{}_{}_report.md",
-                    outcome.get_folder_name(),
-                    outcome.get_file_name_prefix(),
-                    seed,
-                    iteration
-                ));
+                let file = outcome_folder.join(format!("{}_{}_report.md", seed, iteration));
                 let writer = File::create(file).map(BufWriter::new);
                 match writer {
                     Ok(mut w) => {
@@ -372,22 +365,11 @@ impl Orchestrator {
         }
         let mut files_to_move = vec![];
         let output_file = work_result.pb_file;
-        let new_file_location = self.fuzzer_output_dir.join(format!(
-            "{}/{}_{}_{}.opb",
-            outcome.get_folder_name(),
-            outcome.get_file_name_prefix(),
-            seed,
-            iteration
-        ));
+        let new_file_location = outcome_folder.join(format!("{}_{}.opb", seed, iteration));
         files_to_move.push(MoveFile::new(output_file, new_file_location));
         if let Some(proof_file) = work_result.proof_file {
-            let new_file_location_proof = self.fuzzer_output_dir.join(format!(
-                "{}/{}_{}_{}.pbp",
-                outcome.get_folder_name(),
-                outcome.get_file_name_prefix(),
-                seed,
-                iteration
-            ));
+            let new_file_location_proof =
+                outcome_folder.join(format!("{}_{}.pbp", seed, iteration));
             files_to_move.push(MoveFile::new(proof_file, new_file_location_proof));
         }
         let file_manipulation_result = match outcome {
@@ -435,26 +417,26 @@ impl Orchestrator {
         error!("{error}");
         stats.errors += 1;
         let context = &error.context;
-        if let Some(f) = &context.pb_file {
-            let dest = self
-                .fuzzer_output_dir
-                .join(format!("{}/{}_error.opb", ERROR_FOLDER.name, context.seed));
-            if let Err(e) = move_file(f, &dest) {
+        let folder = self
+            .fuzzer_output_dir
+            .join(ERROR_FOLDER.name)
+            .join(error.kind.get_folder_name());
+        if !folder.exists() && let Err(e) = std::fs::create_dir(&folder) {
+            error!("{e}");
+        }
+        if let Some(pb_file) = &context.pb_file {
+            let dest = folder.join(format!("{}_error.opb", context.seed));
+            if let Err(e) = move_file(pb_file, &dest) {
                 error!("{e}");
             }
         }
-        if let Some(f) = &context.proof_file {
-            let dest = self
-                .fuzzer_output_dir
-                .join(format!("{}/{}_error.pbp", ERROR_FOLDER.name, context.seed));
-            if let Err(e) = move_file(f, &dest) {
+        if let Some(proof_file) = &context.proof_file {
+            let dest = folder.join(format!("{}_error.pbp", context.seed));
+            if let Err(e) = move_file(proof_file, &dest) {
                 error!("{e}");
             }
         }
-        let report_path = self.fuzzer_output_dir.join(format!(
-            "{}/{}_error_report.md",
-            ERROR_FOLDER.name, context.seed
-        ));
+        let report_path = folder.join(format!("{}_error_report.md", context.seed));
         if let Ok(mut w) = File::create(&report_path).map(BufWriter::new) {
             let _ = writeln!(w, "Seed: {}", context.seed);
             let _ = writeln!(w, "Error: {error}");
@@ -720,6 +702,17 @@ enum WorkErrorKind {
     Solver(#[from] SolverExecutionFailed),
     #[error("Parser failed: {0}")]
     Parser(#[from] OutputParsingError),
+}
+
+impl WorkErrorKind {
+    fn get_folder_name(&self) -> &'static str {
+        match self {
+            WorkErrorKind::Fuzzer(_) => "fuzzer",
+            WorkErrorKind::Io(_) => "io",
+            WorkErrorKind::Solver(_) => "solver",
+            WorkErrorKind::Parser(_) => "parser",
+        }
+    }
 }
 
 /// Cancel iterations of fuzzing runs

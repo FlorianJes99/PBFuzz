@@ -194,7 +194,7 @@ impl ParsedStatus {
 }
 
 #[derive(Default, Debug)]
-pub struct ScannedResult {
+struct ScannedResult {
     status: Option<StatusKind>,
     solution: HashSet<LiteralIdent>,
     objective: Option<i32>,

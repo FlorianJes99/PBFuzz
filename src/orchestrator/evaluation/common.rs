@@ -1,4 +1,7 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+};
 
 use thiserror::Error;
 
@@ -40,7 +43,20 @@ impl VerificationOutcome {
         }
     }
 
-    pub fn get_folder_name(&self) -> &'static str {
+    /// Creates a specific sub folder given the outcome and a current base path
+    ///
+    /// The folder maps to the different values of this enum.
+    /// In the case of a bug, there are aditional subfolders based on the kind of the bug
+    pub fn get_sub_folder(&self, path: &Path) -> PathBuf {
+        let mut path = path.to_path_buf();
+        path.push(self.get_folder_name());
+        if let VerificationOutcome::Bug(r) = self {
+            path.push(r.get_sub_folder());
+        };
+        path
+    }
+
+    fn get_folder_name(&self) -> &'static str {
         match self {
             VerificationOutcome::Sat => SAT_FOLDER.name,
             VerificationOutcome::Unsat => UNSAT_FOLDER.name,
@@ -48,10 +64,6 @@ impl VerificationOutcome {
             VerificationOutcome::Bug(_) => BUG_FOLDER.name,
             VerificationOutcome::Unknown => UNKNOWN_FOLDER.name,
         }
-    }
-
-    pub fn get_file_name_prefix(&self) -> &'static str {
-        self.get_folder_name()
     }
 }
 
@@ -102,4 +114,15 @@ pub enum BugReason {
     OutputStatusDiffers(String, String),
     #[error(transparent)]
     ProofCheckerFailed(ProofError),
+}
+
+impl BugReason {
+    pub fn get_sub_folder(&self) -> &'static str {
+        match self {
+            BugReason::Solution(_) => "solution",
+            BugReason::DifferentObjectives(_, _) => "objectives",
+            BugReason::OutputStatusDiffers(_, _) => "status",
+            BugReason::ProofCheckerFailed(_) => "proof_failed",
+        }
+    }
 }
