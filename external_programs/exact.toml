@@ -5,13 +5,74 @@ parser_kind = "Default"
 proof_arg = "--proof-log="
 
 [optional_args]
-
 args = [
-    { arg_name = "--var-constraint=", arg_type = { Values = ["conflict", "learned", "both"]} },
-    { arg_name = "--var-random=", arg_type = { Values = ["off", "restart", "inprocess"]} },
+    # { arg_name = "--seed=", arg_type = { IntRange = [1, 100000] } },
+
+    { arg_name = "--luby-base=", arg_type = { FloatRange = [1.0, 10.0] } },
+    { arg_name = "--luby-mult=", arg_type = { IntRange = [1, 1000] } },
+
+    { arg_name = "--var-constraint=", arg_type = { Values = ["conflict", "learned", "both"] } },
+    { arg_name = "--var-weight=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--var-assump=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--var-random=", arg_type = { Values = ["off", "restart", "inprocess"] } },
+    { arg_name = "--var-watchlist=", arg_type = { Values = ["0", "1"] } },
     { arg_name = "--var-polarity=", arg_type = { Values = ["phase", "inverse", "random"] } },
+
+    { arg_name = "--db-base=", arg_type = { IntRange = [1, 10000] } },
+    { arg_name = "--db-exp=", arg_type = { FloatRange = [0.0, 5.0] } },
+    { arg_name = "--db-scale=", arg_type = { FloatRange = [0.01, 2000.0] } },
     { arg_name = "--db-cleaning=", arg_type = { Values = ["random", "lbd", "activity", "combo"] } },
-    { arg_name = "--db-weight=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--db-weight=", arg_type = { FloatRange = [0.01, 1.0] } },
+    { arg_name = "--db-assump=", arg_type = { Values = ["0", "1"] } },
+
+    { arg_name = "--ca-multweaken=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--ca-multiply=", arg_type = { Values = ["0", "1"] } },
     { arg_name = "--ca-division=", arg_type = { Values = ["rto", "slack+1", "mindiv"] } },
+    { arg_name = "--ca-weaken-nonimplying=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--ca-min=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--ca-cancelingunknowns=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--ca-weakenfully=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--ca-subsetsum=", arg_type = { IntRange = [0, 1000000] } },
+    { arg_name = "--ca-skipresolution=", arg_type = { Values = ["0", "1"] } },
+
+    { arg_name = "--bits-overflow=", arg_type = { IntRange = [0, 62] } },
+    { arg_name = "--bits-reduced=", arg_type = { IntRange = [0, 62] } },
+    { arg_name = "--bits-learned=", arg_type = { IntRange = [0, 62] } },
+
+    { arg_name = "--opt-ratio=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--opt-coreguided=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--opt-reusecores=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--opt-stratification=", arg_type = { IntRange = [0, 1000] } },
+    { arg_name = "--opt-precision=", arg_type = { IntRange = [0, 1000] } },
+
+    { arg_name = "--int-encoding=", arg_type = { Values = ["log", "order", "onehot"] } },
+    { arg_name = "--int-continuous=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--int-unbounded=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--int-defbound=", arg_type = { FloatRange = [1.0, 1000000.0] } },
+
+    { arg_name = "--inp-purelits=", arg_type = { Values = ["0", "1"] } },
+    # --inp-dombreaklim and --inp-symmetry: "*DO NOT COMBINE WITH SYMMETRY
+    # BREAKING UNITS FOR NOW*" per help text - keep them but never enable
+    # both nonzero at once in a single fuzz run
+    { arg_name = "--inp-dombreaklim=", arg_type = { IntRange = [-1, 100] } },
+    { arg_name = "--inp-symmetry=", arg_type = { IntRange = [0, 2] } },
+    { arg_name = "--inp-probing=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--inp-atmostone=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--inp-basetime=", arg_type = { FloatRange = [0.0, 10.0] } },
+
+    # { arg_name = "--proof-assumptions=", arg_type = { Values = ["0", "1"] } }, GENERATES INCOMPLETE PROOFS
+    # { arg_name = "--ls=", arg_type = { Values = ["0", "1"] } }, PARALLEL THREAD, INTERACTION WITH PROOF LOGGING UNVERIFIED
 ]
 space_separated = false
+
+# [optional_args]
+
+# args = [
+#     { arg_name = "--var-constraint=", arg_type = { Values = ["conflict", "learned", "both"]} },
+#     { arg_name = "--var-random=", arg_type = { Values = ["off", "restart", "inprocess"]} },
+#     { arg_name = "--var-polarity=", arg_type = { Values = ["phase", "inverse", "random"] } },
+#     { arg_name = "--db-cleaning=", arg_type = { Values = ["random", "lbd", "activity", "combo"] } },
+#     { arg_name = "--db-weight=", arg_type = { FloatRange = [0.0, 1.0] } },
+#     { arg_name = "--ca-division=", arg_type = { Values = ["rto", "slack+1", "mindiv"] } },
+# ]
+# space_separated = false

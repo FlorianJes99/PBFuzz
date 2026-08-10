@@ -1,20 +1,50 @@
 binary = "software/hitpbo"
-args = ["--proof-compatible"]
+args = [] # "--proof-compatible"]
 name = "hitpbo"
 parser_kind = "Default"
 proof_arg = "--prooffile"
 
 [optional_args]
-
 args = [
     { arg_name = "--learn-cores" },
-    { arg_name = "--min" },
-    { arg_name = "--cs" },
-    # { arg_name = "--break-symmetries" }, NOT IMPLEMENTED FOR PROOF LOGGING
+    { arg_name = "--learn-cores-sis" },
+    { arg_name = "--no-seeding" },
+    { arg_name = "--no-rc" },
+    { arg_name = "--no-harden" },
+    { arg_name = "--upb-hardening" },
+    { arg_name = "--no-solver-var-renaming" },
+
     { arg_name = "--ce-oracle", arg_type = { Values = ["roundingsat", "exact", "satsolver"]} },
     { arg_name = "--ce-strategy", arg_type = { Values = ["obo", "disjoint", "wce", "wce2", "hit-once"]} },
-    { arg_name = "--optimizer", arg_type = { Values = ["scip", "roundingsat-sh", "roundingsat-ss", "roundingsat-cg", "localsearch", "greedy"]} },
+    { arg_name = "--ce-shuffles", arg_type = { IntRange = [1, 50] } },
+    { arg_name = "--ce-nb-keep", arg_type = { IntRange = [1, 20] } },
+    { arg_name = "--ce-small-core-lim", arg_type = { IntRange = [0, 10] } },
+    { arg_name = "--min" },
+    { arg_name = "--min-budget-abs", arg_type = { IntRange = [1, 1000] } },
+    { arg_name = "--min-budget-rel", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--cs" },
 
-    # { arg_name = "--db-weight=", arg_type = { FloatRange = [0.0, 1.0] } },
+    # { arg_name = "--break-symmetries" }, NOT IMPLEMENTED FOR PROOF LOGGING
+    # -T/--breakid-time-limit, --explicit-scl, --compact-scl,
+    # --explicit-scl-budget, --compact-scl-budget, --dump-symmetries:
+    # all depend on --break-symmetries, skipped for the same reason
+
+    { arg_name = "--optimizer", arg_type = { Values = ["scip", "roundingsat-sh", "roundingsat-ss", "roundingsat-cg", "localsearch", "greedy"]} },
+    { arg_name = "--exact-optimizer", arg_type = { Values = ["scip", "roundingsat-sh", "roundingsat-ss", "roundingsat-cg", "localsearch", "greedy"]} },
+    { arg_name = "--optimizer-iterlim-nopt", arg_type = { IntRange = [1, 5000] } },
+
+    { arg_name = "--sis-oracle", arg_type = { Values = ["roundingsat", "exact", "satsolver", "core-extractor"]} },
+    { arg_name = "--no-sis" },
+    { arg_name = "--sis-loop" },
+    { arg_name = "--sis-iters", arg_type = { IntRange = [1, 50] } },
+    { arg_name = "--sis-budget-abs", arg_type = { IntRange = [1, 5000] } },
+    { arg_name = "--sis-budget-rel", arg_type = { FloatRange = [0.0, 1.0] } },
+
+    { arg_name = "--satsolver", arg_type = { Values = ["cadical", "glucose3"]} },
+
+    # --presolver / --presolve / --presolve-time: presolver choice set is
+    # empty ({}), so no presolver is actually usable, skipped
+    # -v/--verbose, --dump-core-instance: don't affect solving behavior,
+    # only logging/output artifacts, skipped
 ]
 space_separated = true

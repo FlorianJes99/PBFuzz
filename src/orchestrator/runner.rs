@@ -523,7 +523,7 @@ fn work_iteration(
     );
 
     let pb_kind = settings.get_problem_kind();
-    let with_option_fuzzing = rand::random_bool(0.3); // option fuzzing with 10% probability
+    let with_option_fuzzing = rand::random_bool(0.2); // option fuzzing with 20% probability
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
