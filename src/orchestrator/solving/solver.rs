@@ -6,7 +6,7 @@ use std::{
     process::{Command, Output, Stdio},
     sync::mpsc,
     thread::{self},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use itertools::Itertools;
@@ -95,6 +95,7 @@ impl<P> SolverData<P> {
 
     /// starts the solver in a child process and terminates this process after the given output
     fn run_with_timeout(&self, mut cmd: Command, timeout: Duration) -> io::Result<SolverRun> {
+        let start = Instant::now();
         let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
         let mut stdout = child.stdout.take().expect("stdout was piped");
         let mut stderr = child.stderr.take().expect("stderr was piped");
@@ -136,6 +137,7 @@ impl<P> SolverData<P> {
         let record = SolverExecutionRecord {
             name,
             used_command,
+            execution_time: start.elapsed(),
             stderr,
         };
         Ok(SolverRun { record, state })
@@ -239,6 +241,7 @@ impl SolverData<NoProof> {
 pub struct SolverExecutionRecord {
     pub name: String,
     pub used_command: String,
+    pub execution_time: Duration,
     pub stderr: Vec<u8>,
 }
 
@@ -247,9 +250,16 @@ impl Display for SolverExecutionRecord {
         let SolverExecutionRecord {
             name,
             used_command,
+            execution_time,
             stderr,
         } = &self;
         writeln!(f, "Solver {}: {}", name, used_command)?;
+        writeln!(
+            f,
+            "Execution Time: {}s {}ms",
+            execution_time.as_secs(),
+            execution_time.as_millis()
+        )?;
         if !stderr.is_empty() {
             write!(f, "\nStderr:")?;
             for line in String::from_utf8_lossy(stderr).lines() {

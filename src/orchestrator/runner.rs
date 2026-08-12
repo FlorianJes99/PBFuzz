@@ -1,11 +1,11 @@
 use crate::fuzzer::app_info::MetaData;
-use crate::fuzzer::helpers::{move_file, move_files, remove_files, MoveFile, OFFSET};
+use crate::fuzzer::helpers::{MoveFile, OFFSET, move_file, move_files, remove_files};
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::evaluation::common::VerificationOutcome;
-use crate::orchestrator::evaluation::comparison::{compare_runs, ComparisonRun};
-use crate::orchestrator::evaluation::proof_checking::{verify_with_proof, ProofRun};
+use crate::orchestrator::evaluation::comparison::{ComparisonRun, compare_runs};
+use crate::orchestrator::evaluation::proof_checking::{ProofRun, verify_with_proof};
 use crate::orchestrator::folders::ERROR_FOLDER;
 use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
@@ -15,18 +15,18 @@ use crate::orchestrator::solving::solver::{
 };
 use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
-    fuzzer::helpers::{get_hms_parts, RunningAverage, RunningAverageDuration},
+    fuzzer::helpers::{RunningAverage, RunningAverageDuration, get_hms_parts},
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        folders::{prepare_output_folder, DATA_FOLDER},
+        folders::{DATA_FOLDER, prepare_output_folder},
         orchestrator_args::OrchestratorArgs,
         solving::solver::SolverData,
     },
 };
 use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::{
     error::Error,
     fmt::Display,
@@ -325,11 +325,24 @@ impl Orchestrator {
         stats: &mut AccumulatedStatsAllRuns,
     ) {
         let seed = work_result.record.get_seed();
+
+        if let CsvRecord::Comparison(r) = &work_result.record
+            && (r.problem_solving_duration_solver1_ms - r.problem_solving_duration_solver2_ms).abs()
+                >= 2000.0
+        {
+            warn!(
+                "Solving time difference larger than 2 seconds!: {}ms - {}ms",
+                r.problem_solving_duration_solver1_ms, r.problem_solving_duration_solver2_ms
+            );
+            stats.large_solving_difference += 1;
+        }
         let outcome = work_result.outcome.get_outcome();
 
         let outcome_folder = outcome.get_sub_folder(&self.fuzzer_output_dir);
 
-        if !outcome_folder.exists() && let Err(e) = std::fs::create_dir(&outcome_folder) {
+        if !outcome_folder.exists()
+            && let Err(e) = std::fs::create_dir(&outcome_folder)
+        {
             error!("{e}");
         }
         match outcome {
@@ -421,7 +434,9 @@ impl Orchestrator {
             .fuzzer_output_dir
             .join(ERROR_FOLDER.name)
             .join(error.kind.get_folder_name());
-        if !folder.exists() && let Err(e) = std::fs::create_dir(&folder) {
+        if !folder.exists()
+            && let Err(e) = std::fs::create_dir(&folder)
+        {
             error!("{e}");
         }
         if let Some(pb_file) = &context.pb_file {
@@ -529,7 +544,6 @@ fn work_iteration(
     let generation_method = *settings.get_generation_method();
     match mode {
         OrchestrationMode::Comparison(p1, p2) => {
-            let start_bin1 = Instant::now();
             let SolverAndParser {
                 solver: s1,
                 parser: p1,
@@ -541,15 +555,14 @@ fn work_iteration(
             let output_bin1 = s1
                 .run(&output_file, with_option_fuzzing)
                 .map_err(|e| context.clone().into_error(e.into()))?;
-            let time_bin1 = start_bin1.elapsed();
+            let time_bin1 = output_bin1.record.execution_time;
 
             context.solver_runs = vec![output_bin1.record.clone()];
 
-            let start_bin2 = Instant::now();
             let output_bin2 = s2
                 .run(&output_file, with_option_fuzzing)
                 .map_err(|e| context.clone().into_error(e.into()))?;
-            let time_bin2 = start_bin2.elapsed();
+            let time_bin2 = output_bin2.record.execution_time;
 
             context.solver_runs = context
                 .solver_runs
@@ -764,6 +777,7 @@ struct AccumulatedStatsAllRuns {
     bugs_found: u32,
     errors: u32,
     timeouts: u32,
+    large_solving_difference: u32,
 }
 
 impl AccumulatedStatsAllRuns {
@@ -777,6 +791,7 @@ impl AccumulatedStatsAllRuns {
             bugs_found: 0,
             errors: 0,
             timeouts: 0,
+            large_solving_difference: 0,
         }
     }
 
@@ -813,6 +828,17 @@ impl AccumulatedStatsAllRuns {
 
 impl Display for AccumulatedStatsAllRuns {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let AccumulatedStatsAllRuns {
+            amount_sat,
+            amount_unsat,
+            amount_unknown,
+            average_conflicts,
+            average_iteration_duration,
+            bugs_found,
+            errors,
+            timeouts,
+            large_solving_difference,
+        } = &self;
         writeln!(
             f,
             "{:<OFFSET$}: {}",
@@ -822,17 +848,17 @@ impl Display for AccumulatedStatsAllRuns {
         writeln!(
             f,
             "{:<OFFSET$}: {}",
-            "Generated amount of SAT instances", self.amount_sat
+            "Generated amount of SAT instances", amount_sat
         )?;
         writeln!(
             f,
             "{:<OFFSET$}: {}",
-            "Generated amount of UNSAT instances", self.amount_unsat
+            "Generated amount of UNSAT instances", amount_unsat
         )?;
         writeln!(
             f,
             "{:<OFFSET$}: {}",
-            "Generated amount of unknown instances", self.amount_unknown
+            "Generated amount of unknown instances", amount_unknown
         )?;
         writeln!(
             f,
@@ -844,16 +870,21 @@ impl Display for AccumulatedStatsAllRuns {
             f,
             "{:<OFFSET$}: {}",
             "Average conflicts to solve",
-            self.average_conflicts.get_average()
+            average_conflicts.get_average()
         )?;
-        writeln!(f, "{:<OFFSET$}: {}", "Bugs found", self.bugs_found)?;
-        writeln!(f, "{:<OFFSET$}: {}", "Errors occured", self.errors)?;
-        writeln!(f, "{:<OFFSET$}: {}", "Timeouts", self.timeouts)?;
-        write!(
+        writeln!(f, "{:<OFFSET$}: {}", "Bugs found", bugs_found)?;
+        writeln!(f, "{:<OFFSET$}: {}", "Errors occured", errors)?;
+        writeln!(f, "{:<OFFSET$}: {}", "Timeouts", timeouts)?;
+        writeln!(
             f,
             "{:<OFFSET$}: {:.3}ms",
             "Average Time per Instance",
-            self.average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
+            average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
+        )?;
+        write!(
+            f,
+            "{:<OFFSET$}: {}",
+            "Runs with large solving time difference", large_solving_difference
         )
     }
 }
