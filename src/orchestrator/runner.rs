@@ -440,7 +440,8 @@ impl Orchestrator {
         if let Ok(mut w) = File::create(&report_path).map(BufWriter::new) {
             let _ = writeln!(w, "Seed: {}", context.seed);
             let _ = writeln!(w, "Error: {error}");
-            for run in context.solver_runs.iter() {
+            for (i, run) in context.solver_runs.iter().enumerate() {
+                let _ = writeln!(w, "\n{:=^50}", format!("Run {}", i + 1));
                 let _ = writeln!(w, "{run}");
             }
         } else {
@@ -473,10 +474,8 @@ fn terminate_early(
 
 fn create_report<W: Write>(writer: &mut W, outcome: &Outcome) -> io::Result<()> {
     let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
-        let SolverExecutionRecord { name, used_command } = &data.record;
         writeln!(writer, "{:=^50}", "Solving")?;
-        writeln!(writer, "Solver: {}", name)?;
-        writeln!(writer, "Command: {}", used_command)?;
+        writeln!(writer, "{}", data.record)?;
         writeln!(writer)?;
         writeln!(writer, "{:=^50}", "Parsing")?;
         writeln!(writer, "{}", data.parsed_status)
@@ -555,7 +554,7 @@ fn work_iteration(
             context.solver_runs = context
                 .solver_runs
                 .into_iter()
-                .chain(vec![output_bin1.record.clone()])
+                .chain(vec![output_bin2.record.clone()])
                 .collect();
 
             let start_output_extraction = Instant::now();

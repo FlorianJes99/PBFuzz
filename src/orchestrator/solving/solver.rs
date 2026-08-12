@@ -95,14 +95,17 @@ impl<P> SolverData<P> {
 
     /// starts the solver in a child process and terminates this process after the given output
     fn run_with_timeout(&self, mut cmd: Command, timeout: Duration) -> io::Result<SolverRun> {
-        let mut child = cmd.stdout(Stdio::piped()).spawn()?;
+        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
         let mut stdout = child.stdout.take().expect("stdout was piped");
+        let mut stderr = child.stderr.take().expect("stderr was piped");
         let (tx, rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
-            let _ = tx.send(buf);
+            let mut buf_stdout = Vec::new();
+            let mut buf_stderr = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stdout, &mut buf_stdout);
+            let _ = std::io::Read::read_to_end(&mut stderr, &mut buf_stderr);
+            let _ = tx.send((buf_stdout, buf_stderr));
         });
 
         let name = self.name.clone();
@@ -111,22 +114,29 @@ impl<P> SolverData<P> {
             cmd.get_program().display(),
             cmd.get_args().map(|a| a.display()).join(" ")
         );
-        let record = SolverExecutionRecord { name, used_command };
-        let state = match rx.recv_timeout(timeout) {
-            Ok(stdout_buf) => {
+        let (state, stderr) = match rx.recv_timeout(timeout) {
+            Ok((stdout, stderr)) => {
                 let status = child.wait()?;
-                SolverState::Terminated(Output {
-                    status,
-                    stdout: stdout_buf,
-                    stderr: vec![],
-                })
+                (
+                    SolverState::Terminated(Output {
+                        status,
+                        stdout,
+                        stderr: vec![],
+                    }),
+                    stderr,
+                )
             }
             Err(_) => {
                 info!("Terminating solver {}...", self.get_name());
                 child.kill()?;
                 let _ = child.wait(); // reap
-                SolverState::Timeout
+                (SolverState::Timeout, vec![])
             }
+        };
+        let record = SolverExecutionRecord {
+            name,
+            used_command,
+            stderr,
         };
         Ok(SolverRun { record, state })
     }
@@ -229,12 +239,24 @@ impl SolverData<NoProof> {
 pub struct SolverExecutionRecord {
     pub name: String,
     pub used_command: String,
+    pub stderr: Vec<u8>,
 }
 
 impl Display for SolverExecutionRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let SolverExecutionRecord { name, used_command } = &self;
-        write!(f, "Solver {}: {}", name, used_command)
+        let SolverExecutionRecord {
+            name,
+            used_command,
+            stderr,
+        } = &self;
+        writeln!(f, "Solver {}: {}", name, used_command)?;
+        if !stderr.is_empty() {
+            write!(f, "\nStderr:")?;
+            for line in String::from_utf8_lossy(stderr).lines() {
+                write!(f, "\n {line}")?;
+            }
+        }
+        Ok(())
     }
 }
 
