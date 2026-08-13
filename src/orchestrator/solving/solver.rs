@@ -148,12 +148,16 @@ impl SolverData<WithProof> {
     pub fn into_proof_solver(
         config: SolverConfig,
         timelimit: Duration,
-    ) -> Result<Self, MissingProofLoggingArgument> {
+    ) -> Result<Self, SolverInitializationError> {
+        validate_binary(&config.binary)?;
         config
             .proof_arg
-            .ok_or(MissingProofLoggingArgument {
-                program: config.name.clone(),
-            })
+            .ok_or(
+                MissingProofLoggingArgument {
+                    program: config.name.clone(),
+                }
+                .into(),
+            )
             .map(|proof_arg| Self {
                 binary: config.binary,
                 args: config.args,
@@ -202,15 +206,19 @@ impl SolverData<WithProof> {
 }
 
 impl SolverData<NoProof> {
-    pub fn into_solver(config: SolverConfig, timelimit: Duration) -> Self {
-        Self {
+    pub fn into_solver(
+        config: SolverConfig,
+        timelimit: Duration,
+    ) -> Result<Self, SolverInitializationError> {
+        validate_binary(&config.binary)?;
+        Ok(Self {
             binary: config.binary,
             args: config.args,
             optional_args: config.optional_args,
             name: config.name,
             timelimit,
             proof: NoProof,
-        }
+        })
     }
     pub fn run(
         &self,
@@ -270,6 +278,16 @@ impl Display for SolverExecutionRecord {
     }
 }
 
+fn validate_binary(binary: &Path) -> Result<(), InvalidBinaryPath> {
+    if binary.exists() {
+        Ok(())
+    } else {
+        Err(InvalidBinaryPath {
+            path: binary.to_path_buf(),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct SolverRun {
     pub record: SolverExecutionRecord,
@@ -288,6 +306,20 @@ fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display
     }
     let prof_file = format!("profiles/{prof_file_name}.profraw");
     command.env("LLVM_PROFILE_FILE", prof_file);
+}
+
+#[derive(Debug, Error)]
+pub enum SolverInitializationError {
+    #[error(transparent)]
+    Binary(#[from] InvalidBinaryPath),
+    #[error(transparent)]
+    Proof(#[from] MissingProofLoggingArgument),
+}
+
+#[derive(Debug, Error)]
+#[error("Solver binary does not exist: {}", path.display())]
+pub struct InvalidBinaryPath {
+    path: PathBuf,
 }
 
 #[derive(Debug, Error)]

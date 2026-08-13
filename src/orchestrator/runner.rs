@@ -11,7 +11,7 @@ use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
 use crate::orchestrator::solving::solver::{
-    MissingProofLoggingArgument, NoProof, SolverExecutionFailed, SolverExecutionRecord, WithProof,
+    NoProof, SolverExecutionFailed, SolverExecutionRecord, SolverInitializationError, WithProof,
 };
 use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
@@ -88,11 +88,13 @@ pub fn run_orchestrator(
     );
     let timelimit = Duration::from_secs(args.timeout_external_program_secs);
     let mode = match &args.program_config2 {
-        Some(p2) => OrchestrationMode::Comparison(
-            SolverConfig::load_from_file(&args.program_config1)
-                .map(|c| SolverAndParser::from_config(c, timelimit))?,
-            SolverConfig::load_from_file(p2).map(|c| SolverAndParser::from_config(c, timelimit))?,
-        ),
+        Some(p2) => {
+            let c1 = SolverConfig::load_from_file(&args.program_config1)?;
+            let solver1 = SolverAndParser::from_config(c1, timelimit)?;
+            let c2 = SolverConfig::load_from_file(p2)?;
+            let solver2 = SolverAndParser::from_config(c2, timelimit)?;
+            OrchestrationMode::Comparison(solver1, solver2)
+        }
         None => {
             let config = SolverConfig::load_from_file(&args.program_config1)?;
             OrchestrationMode::ProofChecking(SolverAndParser::from_config_proof(config, timelimit)?)
@@ -130,12 +132,15 @@ struct SolverAndParser<T = NoProof> {
 }
 
 impl SolverAndParser {
-    fn from_config(config: SolverConfig, timelimit: Duration) -> Self {
+    fn from_config(
+        config: SolverConfig,
+        timelimit: Duration,
+    ) -> Result<Self, SolverInitializationError> {
         let parser = ParserImpl::from_kind(&config.parser_kind);
-        Self {
-            solver: SolverData::into_solver(config, timelimit),
+        Ok(Self {
+            solver: SolverData::into_solver(config, timelimit)?,
             parser,
-        }
+        })
     }
 }
 
@@ -143,7 +148,7 @@ impl SolverAndParser<WithProof> {
     fn from_config_proof(
         config: SolverConfig,
         timelimit: Duration,
-    ) -> Result<Self, MissingProofLoggingArgument> {
+    ) -> Result<Self, SolverInitializationError> {
         let parser = ParserImpl::from_kind(&config.parser_kind);
         Ok(Self {
             solver: SolverData::into_proof_solver(config, timelimit)?,
@@ -386,10 +391,10 @@ impl Orchestrator {
             files_to_move.push(MoveFile::new(proof_file, new_file_location_proof));
         }
         let file_manipulation_result = match outcome {
-            // Only save the file if bug or timelimit or unknown occurred
-            VerificationOutcome::Bug(_)
-            | VerificationOutcome::Unknown
-            | VerificationOutcome::Timelimit => move_files(&files_to_move),
+            // Only save the file if bug or unknown occurred
+            VerificationOutcome::Bug(_) | VerificationOutcome::Unknown => {
+                move_files(&files_to_move)
+            }
             _ if self.save_all_files => move_files(&files_to_move),
             // Delete the generated fuzzing result if not needed anymore
             _ => remove_files(&files_to_move).map_err(|e| e.to_string()),
