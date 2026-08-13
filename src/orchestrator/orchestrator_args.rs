@@ -1,4 +1,3 @@
-use crate::fuzzer::grammar::PBKind;
 use clap::Parser;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -22,7 +21,7 @@ pub struct OrchestratorArgs {
     /// BE CAREFUL to either specify a path relative to the execution of the binary or specify a
     /// correct absolute path for the base directory.
     #[arg(short, long, default_value = "out/")]
-    pub(crate) output_dir: PathBuf,
+    pub output_dir: PathBuf,
     /// Terminate orchestrator after n iterations. Conflicts with the timeout_min flag.
     ///
     #[arg(short, long, conflicts_with = "timeout_min")]
@@ -30,9 +29,6 @@ pub struct OrchestratorArgs {
     /// Terminate orchestrator after n elapsed minutes. Conflicts with the iterations flag.
     #[arg(short, long, conflicts_with = "iterations")]
     pub(crate) timeout_min: Option<u32>,
-    /// Choose mode for Fuzzer (default: PBS)
-    #[arg(long, value_enum)]
-    pub(crate) mode: Option<PBKind>,
     /// Use a settings file for the fuzzer.
     ///
     /// The expected file should be in the [toml-format](https://docs.rs/toml/latest/toml/).

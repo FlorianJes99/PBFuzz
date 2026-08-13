@@ -1,5 +1,4 @@
 use std::io;
-use std::path::PathBuf;
 use std::{
     fs::create_dir,
     io::{Error, ErrorKind},
@@ -36,11 +35,7 @@ use log::info;
 /// `output_path`: base path where all runs should be saved into
 /// `time_stamp`: used to create subfolder including the timestamp of the start of the run
 /// `pb_kind`: include PB kind in directory name
-pub fn prepare_output_folder(
-    output_path: &Path,
-    time_stamp: &str,
-    pb_kind: &str,
-) -> io::Result<PathBuf> {
+pub fn prepare_sub_folders(output_path: &Path) -> io::Result<()> {
     if output_path.exists() && output_path.is_file() {
         return Err(Error::new(
             ErrorKind::NotADirectory,
@@ -54,10 +49,8 @@ pub fn prepare_output_folder(
         info!("Creating base directory: {}", output_path.display());
         create_dir(output_path)?;
     }
-    let folder_fuzzing_run = output_path.join(format!("fuzzing_run_{}_{}", pb_kind, time_stamp));
-    create_dir(&folder_fuzzing_run)?;
-    create_folders(&folder_fuzzing_run)?;
-    Ok(folder_fuzzing_run)
+    create_folders(&output_path)?;
+    Ok(())
 }
 
 /// Simply create all folders in the current working directory which are needed for the

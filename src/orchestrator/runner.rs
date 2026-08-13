@@ -18,7 +18,7 @@ use crate::{
     fuzzer::helpers::{RunningAverage, RunningAverageDuration, get_hms_parts},
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
-        folders::{DATA_FOLDER, prepare_output_folder},
+        folders::{DATA_FOLDER, prepare_sub_folders},
         orchestrator_args::OrchestratorArgs,
         solving::solver::SolverData,
     },
@@ -77,9 +77,9 @@ use crate::fuzzer::{helpers::print_block, pb_generator::PBGenerator};
 /// - Update stats for the orchestrator
 /// - write relevant data points to the CSV file
 pub fn run_orchestrator(
-    time_stamp_as_str: &str,
     meta_data: MetaData,
     args: OrchestratorArgs,
+    run_root: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     let thread_count = args.thread_count.unwrap_or(1);
     info!(
@@ -105,18 +105,13 @@ pub fn run_orchestrator(
         args.iterations,
         args.timeout_min.map(|v| Duration::from_mins(v as u64)),
     )?;
-    let output_dir = &args.output_dir;
-    info!("Workspace set to: {}", output_dir.display());
-    let fuzzer_output_dir = prepare_output_folder(
-        output_dir,
-        time_stamp_as_str,
-        config.grammar_kind.get_short_str(),
-    )?;
+    info!("Workspace set to: {}", run_root.display());
+    prepare_sub_folders(&run_root)?;
     print_block("Configuration", config);
 
     let save_all_files = args.save_all_files;
     Orchestrator {
-        fuzzer_output_dir,
+        fuzzer_output_dir: run_root,
         config,
         orchestrator_start: Instant::now(),
         save_all_files,
@@ -336,7 +331,7 @@ impl Orchestrator {
                 >= 2000.0
         {
             warn!(
-                "Solving time difference larger than 2 seconds!: {}ms - {}ms",
+                "Solving time diverged more than 2 seconds!: {}ms - {}ms",
                 r.problem_solving_duration_solver1_ms, r.problem_solving_duration_solver2_ms
             );
             stats.large_solving_difference += 1;
