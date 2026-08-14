@@ -288,7 +288,7 @@ impl GeneratorSettingsBuilder {
         let cancel_condition = CancelCondition::CountUnsat {
             max_unsat_assignments: (max_vars as f32 * 2.4).floor() as u64,
         };
-        let constraint_distribution = ConstraintDistribution::new(2, 1, 1, 1);
+        let constraint_distribution = ConstraintDistribution::new(2, 1, 1, 1, 1);
         Self {
             max_vars,
             max_unsat_for_single_constraint,

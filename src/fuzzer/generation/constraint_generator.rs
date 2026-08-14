@@ -26,7 +26,7 @@ use crate::fuzzer::{
 #[derive(Debug)]
 pub struct ConstraintGenerator {
     rand: StdRng,
-    dist: WeightedIndex<i32>,
+    dist: WeightedIndex<u32>,
     settings: ConstraintSettings,
 }
 
@@ -454,6 +454,7 @@ mod tests {
                 cardinality_weight: 1,
                 arbitrary_weight: 1,
                 exactly_one_weight: 0,
+                doubling_pairs_weight: 1,
             },
         };
         let mut generator = ConstraintGenerator::new(StdRng::seed_from_u64(42), settings);
