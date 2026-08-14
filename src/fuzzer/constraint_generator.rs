@@ -1,20 +1,24 @@
 use itertools::Itertools;
 use log::debug;
 use rand::{
-    distr::{weighted::WeightedIndex, Distribution},
-    rngs::StdRng,
-    seq::{index, IndexedRandom},
     RngExt,
+    distr::{Distribution, weighted::WeightedIndex},
+    rngs::StdRng,
+    seq::{IndexedRandom, index},
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, num::TryFromIntError};
 use thiserror::Error;
 
 use crate::fuzzer::{
-    constraint::{
-        ArbitraryLengthConstraint, CardinalityConstraint, Constraint, ConstraintKind,
-        CostraintWithUnsatAssignments, ExactlyOneConstraint, InvalidConstraintConstruction,
-        ThreeLiteralConstraint,
+    constraints::{
+        cardinality::CardinalityConstraint,
+        constraint::{Constraint, ConstraintKind, CostraintWithUnsatAssignments},
+        doubling_pairs::DoublingPairs,
+        errors::InvalidConstraintConstruction,
+        exactly_one::ExactlyOneConstraint,
+        generic::ArbitraryLengthConstraint,
+        three_literals::ThreeLiteralConstraint,
     },
     domain::{Comparison, Literal, LiteralIdent, MinFunction, SolutionModel},
 };
@@ -44,6 +48,7 @@ impl ConstraintGenerator {
             1 => ConstraintKind::Cardinality,
             2 => ConstraintKind::ArbitraryLength,
             3 => ConstraintKind::ExactlyOne,
+            4 => ConstraintKind::DoublingPairs,
             _ => unreachable!(),
         }
     }
@@ -108,6 +113,11 @@ impl ConstraintGenerator {
                 // we want to have at max 3 literals in the exactly one constraint for now
                 let constraint_len = 3.min((self.settings.max_vars as f32 * 0.5).floor() as u32);
                 let c = self.generate_exactly_one_constraint(constraint_len)?;
+                Ok(Box::new(c))
+            }
+            ConstraintKind::DoublingPairs => {
+                let n = 2; // TODO: determine length here
+                let c = self.generate_doubling_pairs_constraint(n)?;
                 Ok(Box::new(c))
             }
         }
@@ -291,7 +301,8 @@ impl ConstraintGenerator {
         let constraint = ArbitraryLengthConstraint::new(lits, comparison, degree);
         assert!(
             constraint.verify(model).is_ok(),
-            "When generating from a sampled solution, every constraint needs to be satisfiable\nModel: {model}\nConstraint: {constraint}");
+            "When generating from a sampled solution, every constraint needs to be satisfiable\nModel: {model}\nConstraint: {constraint}"
+        );
         Ok(Box::new(constraint))
     }
 
@@ -380,7 +391,7 @@ impl ConstraintGenerator {
     fn generate_doubling_pairs_constraint(
         &mut self,
         constraint_length: u32,
-    ) -> Result<ArbitraryLengthConstraint, ConstraintGenerationError> {
+    ) -> Result<DoublingPairs, ConstraintGenerationError> {
         assert!(
             constraint_length.is_multiple_of(2),
             "This type of constraint expects to have an even amount of literals"
@@ -401,11 +412,7 @@ impl ConstraintGenerator {
         // n pairs use exponents 0..=n-1, so highest coefficient is 2^(n-1)
         // therefore RHS needs to be 2^(n-1 + 1) = 2^n
         let degree = 2_i64.pow(n);
-        Ok(ArbitraryLengthConstraint::new(
-            literals,
-            Comparison::GrEqual,
-            degree,
-        ))
+        Ok(DoublingPairs::new(literals, Comparison::GrEqual, degree))
     }
 }
 

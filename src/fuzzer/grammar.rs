@@ -12,9 +12,9 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::fuzzer::app_info::MetaData;
-use crate::fuzzer::constraint::Constraint;
-use crate::fuzzer::constraint::ConstraintKind;
-use crate::fuzzer::constraint::ConstraintViolation;
+use crate::fuzzer::constraints::constraint::Constraint;
+use crate::fuzzer::constraints::constraint::ConstraintKind;
+use crate::fuzzer::constraints::errors::ConstraintViolation;
 use crate::fuzzer::domain::Comparison;
 use crate::fuzzer::domain::LiteralIdent;
 use crate::fuzzer::domain::MinFunction;
@@ -92,7 +92,16 @@ impl PBGrammar {
     ///
     /// Returns the duration of writing into the buffer
     pub fn produce<W: io::Write>(&self, writer: &mut W) -> io::Result<Duration> {
-        let Self { program_info, seed, amount_vars, amount_constraints, constraints, min_constraint, generation_time, generation_source } = self;
+        let Self {
+            program_info,
+            seed,
+            amount_vars,
+            amount_constraints,
+            constraints,
+            min_constraint,
+            generation_time,
+            generation_source,
+        } = self;
         let start = Instant::now();
         info!(
             "Generated PB grammar with {} vars and {} constraints.",
@@ -107,11 +116,18 @@ impl PBGrammar {
             "* #variable= {} #constraint= {} #equal= {} intsize= 32",
             amount_vars, amount_constraints, amount_equal_constraints
         )?;
-        let MetaData { program_version, commit_hash } = program_info;
+        let MetaData {
+            program_version,
+            commit_hash,
+        } = program_info;
         writeln!(writer, "* Program version: {program_version}")?;
         writeln!(writer, "* Commit Hash: {commit_hash}")?;
         writeln!(writer, "* Used seed: {}", seed)?;
-        writeln!(writer, "* Generation time: {}ms", generation_time.as_millis())?;
+        writeln!(
+            writer,
+            "* Generation time: {}ms",
+            generation_time.as_millis()
+        )?;
         match generation_source {
             GenerationSource::Random {
                 amount_unsat_assignments,
@@ -121,11 +137,7 @@ impl PBGrammar {
                 }
             }
             GenerationSource::FromSolution { model, objective } => {
-                writeln!(
-                    writer,
-                    "* Generated solution: {}",
-                    model
-                )?;
+                writeln!(writer, "* Generated solution: {}", model)?;
                 if let Some(o) = objective {
                     writeln!(
                         writer,
@@ -179,7 +191,9 @@ impl PBGrammar {
     }
 
     pub fn verify_solution(&self, true_vars: &SolutionModel) -> Result<(), ConstraintViolation> {
-        self.constraints.iter().try_for_each(|c| c.verify(true_vars))
+        self.constraints
+            .iter()
+            .try_for_each(|c| c.verify(true_vars))
     }
 
     pub fn verify_min_constraint(
@@ -190,13 +204,15 @@ impl PBGrammar {
         if let GenerationSource::FromSolution {
             model: _,
             objective: objective_from_solution,
-        } = &self.generation_source && let Some(obj) = objective_from_solution
+        } = &self.generation_source
+            && let Some(obj) = objective_from_solution
         {
             info!("Generated objective value from solution: {obj}; found minimum:  {objective}")
         }
         match self.min_constraint.as_ref() {
             Some(mf) => {
-                let eval_min = mf.get_literals()
+                let eval_min = mf
+                    .get_literals()
                     .iter()
                     .filter(|a| true_vars.contains(&a.literal_id))
                     .map(|a| a.coeff)
@@ -206,11 +222,14 @@ impl PBGrammar {
                     Ok(())
                 } else {
                     Err(MinObjectiveInvalid {
-                        evaluated: eval_min, expected: objective
+                        evaluated: eval_min,
+                        expected: objective,
                     })
                 }
-            },
-            None => unreachable!("Minimize objective should always exist, when running in pbo mode"),
+            }
+            None => {
+                unreachable!("Minimize objective should always exist, when running in pbo mode")
+            }
         }
     }
 }
@@ -300,11 +319,11 @@ impl Display for OccurenceWithId {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::fuzzer::constraints::constraint::CostraintWithUnsatAssignments;
+    use crate::fuzzer::constraints::three_literals::ThreeLiteralConstraint;
 
     #[test]
     fn test_statistics() {
-        use crate::fuzzer::constraint::CostraintWithUnsatAssignments;
-        use crate::fuzzer::constraint::ThreeLiteralConstraint;
         use crate::fuzzer::domain::{Comparison, Literal};
         let literals1 = [Literal::new(1, 2), Literal::new(2, 5), Literal::new(4, 1)];
         let literals2 = [Literal::new(2, 2), Literal::new(3, 5), Literal::new(4, 1)];

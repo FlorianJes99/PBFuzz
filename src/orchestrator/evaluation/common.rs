@@ -1,3 +1,4 @@
+use crate::fuzzer::constraints::errors::ConstraintViolation;
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
@@ -6,9 +7,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    fuzzer::{
-        constraint::ConstraintViolation, domain::MinObjectiveValue, grammar::MinObjectiveInvalid,
-    },
+    fuzzer::{domain::MinObjectiveValue, grammar::MinObjectiveInvalid},
     orchestrator::{
         evaluation::proof_checking::ProofError,
         folders::{BUG_FOLDER, SAT_FOLDER, TIMEOUT_FOLDER, UNKNOWN_FOLDER, UNSAT_FOLDER},

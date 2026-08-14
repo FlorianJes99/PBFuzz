@@ -1,7 +1,7 @@
 use crate::fuzzer::{
     app_info::MetaData,
-    constraint::Constraint,
     constraint_generator::{ConstraintGenerationError, ConstraintGenerator, FromSolutionData},
+    constraints::constraint::Constraint,
     domain::LiteralIdent,
     grammar::{GenerationSource, PBGrammar, PBKind},
     pb_settings::{CancelCondition, GenerationMethod, PbSetting},
@@ -11,7 +11,7 @@ use log::info;
 use std::time::Instant;
 use thiserror::Error;
 
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng};
 
 #[derive(Debug)]
 pub struct PBGenerator {
