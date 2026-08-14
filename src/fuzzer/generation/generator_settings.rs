@@ -63,10 +63,10 @@ impl DegreeRatio {
 /// Constraint distributions models the relative occurence of each constraint type in the entire grammar.
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct ConstraintDistribution {
-    three_literal_weight: i32,
-    cardinality_weight: i32,
-    arbitrary_weight: i32,
-    exactly_one_weight: i32,
+    pub three_literal_weight: i32,
+    pub cardinality_weight: i32,
+    pub arbitrary_weight: i32,
+    pub exactly_one_weight: i32,
 }
 
 impl ConstraintDistribution {
