@@ -49,7 +49,7 @@ pub fn prepare_sub_folders(output_path: &Path) -> io::Result<()> {
         info!("Creating base directory: {}", output_path.display());
         create_dir(output_path)?;
     }
-    create_folders(&output_path)?;
+    create_folders(output_path)?;
     Ok(())
 }
 

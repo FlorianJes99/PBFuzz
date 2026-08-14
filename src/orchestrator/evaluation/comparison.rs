@@ -1,7 +1,7 @@
 use crate::{
     fuzzer::grammar::PBGrammar,
     orchestrator::{
-        evaluation::common::{wrap_objective, wrap_violation, BugReason, VerificationOutcome},
+        evaluation::common::{BugReason, VerificationOutcome, wrap_objective, wrap_violation},
         parsing::parser::{ParsedStatus, ParserRun},
     },
 };
@@ -95,10 +95,4 @@ fn get_output_status_str(status: &ParsedStatus) -> String {
         ParsedStatus::Unknown { .. } => "UNKNOWN",
     }
     .into()
-}
-
-pub enum ExpectedResult {
-    Sat,
-    Unsat,
-    Timelimit,
 }
