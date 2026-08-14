@@ -1,7 +1,8 @@
-pub mod csv_data;
-pub mod evaluation;
-pub mod folders;
+mod csv_data;
+mod evaluation;
+mod folders;
 pub mod orchestrator_args;
-pub mod parsing;
+mod parsing;
+mod run_statistics;
 pub mod runner;
-pub mod solving;
+mod solving;

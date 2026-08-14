@@ -10,12 +10,15 @@ use crate::orchestrator::folders::ERROR_FOLDER;
 use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
+use crate::orchestrator::run_statistics::{
+    RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats,
+};
 use crate::orchestrator::solving::solver::{
     NoProof, SolverExecutionFailed, SolverExecutionRecord, SolverInitializationError, WithProof,
 };
 use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
-    fuzzer::helpers::{RunningAverage, RunningAverageDuration, get_hms_parts},
+    fuzzer::helpers::get_hms_parts,
     orchestrator::{
         csv_data::{ComparisonRecord, ORCHESTRATOR_DATA_FILE_PREFIX},
         folders::{DATA_FOLDER, prepare_sub_folders},
@@ -169,7 +172,7 @@ struct Orchestrator {
 struct Summary {
     meta_data: MetaData,
     duration_program: Duration,
-    statistics_run: AccumulatedStatsAllRuns,
+    statistics_run: RunStatistics,
 }
 
 impl Summary {
@@ -190,7 +193,6 @@ impl Orchestrator {
             .join(DATA_FOLDER.name)
             .join(format!("{}.csv", ORCHESTRATOR_DATA_FILE_PREFIX,));
         let mut csv_writer = csv::Writer::from_path(csv_file_path)?;
-        let mut stats = AccumulatedStatsAllRuns::new();
         let stop_condtion = Arc::new(stop_condition);
         let cancelled = Arc::new(AtomicBool::new(false));
         let ctrc_flag = cancelled.clone();
@@ -233,9 +235,10 @@ impl Orchestrator {
             // immediately drop the initial sender reference, only the clones inside the worker threads are kept alive
             drop(sender);
             let (mut random_count, mut from_solution_count) = (0, 0);
+            let mut stats = RunStatistics::new();
             for (iteration, res) in receiver.iter().enumerate() {
                 let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
-                match res {
+                let stats_iteration = match res {
                     Ok(work_result) => {
                         match &work_result.generation_method {
                             GenerationMethod::Random => random_count += 1,
@@ -257,10 +260,12 @@ impl Orchestrator {
                             // We don't break here, because we want to process the remaining running threads
                             // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
                         }
-                        self.process_result(work_result, iteration, &mut csv_writer, &mut stats);
+                        self.process_result(work_result, iteration, &mut csv_writer)
                     }
-                    Err(e) => self.handle_error(*e, &mut stats),
-                }
+                    Err(e) => self.handle_error(*e),
+                };
+
+                stats.update(stats_iteration);
 
                 let elapsed_since_start = self.orchestrator_start.elapsed();
                 let (h, m, s) = get_hms_parts(&elapsed_since_start);
@@ -322,10 +327,10 @@ impl Orchestrator {
         work_result: WorkResult,
         iteration: u32,
         csv_writer: &mut Writer<File>,
-        stats: &mut AccumulatedStatsAllRuns,
-    ) {
+    ) -> SingleRunStats {
         let seed = work_result.record.get_seed();
 
+        let mut large_solving_difference = false;
         if let CsvRecord::Comparison(r) = &work_result.record
             && (r.problem_solving_duration_solver1_ms - r.problem_solving_duration_solver2_ms).abs()
                 >= 2000.0
@@ -334,7 +339,7 @@ impl Orchestrator {
                 "Solving time diverged more than 2 seconds!: {}ms - {}ms",
                 r.problem_solving_duration_solver1_ms, r.problem_solving_duration_solver2_ms
             );
-            stats.large_solving_difference += 1;
+            large_solving_difference = true;
         }
         let outcome = work_result.outcome.get_outcome();
 
@@ -398,8 +403,6 @@ impl Orchestrator {
             error!("{err}");
         }
         let duration_iteration_ms = work_result.start_worker.elapsed();
-        stats.update(outcome);
-        stats.update_iteration_duration(&duration_iteration_ms);
         let result = work_result.record.serialize(
             iteration,
             duration_iteration_ms.as_secs_f32() * 1000.0,
@@ -415,6 +418,19 @@ impl Orchestrator {
                 error!("Could not flush to file\n Error: {}", err);
             }
         }
+        let simple_result = match outcome {
+            VerificationOutcome::Sat => SimpleResult::Sat,
+            VerificationOutcome::Unsat => SimpleResult::Unsat,
+            VerificationOutcome::Timelimit => SimpleResult::Timeout,
+            VerificationOutcome::Bug(_) => SimpleResult::Bug,
+            VerificationOutcome::Unknown => SimpleResult::Unknown,
+        };
+        SingleRunStats::Successfull(SingleRunRecord::new(
+            simple_result,
+            0,
+            duration_iteration_ms,
+            large_solving_difference,
+        ))
     }
 
     fn save_settings(&self) -> io::Result<()> {
@@ -426,9 +442,8 @@ impl Orchestrator {
         File::create(file_name).and_then(|mut f| f.write_all(data.as_bytes()))
     }
 
-    fn handle_error(&self, error: WorkError, stats: &mut AccumulatedStatsAllRuns) {
+    fn handle_error(&self, error: WorkError) -> SingleRunStats {
         error!("{error}");
-        stats.errors += 1;
         let context = &error.context;
         let folder = self
             .fuzzer_output_dir
@@ -462,6 +477,7 @@ impl Orchestrator {
         } else {
             error!("Failed to create error report for seed {}", context.seed);
         }
+        SingleRunStats::Error
     }
 }
 
@@ -476,7 +492,7 @@ fn get_seed() -> u64 {
 fn terminate_early(
     iteration: u32,
     generation_method: &GenerationMethod,
-    stats: &AccumulatedStatsAllRuns,
+    stats: &RunStatistics,
     percentage_range_sat: &Range<f32>,
 ) -> bool {
     match generation_method {
@@ -644,7 +660,7 @@ fn work_iteration(
     }
 }
 
-pub enum Outcome {
+enum Outcome {
     Comparison(ComparisonRun),
     Proof(ProofRun),
 }
@@ -731,7 +747,7 @@ impl WorkErrorKind {
 ///
 /// Stop either after n iterations or after time t is passed
 #[derive(Debug)]
-pub enum StopCondition {
+enum StopCondition {
     MaxIterations(u32),
     MaxDuration(Duration),
 }
@@ -743,7 +759,7 @@ impl StopCondition {
     ///     max iterations < 1
     ///     both passed values are Some
     ///     both passed values are None
-    pub fn new(max_iter: Option<u32>, max_duration: Option<Duration>) -> Result<Self, String> {
+    fn new(max_iter: Option<u32>, max_duration: Option<Duration>) -> Result<Self, String> {
         match (max_iter, max_duration) {
             (None, None) => Err("One cancelation method exptected, zero provided".to_string()),
             (None, Some(d)) => Ok(Self::MaxDuration(d)),
@@ -764,128 +780,6 @@ impl StopCondition {
             StopCondition::MaxIterations(n) => iteration >= *n,
             StopCondition::MaxDuration(duration) => start.elapsed() >= *duration,
         }
-    }
-}
-
-#[derive(Serialize)]
-struct AccumulatedStatsAllRuns {
-    amount_sat: u32,
-    amount_unsat: u32,
-    amount_unknown: u32,
-    average_conflicts: RunningAverage,
-    average_iteration_duration: RunningAverageDuration,
-    bugs_found: u32,
-    errors: u32,
-    timeouts: u32,
-    large_solving_difference: u32,
-}
-
-impl AccumulatedStatsAllRuns {
-    fn new() -> Self {
-        Self {
-            amount_sat: 0,
-            amount_unsat: 0,
-            amount_unknown: 0,
-            average_conflicts: RunningAverage::default(),
-            average_iteration_duration: RunningAverageDuration::default(),
-            bugs_found: 0,
-            errors: 0,
-            timeouts: 0,
-            large_solving_difference: 0,
-        }
-    }
-
-    fn update_iteration_duration(&mut self, iteration_duration: &Duration) {
-        self.average_iteration_duration.update(iteration_duration);
-    }
-
-    fn update(&mut self, outcome: &VerificationOutcome) {
-        match outcome {
-            VerificationOutcome::Sat => self.amount_sat += 1,
-            VerificationOutcome::Unsat => self.amount_unsat += 1,
-            VerificationOutcome::Timelimit => self.timeouts += 1,
-            VerificationOutcome::Bug(_) => self.bugs_found += 1,
-            VerificationOutcome::Unknown => self.amount_unknown += 1,
-        }
-    }
-
-    fn amount_runs(&self) -> u32 {
-        self.amount_sat + self.amount_unsat + self.amount_unknown + self.bugs_found + self.timeouts
-    }
-
-    fn percentage_sat(&self) -> f32 {
-        let sat_unsat = self.amount_sat + self.amount_unsat;
-        if sat_unsat == 0 {
-            return 0.0;
-        }
-        self.amount_sat as f32 / sat_unsat as f32
-    }
-
-    fn is_sat_percentage_in_range(&self, range: &Range<f32>) -> bool {
-        range.contains(&self.percentage_sat())
-    }
-}
-
-impl Display for AccumulatedStatsAllRuns {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let AccumulatedStatsAllRuns {
-            amount_sat,
-            amount_unsat,
-            amount_unknown,
-            average_conflicts,
-            average_iteration_duration,
-            bugs_found,
-            errors,
-            timeouts,
-            large_solving_difference,
-        } = &self;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Total amount of instances generated",
-            self.amount_runs()
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Generated amount of SAT instances", amount_sat
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Generated amount of UNSAT instances", amount_unsat
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Generated amount of unknown instances", amount_unknown
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}%",
-            "Percentage SAT",
-            self.percentage_sat() * 100.0
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Average conflicts to solve",
-            average_conflicts.get_average()
-        )?;
-        writeln!(f, "{:<OFFSET$}: {}", "Bugs found", bugs_found)?;
-        writeln!(f, "{:<OFFSET$}: {}", "Errors occured", errors)?;
-        writeln!(f, "{:<OFFSET$}: {}", "Timeouts", timeouts)?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {:.3}ms",
-            "Average Time per Instance",
-            average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
-        )?;
-        write!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Runs with large solving time difference", large_solving_difference
-        )
     }
 }
 
