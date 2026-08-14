@@ -1,5 +1,5 @@
 binary = "software/hitpbo"
-args = [] # "--proof-compatible"]
+args = ["--no-rc"] # "--proof-compatible"]
 name = "hitpbo"
 parser_kind = "Default"
 proof_arg = "--prooffile"
@@ -9,7 +9,7 @@ args = [
     { arg_name = "--learn-cores" },
     { arg_name = "--learn-cores-sis" },
     { arg_name = "--no-seeding" },
-    { arg_name = "--no-rc" },
+    # { arg_name = "--no-rc" }, # causes bad config errors if not always enabled
     { arg_name = "--no-harden" },
     { arg_name = "--upb-hardening" },
     { arg_name = "--no-solver-var-renaming" },

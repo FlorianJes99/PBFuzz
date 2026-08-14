@@ -1,6 +1,5 @@
 target/
 out/
-logs/
 plots/
 important_findings/
 configuration/*
