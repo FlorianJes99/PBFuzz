@@ -48,6 +48,7 @@ three_literal_weight = 7   # simple 3-literal constraints
 cardinality_weight = 8     # cardinality constraints
 arbitrary_weight = 4       # arbitrary PB constraints
 exactly_one_weight = 0     # exactly one true literal constraints
+doubling_pairs_weight = 0  # doubling pairs
 
 # ------------------------------------------------------------------------------------------------------------------
 # 
@@ -97,3 +98,4 @@ three_literal_weight = 7   # simple 3-literal constraints
 cardinality_weight = 8     # cardinality constraints
 arbitrary_weight = 4       # arbitrary PB constraints
 exactly_one_weight = 0     # exactly one true literal constraints
+doubling_pairs_weight = 0  # doubling pairs
