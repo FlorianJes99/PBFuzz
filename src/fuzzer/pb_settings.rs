@@ -1,3 +1,7 @@
+use crate::fuzzer::generation::generator_settings::CoeffRange;
+use crate::fuzzer::generation::generator_settings::ConstraintDistribution;
+use crate::fuzzer::generation::generator_settings::ConstraintSettings;
+use crate::fuzzer::generation::generator_settings::DegreeRatio;
 use crate::fuzzer::helpers::OFFSET;
 use std::io;
 use std::path::Path;
@@ -6,10 +10,6 @@ use std::fmt::Display;
 
 use serde::Deserialize;
 use serde::Serialize;
-
-use crate::fuzzer::constraint_generator::ConstraintSettings;
-
-use crate::fuzzer::constraint_generator::ConstraintDistribution;
 
 use crate::fuzzer::grammar::PBKind;
 
@@ -175,14 +175,14 @@ impl Display for GenerationMethod {
 
 impl From<GeneratorSettings> for ConstraintSettings {
     fn from(val: GeneratorSettings) -> Self {
+        let coeff_range = CoeffRange::new(val.coeff_lower_bound, val.coeff_upper_bound);
+        let degree_ratio = DegreeRatio::new(val.lower_bound_degree, val.upper_bound_degree);
         ConstraintSettings::new(
             val.max_vars,
             val.max_unsat_for_single_constraint,
             val.amount_literals_per_constraint,
-            val.coeff_lower_bound,
-            val.coeff_upper_bound,
-            val.lower_bound_degree,
-            val.upper_bound_degree,
+            coeff_range,
+            degree_ratio,
             val.constraint_distribution,
         )
     }

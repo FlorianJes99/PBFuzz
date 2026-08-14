@@ -1,8 +1,10 @@
 use crate::fuzzer::{
     app_info::MetaData,
-    constraint_generator::{ConstraintGenerationError, ConstraintGenerator, FromSolutionData},
     constraints::constraint::Constraint,
     domain::LiteralIdent,
+    generation::constraint_generator::{
+        ConstraintGenerationError, ConstraintGenerator, FromSolutionData,
+    },
     grammar::{GenerationSource, PBGrammar, PBKind},
     pb_settings::{CancelCondition, GenerationMethod, PbSetting},
 };

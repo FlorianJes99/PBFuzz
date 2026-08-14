@@ -6,8 +6,7 @@ use rand::{
     rngs::StdRng,
     seq::{IndexedRandom, index},
 };
-use serde::{Deserialize, Serialize};
-use std::{fmt::Display, num::TryFromIntError};
+use std::num::TryFromIntError;
 use thiserror::Error;
 
 use crate::fuzzer::{
@@ -21,6 +20,7 @@ use crate::fuzzer::{
         three_literals::ThreeLiteralConstraint,
     },
     domain::{Comparison, Literal, LiteralIdent, MinFunction, SolutionModel},
+    generation::generator_settings::ConstraintSettings,
 };
 
 #[derive(Debug)]
@@ -129,8 +129,7 @@ impl ConstraintGenerator {
     ) -> Result<ArbitraryLengthConstraint, ConstraintGenerationError> {
         assert!(length != 0, "Length of constraint needs to be > 0");
         let ids = self.get_n_ids_sorted(length)?;
-        let start_val = self.settings.coeff_lower_bound;
-        let end_val = self.settings.coeff_upper_bound;
+        let (start_val, end_val) = self.settings.coeff_range.get_bounds();
         let mut literals = vec![];
         let mut min_coeff = i64::MAX;
         let mut max_coeff = i64::MIN;
@@ -152,9 +151,9 @@ impl ConstraintGenerator {
             }
         }
         let distance = (max_coeff - min_coeff).abs() as f64;
-        let range_start =
-            min_sum_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
-        let range_end = min_coeff + (self.settings.upper_bound_degree * distance).ceil() as i64;
+        let (lower_bound_degree, upper_bound_degree) = self.settings.degree_ratio.get_bounds();
+        let range_start = min_sum_coeff + (lower_bound_degree * distance).floor() as i64;
+        let range_end = min_coeff + (upper_bound_degree * distance).ceil() as i64;
         let range_start = min_coeff.max(range_start);
         // This ensures that we have always a single literal, which can already fulfill the equation
         let range_end = max_coeff.min(range_end);
@@ -188,10 +187,9 @@ impl ConstraintGenerator {
         }
         assert!(literals.len() as u32 == length);
         let distance = upper_max - lower_max;
-        let lower_bound =
-            lower_max + (self.settings.lower_bound_degree * distance as f64).ceil() as i32;
-        let upper_bound =
-            lower_max + (self.settings.upper_bound_degree * distance as f64).floor() as i32;
+        let (lower_bound_degree, upper_bound_degree) = self.settings.degree_ratio.get_bounds();
+        let lower_bound = lower_max + (lower_bound_degree * distance as f64).ceil() as i32;
+        let upper_bound = lower_max + (upper_bound_degree * distance as f64).floor() as i32;
         let degree = self.rand.random_range(lower_bound..upper_bound).into();
         CardinalityConstraint::new(literals, Comparison::GrEqual, degree).map_err(Into::into)
     }
@@ -201,8 +199,7 @@ impl ConstraintGenerator {
     ) -> Result<ThreeLiteralConstraint, ConstraintGenerationError> {
         let ids = self.get_three_ids_sorted()?;
         let comparison = Comparison::GrEqual;
-        let start_val = self.settings.coeff_lower_bound;
-        let end_val = self.settings.coeff_upper_bound;
+        let (start_val, end_val) = self.settings.coeff_range.get_bounds();
         let mut literals = vec![];
         let mut min_coeff = i64::MAX;
         let mut max_coeff = i64::MIN;
@@ -224,9 +221,9 @@ impl ConstraintGenerator {
             }
         }
         let distance = (max_coeff - min_coeff).abs() as f64;
-        let range_start =
-            min_sum_coeff + (self.settings.lower_bound_degree * distance).floor() as i64;
-        let range_end = min_coeff + (self.settings.upper_bound_degree * distance).ceil() as i64;
+        let (lower_bound_degree, upper_bound_degree) = self.settings.degree_ratio.get_bounds();
+        let range_start = min_sum_coeff + (lower_bound_degree * distance).floor() as i64;
+        let range_end = min_coeff + (upper_bound_degree * distance).ceil() as i64;
         let range_start = min_coeff.max(range_start);
         // This ensures that we have always a single literal, which can already fulfill the equation
         let range_end = max_coeff.min(range_end);
@@ -283,8 +280,7 @@ impl ConstraintGenerator {
         &mut self,
         model: &SolutionModel,
     ) -> Result<Box<dyn Constraint>, ConstraintGenerationError> {
-        let start_val = self.settings.coeff_lower_bound;
-        let end_val = self.settings.coeff_upper_bound;
+        let (start_val, end_val) = self.settings.coeff_range.get_bounds();
         let amount_lits = self.settings.amount_literals_per_constraint;
         let lits: Vec<_> = self
             .get_n_ids_sorted(amount_lits)?
@@ -436,109 +432,13 @@ pub enum ConstraintGenerationError {
     InvalidSampling(u32, u32),
 }
 
-/// All Settings needed for generation of constraints
-#[derive(Debug)]
-pub struct ConstraintSettings {
-    max_vars: u32,
-    max_unsat_for_single_constraint: u32,
-    amount_literals_per_constraint: u32,
-    /// Minimal value a coefficient can have
-    coeff_lower_bound: i32,
-    /// Maximum value a coefficient can have
-    coeff_upper_bound: i32,
-    /// Given the sampled literals in a constraint, the lower bound specifies the smallest possible
-    /// fraction of the given range
-    /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
-    ///       lowest possible degree (RHS) can be 3
-    lower_bound_degree: f64,
-    /// Given the sampled literals in a constraint, the upper bound specifies the highest possible
-    /// fraction of the given range
-    /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then
-    ///       highest possible degree (RHS) can be 6
-    upper_bound_degree: f64,
-    /// Specifies the weights of each constraint type.
-    ///
-    /// According to these weights, the constraints are proportionally sampled
-    /// E.g.:: (3,1,1,1) will lead to three_literal constraint taking up 50% of the samples,
-    /// while the other types will be equally distributed.
-    constraint_distribution: ConstraintDistribution,
-}
-
-/// Constraint distributions models the relative occurence of each constraint type in the entire grammar.
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-pub struct ConstraintDistribution {
-    three_literal_weight: i32,
-    cardinality_weight: i32,
-    arbitrary_weight: i32,
-    exactly_one_weight: i32,
-}
-
-impl ConstraintDistribution {
-    pub fn new(
-        three_literal_weight: i32,
-        cardinality_weight: i32,
-        arbitrary_weight: i32,
-        exactly_one_weight: i32,
-    ) -> Self {
-        Self {
-            three_literal_weight,
-            cardinality_weight,
-            arbitrary_weight,
-            exactly_one_weight,
-        }
-    }
-    fn get_weights(&self) -> [i32; 4] {
-        [
-            self.three_literal_weight,
-            self.cardinality_weight,
-            self.arbitrary_weight,
-            self.exactly_one_weight,
-        ]
-    }
-}
-
-impl Display for ConstraintDistribution {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let total = self.three_literal_weight + self.cardinality_weight + self.arbitrary_weight;
-        let percentages: [f32; 4] = self
-            .get_weights()
-            .map(|part| (part as f32 / total as f32) * 100.0);
-        write!(
-            f,
-            "Constraint Proportions: Three Literal ({:.2}%), Cardinality ({:.2}%), Arbitrary ({:.2}%), Ecactly One ({:.2}%)",
-            percentages[0], percentages[1], percentages[2], percentages[3]
-        )
-    }
-}
-
-impl ConstraintSettings {
-    pub fn new(
-        max_vars: u32,
-        max_unsat_for_single_constraint: u32,
-        amount_literals_per_constraint: u32,
-        coeff_lower_bound: i32,
-        coeff_upper_bound: i32,
-        lower_bound_degree: f64,
-        upper_bound_degree: f64,
-        constraint_distribution: ConstraintDistribution,
-    ) -> Self {
-        Self {
-            max_vars,
-            max_unsat_for_single_constraint,
-            amount_literals_per_constraint,
-            coeff_lower_bound,
-            coeff_upper_bound,
-            lower_bound_degree,
-            upper_bound_degree,
-            constraint_distribution,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
+    use crate::fuzzer::generation::generator_settings::{
+        CoeffRange, ConstraintDistribution, DegreeRatio,
+    };
     use rand::SeedableRng;
 
     #[test]
@@ -547,10 +447,8 @@ mod tests {
             max_vars: 50,
             max_unsat_for_single_constraint: 3,
             amount_literals_per_constraint: 10,
-            coeff_lower_bound: 2,
-            coeff_upper_bound: 5,
-            lower_bound_degree: 0.3,
-            upper_bound_degree: 0.5,
+            coeff_range: CoeffRange::new(2, 5),
+            degree_ratio: DegreeRatio::new(0.3, 0.5),
             constraint_distribution: ConstraintDistribution {
                 three_literal_weight: 3,
                 cardinality_weight: 1,
