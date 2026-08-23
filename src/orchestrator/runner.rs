@@ -1,12 +1,13 @@
 use crate::fuzzer::app_info::MetaData;
-use crate::fuzzer::helpers::{MoveFile, OFFSET, move_file, move_files, remove_files};
+use crate::fuzzer::helpers::OFFSET;
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
 use crate::orchestrator::evaluation::common::VerificationOutcome;
 use crate::orchestrator::evaluation::comparison::{ComparisonRun, compare_runs};
 use crate::orchestrator::evaluation::proof_checking::{ProofRun, verify_with_proof};
-use crate::orchestrator::folders::ERROR_FOLDER;
+use crate::orchestrator::issue_report::case_writer::{CaseWriter, IssueReport};
+use crate::orchestrator::issue_report::issue_record::IssueRecord;
 use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
@@ -112,14 +113,15 @@ pub fn run_orchestrator(
     prepare_sub_folders(&run_root)?;
     print_block("Configuration", config);
 
-    let save_all_files = args.save_all_files;
+    let index_file = run_root.join(DATA_FOLDER.name).join("cases.jsonl");
+    let case_writer = CaseWriter::new(&run_root, index_file);
     Orchestrator {
         fuzzer_output_dir: run_root,
         config,
         orchestrator_start: Instant::now(),
-        save_all_files,
         mode,
         thread_count,
+        case_writer,
     }
     .run(stop_condition, meta_data)
 }
@@ -162,10 +164,10 @@ enum OrchestrationMode {
 struct Orchestrator {
     fuzzer_output_dir: PathBuf,
     config: PbConfigFile,
-    save_all_files: bool,
     orchestrator_start: Instant,
     mode: OrchestrationMode,
     thread_count: u8,
+    case_writer: CaseWriter,
 }
 
 #[derive(Serialize)]
@@ -262,7 +264,7 @@ impl Orchestrator {
                         }
                         self.process_result(work_result, iteration, &mut csv_writer)
                     }
-                    Err(e) => self.handle_error(*e),
+                    Err(e) => self.handle_error(*e, iteration),
                 };
 
                 stats.update(stats_iteration);
@@ -343,64 +345,45 @@ impl Orchestrator {
         }
         let outcome = work_result.outcome.get_outcome();
 
-        let outcome_folder = outcome.get_sub_folder(&self.fuzzer_output_dir);
-
-        if !outcome_folder.exists()
-            && let Err(e) = std::fs::create_dir(&outcome_folder)
-        {
-            error!("{e}");
+        let mut files_to_move: Vec<&Path> = vec![];
+        let output_file = work_result.pb_file;
+        files_to_move.push(&output_file);
+        if let Some(proof_file) = &work_result.proof_file {
+            files_to_move.push(proof_file);
         }
+        let issue_record = IssueRecord {
+            iteration,
+            seed,
+            generation_method: work_result.generation_method,
+            status: outcome.get_status_as_string().to_string(),
+        };
         match outcome {
             VerificationOutcome::Sat
             | VerificationOutcome::Unsat
-            | VerificationOutcome::Timelimit => {}
+            | VerificationOutcome::Timelimit => {
+                for file in files_to_move {
+                    if let Err(e) = std::fs::remove_file(file) {
+                        error! {"{e}"};
+                    }
+                }
+            }
             VerificationOutcome::Bug(bug_reason) => {
                 info!("Found bug with seed {})!\nBug: {}", seed, bug_reason);
-                let file = outcome_folder.join(format!("{}_{}_report.md", seed, iteration));
-                let writer = File::create(file).map(BufWriter::new);
-                match writer {
-                    Ok(mut w) => {
-                        if let Err(e) = create_report(&mut w, &work_result.outcome) {
-                            error!("{e}")
-                        }
-                    }
-                    Err(e) => error!("{e}"),
+                if let Err(e) =
+                    self.case_writer
+                        .process(&issue_record, &work_result.outcome, &files_to_move)
+                {
+                    error!("{e}");
                 }
             }
             VerificationOutcome::Unknown => {
-                warn!("Solver outputted 'Unknown'");
-                let file = outcome_folder.join(format!("{}_{}_report.md", seed, iteration));
-                let writer = File::create(file).map(BufWriter::new);
-                match writer {
-                    Ok(mut w) => {
-                        if let Err(e) = create_report(&mut w, &work_result.outcome) {
-                            error!("{e}")
-                        }
-                    }
-                    Err(e) => error!("{e}"),
+                if let Err(e) =
+                    self.case_writer
+                        .process(&issue_record, &work_result.outcome, &files_to_move)
+                {
+                    error!("{e}");
                 }
             }
-        }
-        let mut files_to_move = vec![];
-        let output_file = work_result.pb_file;
-        let new_file_location = outcome_folder.join(format!("{}_{}.opb", seed, iteration));
-        files_to_move.push(MoveFile::new(output_file, new_file_location));
-        if let Some(proof_file) = work_result.proof_file {
-            let new_file_location_proof =
-                outcome_folder.join(format!("{}_{}.pbp", seed, iteration));
-            files_to_move.push(MoveFile::new(proof_file, new_file_location_proof));
-        }
-        let file_manipulation_result = match outcome {
-            // Only save the file if bug or unknown occurred
-            VerificationOutcome::Bug(_) | VerificationOutcome::Unknown => {
-                move_files(&files_to_move)
-            }
-            _ if self.save_all_files => move_files(&files_to_move),
-            // Delete the generated fuzzing result if not needed anymore
-            _ => remove_files(&files_to_move).map_err(|e| e.to_string()),
-        };
-        if let Err(err) = file_manipulation_result {
-            error!("{err}");
         }
         let duration_iteration_ms = work_result.start_worker.elapsed();
         let result = work_result.record.serialize(
@@ -442,40 +425,27 @@ impl Orchestrator {
         File::create(file_name).and_then(|mut f| f.write_all(data.as_bytes()))
     }
 
-    fn handle_error(&self, error: WorkError) -> SingleRunStats {
+    fn handle_error(&self, error: WorkError, iteration: u32) -> SingleRunStats {
         error!("{error}");
+        let issue_record = IssueRecord {
+            iteration,
+            seed: error.context.seed,
+            generation_method: error.context.generation_method,
+            status: "ERROR".to_string(),
+        };
+        let mut files_to_move: Vec<&Path> = vec![];
         let context = &error.context;
-        let folder = self
-            .fuzzer_output_dir
-            .join(ERROR_FOLDER.name)
-            .join(error.kind.get_folder_name());
-        if !folder.exists()
-            && let Err(e) = std::fs::create_dir(&folder)
-        {
-            error!("{e}");
-        }
         if let Some(pb_file) = &context.pb_file {
-            let dest = folder.join(format!("{}_error.opb", context.seed));
-            if let Err(e) = move_file(pb_file, &dest) {
-                error!("{e}");
-            }
+            files_to_move.push(pb_file);
         }
         if let Some(proof_file) = &context.proof_file {
-            let dest = folder.join(format!("{}_error.pbp", context.seed));
-            if let Err(e) = move_file(proof_file, &dest) {
-                error!("{e}");
-            }
+            files_to_move.push(proof_file);
         }
-        let report_path = folder.join(format!("{}_error_report.md", context.seed));
-        if let Ok(mut w) = File::create(&report_path).map(BufWriter::new) {
-            let _ = writeln!(w, "Seed: {}", context.seed);
-            let _ = writeln!(w, "Error: {error}");
-            for (i, run) in context.solver_runs.iter().enumerate() {
-                let _ = writeln!(w, "\n{:=^50}", format!("Run {}", i + 1));
-                let _ = writeln!(w, "{run}");
-            }
-        } else {
-            error!("Failed to create error report for seed {}", context.seed);
+        if let Err(e) = self
+            .case_writer
+            .process(&issue_record, &error, &files_to_move)
+        {
+            error!("{e}");
         }
         SingleRunStats::Error
     }
@@ -501,26 +471,6 @@ fn terminate_early(
             iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
         }
     }
-}
-
-fn create_report<W: Write>(writer: &mut W, outcome: &Outcome) -> io::Result<()> {
-    let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
-        writeln!(writer, "{:=^50}", "Solving")?;
-        writeln!(writer, "{}", data.record)?;
-        writeln!(writer)?;
-        writeln!(writer, "{:=^50}", "Parsing")?;
-        writeln!(writer, "{}", data.parsed_status)
-    };
-    match outcome {
-        Outcome::Comparison(comparison_run) => {
-            write_run_data(&comparison_run.parser_run1)?;
-            write_run_data(&comparison_run.parser_run2)?;
-        }
-        Outcome::Proof(proof_run) => write_run_data(&proof_run.parser_run)?,
-    }
-    writeln!(writer)?;
-    writeln!(writer, "{:=^50}", "Outcome")?;
-    writeln!(writer, "{}", outcome.get_outcome())
 }
 
 fn work_iteration(
@@ -665,6 +615,28 @@ enum Outcome {
     Proof(ProofRun),
 }
 
+impl IssueReport for Outcome {
+    fn create_report<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
+            writeln!(writer, "{:=^50}", "Solving")?;
+            writeln!(writer, "{}", data.record)?;
+            writeln!(writer)?;
+            writeln!(writer, "{:=^50}", "Parsing")?;
+            writeln!(writer, "{}", data.parsed_status)
+        };
+        match self {
+            Outcome::Comparison(comparison_run) => {
+                write_run_data(&comparison_run.parser_run1)?;
+                write_run_data(&comparison_run.parser_run2)?;
+            }
+            Outcome::Proof(proof_run) => write_run_data(&proof_run.parser_run)?,
+        }
+        writeln!(writer)?;
+        writeln!(writer, "{:=^50}", "Outcome")?;
+        writeln!(writer, "{}", self.get_outcome())
+    }
+}
+
 impl Outcome {
     fn get_outcome(&self) -> &VerificationOutcome {
         match self {
@@ -702,6 +674,20 @@ struct WorkErrorContext {
     proof_file: Option<PathBuf>,
     solver_runs: Vec<SolverExecutionRecord>,
     parser_status: Option<ParsedStatus>,
+    generation_method: GenerationMethod,
+}
+
+impl IssueReport for WorkError {
+    fn create_report<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let context = &self.context;
+        let _ = writeln!(writer, "Seed: {}", context.seed);
+        let _ = writeln!(writer, "Error: {self}");
+        for (i, run) in context.solver_runs.iter().enumerate() {
+            let _ = writeln!(writer, "\n{:=^50}", format!("Run {}", i + 1));
+            let _ = writeln!(writer, "{run}");
+        }
+        Ok(())
+    }
 }
 
 impl WorkErrorContext {
@@ -730,17 +716,6 @@ enum WorkErrorKind {
     Solver(#[from] SolverExecutionFailed),
     #[error("Parser failed: {0}")]
     Parser(#[from] OutputParsingError),
-}
-
-impl WorkErrorKind {
-    fn get_folder_name(&self) -> &'static str {
-        match self {
-            WorkErrorKind::Fuzzer(_) => "fuzzer",
-            WorkErrorKind::Io(_) => "io",
-            WorkErrorKind::Solver(_) => "solver",
-            WorkErrorKind::Parser(_) => "parser",
-        }
-    }
 }
 
 /// Cancel iterations of fuzzing runs

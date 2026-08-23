@@ -1,6 +1,7 @@
 mod csv_data;
 mod evaluation;
 mod folders;
+mod issue_report;
 pub mod orchestrator_args;
 mod parsing;
 mod run_statistics;

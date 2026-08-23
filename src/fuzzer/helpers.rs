@@ -1,11 +1,6 @@
-use std::{
-    fmt::Display,
-    fs::remove_file,
-    io,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{fmt::Display, fs::remove_file, io, path::PathBuf, time::Duration};
 
+use log::error;
 use serde::{Deserialize, Serialize};
 
 /// const to stretch strings to a specific length
@@ -127,26 +122,18 @@ pub fn remove_files(files: &[MoveFile]) -> io::Result<()> {
     }
     Ok(())
 }
-pub fn move_files(files: &[MoveFile]) -> Result<(), String> {
+
+/// Tries to move all files
+///
+/// If some operation failes, the error is simply logged.
+/// All the remaining files are still tried to be moved as well
+pub fn move_files(files: &[MoveFile]) -> io::Result<()> {
     for file in files {
-        move_file(&file.from, &file.to)?;
+        if let Err(e) = std::fs::rename(&file.from, &file.to) {
+            error!("{e}");
+        };
     }
     Ok(())
-}
-
-/// Moves a file from the specified source to a new destination
-///
-/// This operation calls the rename function of the std crate and is just a simple wrapper
-/// and formats the error value to a string.
-pub fn move_file(src: &Path, dst: &Path) -> Result<(), String> {
-    std::fs::rename(src, dst).map_err(|e| {
-        format!(
-            "Could not move file from {} to {}\n Error: {}",
-            src.display(),
-            dst.display(),
-            e
-        )
-    })
 }
 
 /// Helper function to check two floats on equality
