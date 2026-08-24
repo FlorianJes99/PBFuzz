@@ -30,7 +30,7 @@ args = [
     # all depend on --break-symmetries, skipped for the same reason
 
     { arg_name = "--optimizer", arg_type = { Values = ["scip", "roundingsat-sh", "roundingsat-ss", "roundingsat-cg", "localsearch", "greedy"]} },
-    { arg_name = "--exact-optimizer", arg_type = { Values = ["scip", "roundingsat-sh", "roundingsat-ss", "roundingsat-cg", "localsearch", "greedy"]} },
+    { arg_name = "--exact-optimizer", arg_type = { Values = ["scip", "roundingsat-sh", "roundingsat-ss", "roundingsat-cg", "greedy"]} }, # "localsearch", // throws error currently 
     { arg_name = "--optimizer-iterlim-nopt", arg_type = { IntRange = [1, 5000] } },
 
     { arg_name = "--sis-oracle", arg_type = { Values = ["roundingsat", "exact", "satsolver", "core-extractor"]} },

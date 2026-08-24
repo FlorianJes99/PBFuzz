@@ -260,7 +260,7 @@ impl Display for SolverExecutionRecord {
             stderr,
         } = &self;
         writeln!(f, "Solver {}: {}", name, binary)?;
-        writeln!(f, "Arguments: {}", used_args.join(", "))?;
+        writeln!(f, "Arguments: {}", used_args.join(" "))?;
         writeln!(
             f,
             "Execution Time: {}s {}ms",
