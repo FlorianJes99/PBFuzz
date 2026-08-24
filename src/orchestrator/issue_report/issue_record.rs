@@ -6,6 +6,14 @@ use crate::fuzzer::pb_settings::GenerationMethod;
 pub struct IssueRecord {
     pub iteration: u32,
     pub seed: u64,
-    pub generation_method: GenerationMethod,
     pub status: String,
+    pub generation_method: GenerationMethod,
+    pub with_option_fuzzing: bool,
+    pub solver_infos: Vec<SolverInfo>,
+}
+
+#[derive(Serialize)]
+pub struct SolverInfo {
+    pub binary: String,
+    pub used_args: Vec<String>,
 }

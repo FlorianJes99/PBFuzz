@@ -11,7 +11,7 @@ pub enum CsvRecord {
 
 impl CsvRecord {
     pub fn serialize(
-        self,
+        &self,
         iteration: u32,
         duration_iteration_ms: f32,
         writer: &mut Writer<File>,
@@ -25,13 +25,6 @@ impl CsvRecord {
                 let r = proof_record.create_iteration_record(iteration, duration_iteration_ms);
                 writer.serialize(r)
             }
-        }
-    }
-
-    pub fn get_seed(&self) -> u64 {
-        match self {
-            CsvRecord::Comparison(comparison_record) => comparison_record.seed,
-            CsvRecord::Proof(proof_record) => proof_record.seed,
         }
     }
 }
@@ -49,7 +42,7 @@ pub struct ComparisonRecord {
 
 impl ComparisonRecord {
     pub fn create_iteration_record(
-        self,
+        &self,
         iteration: u32,
         duration_iteration_ms: f32,
     ) -> IterationComparisonRecord {
@@ -94,7 +87,7 @@ pub struct ProofRecord {
 
 impl ProofRecord {
     pub fn create_iteration_record(
-        self,
+        &self,
         iteration: u32,
         duration_iteration_ms: f32,
     ) -> IterationProofRecord {

@@ -7,7 +7,7 @@ use crate::orchestrator::evaluation::common::VerificationOutcome;
 use crate::orchestrator::evaluation::comparison::{ComparisonRun, compare_runs};
 use crate::orchestrator::evaluation::proof_checking::{ProofRun, verify_with_proof};
 use crate::orchestrator::issue_report::case_writer::{CaseWriter, IssueReport};
-use crate::orchestrator::issue_report::issue_record::IssueRecord;
+use crate::orchestrator::issue_report::issue_record::{IssueRecord, SolverInfo};
 use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
@@ -204,7 +204,7 @@ impl Orchestrator {
             ctrc_flag.store(true, Ordering::Relaxed);
         })?;
         let count_runs = Arc::new(AtomicU32::new(0));
-        let (sender, receiver) = channel::<Result<WorkResult, Box<WorkError>>>();
+        let (sender, receiver) = channel::<WorkResult>();
         let start = Instant::now();
         thread::scope(|s| {
             for i in 1..=self.thread_count {
@@ -240,32 +240,27 @@ impl Orchestrator {
             let mut stats = RunStatistics::new();
             for (iteration, res) in receiver.iter().enumerate() {
                 let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
-                let stats_iteration = match res {
-                    Ok(work_result) => {
-                        match &work_result.generation_method {
-                            GenerationMethod::Random => random_count += 1,
-                            GenerationMethod::FromSolution => from_solution_count += 1,
-                        }
-                        let percentage_range_sat = 0.20..0.7;
-                        if terminate_early(
-                            iteration,
-                            &work_result.generation_method,
-                            &stats,
-                            &percentage_range_sat,
-                        ) {
-                            println!("Terminating early!");
-                            println!(
-                                "Percentage SAT Instances not in range ({}..{})",
-                                percentage_range_sat.start, percentage_range_sat.end
-                            );
-                            cancelled.store(true, Ordering::Relaxed);
-                            // We don't break here, because we want to process the remaining running threads
-                            // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
-                        }
-                        self.process_result(work_result, iteration, &mut csv_writer)
-                    }
-                    Err(e) => self.handle_error(*e, iteration),
-                };
+                match &res.meta.generation_method {
+                    GenerationMethod::Random => random_count += 1,
+                    GenerationMethod::FromSolution => from_solution_count += 1,
+                }
+                let percentage_range_sat = 0.20..0.7;
+                if terminate_early(
+                    iteration,
+                    &res.meta.generation_method,
+                    &stats,
+                    &percentage_range_sat,
+                ) {
+                    println!("Terminating early!");
+                    println!(
+                        "Percentage SAT Instances not in range ({}..{})",
+                        percentage_range_sat.start, percentage_range_sat.end
+                    );
+                    cancelled.store(true, Ordering::Relaxed);
+                    // We don't break here, because we want to process the remaining running threads
+                    // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
+                }
+                let stats_iteration = self.process_result(res, iteration, &mut csv_writer);
 
                 stats.update(stats_iteration);
 
@@ -330,90 +325,118 @@ impl Orchestrator {
         iteration: u32,
         csv_writer: &mut Writer<File>,
     ) -> SingleRunStats {
-        let seed = work_result.record.get_seed();
+        let seed = work_result.meta.seed;
 
-        let mut large_solving_difference = false;
-        if let CsvRecord::Comparison(r) = &work_result.record
-            && (r.problem_solving_duration_solver1_ms - r.problem_solving_duration_solver2_ms).abs()
-                >= 2000.0
-        {
-            warn!(
-                "Solving time diverged more than 2 seconds!: {}ms - {}ms",
-                r.problem_solving_duration_solver1_ms, r.problem_solving_duration_solver2_ms
-            );
-            large_solving_difference = true;
-        }
-        let outcome = work_result.outcome.get_outcome();
-
-        let mut files_to_move: Vec<&Path> = vec![];
-        let output_file = work_result.pb_file;
-        files_to_move.push(&output_file);
-        if let Some(proof_file) = &work_result.proof_file {
-            files_to_move.push(proof_file);
-        }
         let issue_record = IssueRecord {
             iteration,
             seed,
-            generation_method: work_result.generation_method,
-            status: outcome.get_status_as_string().to_string(),
+            generation_method: work_result.meta.generation_method,
+            status: work_result.payload.get_status_as_string().to_string(),
+            with_option_fuzzing: work_result.meta.with_option_fuzzing,
+            solver_infos: work_result.get_execution_records(),
         };
-        match outcome {
-            VerificationOutcome::Sat
-            | VerificationOutcome::Unsat
-            | VerificationOutcome::Timelimit => {
-                for file in files_to_move {
-                    if let Err(e) = std::fs::remove_file(file) {
-                        error! {"{e}"};
+
+        match &work_result.payload {
+            WorkPayload::Verdict(solver_verdict) => {
+                let mut large_solving_difference = false;
+                if let CsvRecord::Comparison(r) = &solver_verdict.record
+                    && (r.problem_solving_duration_solver1_ms
+                        - r.problem_solving_duration_solver2_ms)
+                        .abs()
+                        >= 2000.0
+                {
+                    warn!(
+                        "Solving time diverged more than 2 seconds!: {}ms - {}ms",
+                        r.problem_solving_duration_solver1_ms,
+                        r.problem_solving_duration_solver2_ms
+                    );
+                    large_solving_difference = true;
+                }
+                let outcome = solver_verdict.outcome.get_outcome();
+
+                let mut files_to_move: Vec<&Path> = vec![];
+                let output_file = &solver_verdict.pb_file;
+                files_to_move.push(output_file);
+                if let Some(proof_file) = &solver_verdict.proof_file {
+                    files_to_move.push(proof_file);
+                }
+                match outcome {
+                    VerificationOutcome::Sat
+                    | VerificationOutcome::Unsat
+                    | VerificationOutcome::Timelimit => {
+                        for file in files_to_move {
+                            if let Err(e) = std::fs::remove_file(file) {
+                                error! {"{e}"};
+                            }
+                        }
+                    }
+                    VerificationOutcome::Bug(bug_reason) => {
+                        info!("Found bug with seed {})!\nBug: {}", seed, bug_reason);
+                        if let Err(e) =
+                            self.case_writer
+                                .process(&issue_record, &work_result, &files_to_move)
+                        {
+                            error!("{e}");
+                        }
+                    }
+                    VerificationOutcome::Unknown => {
+                        if let Err(e) =
+                            self.case_writer
+                                .process(&issue_record, &work_result, &files_to_move)
+                        {
+                            error!("{e}");
+                        }
                     }
                 }
+                let duration_iteration_ms = work_result.meta.start_worker.elapsed();
+                let result = solver_verdict.record.serialize(
+                    iteration,
+                    duration_iteration_ms.as_secs_f32() * 1000.0,
+                    csv_writer,
+                );
+                if let Err(err) = result {
+                    error!("Could not write record into csv\nError: {}", err);
+                }
+                if iteration.is_multiple_of(1000) {
+                    // flush every 1000 iterations to file
+                    let result = csv_writer.flush();
+                    if let Err(err) = result {
+                        error!("Could not flush to file\n Error: {}", err);
+                    }
+                }
+                let simple_result = match outcome {
+                    VerificationOutcome::Sat => SimpleResult::Sat,
+                    VerificationOutcome::Unsat => SimpleResult::Unsat,
+                    VerificationOutcome::Timelimit => SimpleResult::Timeout,
+                    VerificationOutcome::Bug(_) => SimpleResult::Bug,
+                    VerificationOutcome::Unknown => SimpleResult::Unknown,
+                };
+                SingleRunStats::Successfull(SingleRunRecord::new(
+                    simple_result,
+                    0,
+                    duration_iteration_ms,
+                    large_solving_difference,
+                ))
             }
-            VerificationOutcome::Bug(bug_reason) => {
-                info!("Found bug with seed {})!\nBug: {}", seed, bug_reason);
+            WorkPayload::Error(work_error) => {
+                error!("{work_error}");
+                let mut files_to_move: Vec<&Path> = vec![];
+                let context = &work_error.context;
+                if let Some(pb_file) = &context.pb_file {
+                    files_to_move.push(pb_file);
+                }
+                if let Some(proof_file) = &context.proof_file {
+                    files_to_move.push(proof_file);
+                }
                 if let Err(e) =
                     self.case_writer
-                        .process(&issue_record, &work_result.outcome, &files_to_move)
+                        .process(&issue_record, &work_result, &files_to_move)
                 {
                     error!("{e}");
                 }
-            }
-            VerificationOutcome::Unknown => {
-                if let Err(e) =
-                    self.case_writer
-                        .process(&issue_record, &work_result.outcome, &files_to_move)
-                {
-                    error!("{e}");
-                }
+                SingleRunStats::Error
             }
         }
-        let duration_iteration_ms = work_result.start_worker.elapsed();
-        let result = work_result.record.serialize(
-            iteration,
-            duration_iteration_ms.as_secs_f32() * 1000.0,
-            csv_writer,
-        );
-        if let Err(err) = result {
-            error!("Could not write record into csv\nError: {}", err);
-        }
-        if iteration.is_multiple_of(1000) {
-            // flush every 1000 iterations to file
-            let result = csv_writer.flush();
-            if let Err(err) = result {
-                error!("Could not flush to file\n Error: {}", err);
-            }
-        }
-        let simple_result = match outcome {
-            VerificationOutcome::Sat => SimpleResult::Sat,
-            VerificationOutcome::Unsat => SimpleResult::Unsat,
-            VerificationOutcome::Timelimit => SimpleResult::Timeout,
-            VerificationOutcome::Bug(_) => SimpleResult::Bug,
-            VerificationOutcome::Unknown => SimpleResult::Unknown,
-        };
-        SingleRunStats::Successfull(SingleRunRecord::new(
-            simple_result,
-            0,
-            duration_iteration_ms,
-            large_solving_difference,
-        ))
     }
 
     fn save_settings(&self) -> io::Result<()> {
@@ -423,31 +446,6 @@ impl Orchestrator {
             .join(DATA_FOLDER.name)
             .join("settings.toml");
         File::create(file_name).and_then(|mut f| f.write_all(data.as_bytes()))
-    }
-
-    fn handle_error(&self, error: WorkError, iteration: u32) -> SingleRunStats {
-        error!("{error}");
-        let issue_record = IssueRecord {
-            iteration,
-            seed: error.context.seed,
-            generation_method: error.context.generation_method,
-            status: "ERROR".to_string(),
-        };
-        let mut files_to_move: Vec<&Path> = vec![];
-        let context = &error.context;
-        if let Some(pb_file) = &context.pb_file {
-            files_to_move.push(pb_file);
-        }
-        if let Some(proof_file) = &context.proof_file {
-            files_to_move.push(proof_file);
-        }
-        if let Err(e) = self
-            .case_writer
-            .process(&issue_record, &error, &files_to_move)
-        {
-            error!("{e}");
-        }
-        SingleRunStats::Error
     }
 }
 
@@ -479,162 +477,164 @@ fn work_iteration(
     mode: &OrchestrationMode,
     program_info: MetaData,
     thread_id: u8,
-) -> Result<WorkResult, Box<WorkError>> {
+) -> WorkResult {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let file_name = format!("{thread_id}_test_{seed}");
-    let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
-    debug!("Running Fuzzer with seed {seed}...");
-    let mut context = WorkErrorContext::new(seed);
-    let grammar = PBGenerator::create_grammar(seed, settings, program_info)
-        .map_err(|kind| context.clone().into_error(kind.into()))?;
-    let duration_write_to_file = File::create(&output_file)
-        .map(BufWriter::new)
-        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
-        .map_err(|e| context.clone().into_error(e.into()))?;
-
-    context.pb_file = Some(output_file.clone());
-    let grammar_statistics = grammar.get_statistics();
-    let output_generation_duration =
-        *grammar_statistics.get_generation_time() + duration_write_to_file;
-    debug!(
-        "Created problem in: {:.3}ms",
-        (output_generation_duration.as_secs_f32() * 1000.0)
-    );
-
-    let pb_kind = settings.get_problem_kind();
     let with_option_fuzzing = rand::random_bool(0.2); // option fuzzing with 20% probability
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
     let generation_method = *settings.get_generation_method();
-    match mode {
-        OrchestrationMode::Comparison(p1, p2) => {
-            let SolverAndParser {
-                solver: s1,
-                parser: p1,
-            } = p1;
-            let SolverAndParser {
-                solver: s2,
-                parser: p2,
-            } = p2;
-            let output_bin1 = s1
-                .run(&output_file, with_option_fuzzing)
-                .map_err(|e| context.clone().into_error(e.into()))?;
-            let time_bin1 = output_bin1.record.execution_time;
 
-            context.solver_runs = vec![output_bin1.record.clone()];
+    let meta = WorkMetaData {
+        start_worker,
+        seed,
+        generation_method,
+        with_option_fuzzing,
+    };
 
-            let output_bin2 = s2
-                .run(&output_file, with_option_fuzzing)
-                .map_err(|e| context.clone().into_error(e.into()))?;
-            let time_bin2 = output_bin2.record.execution_time;
+    let payload_result: Result<SolverVerdict, Box<WorkError>> = (|| {
+        let file_name = format!("{thread_id}_test_{seed}");
+        let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
+        debug!("Running Fuzzer with seed {seed}...");
+        let mut context = WorkErrorContext::default();
 
-            context.solver_runs = context
-                .solver_runs
-                .into_iter()
-                .chain(vec![output_bin2.record.clone()])
-                .collect();
+        let grammar = PBGenerator::create_grammar(seed, settings, program_info)
+            .map_err(|kind| context.clone().into_error(kind.into()))?;
 
-            let start_output_extraction = Instant::now();
-            let r1 = p1
-                .parse(output_bin1, pb_kind)
-                .map_err(|e| context.clone().into_error(e.into()))?;
-            context.parser_status = Some(r1.parsed_status.clone());
-            let r2 = p2
-                .parse(output_bin2, pb_kind)
-                .map_err(|e| context.into_error(e.into()))?;
-            let conflicts1 = r1.parsed_status.get_conflicts();
-            let conflicts2 = r2.parsed_status.get_conflicts();
-            let comparison_run = compare_runs(r1, r2, &grammar);
-            let time_output_extraction = start_output_extraction.elapsed();
-            let comparison_record = ComparisonRecord {
-                result: comparison_run.outcome.get_status_as_string(),
-                problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
-                problem_solving_duration_solver1_ms: time_bin1.as_secs_f32() * 1000.0,
-                problem_solving_duration_solver2_ms: time_bin2.as_secs_f32() * 1000.0,
-                problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
-                conflicts1,
-                conflicts2,
-                seed,
-            };
-            Ok(WorkResult {
-                start_worker,
-                pb_file: output_file,
-                proof_file: None,
-                outcome: Outcome::Comparison(comparison_run),
-                record: CsvRecord::Comparison(comparison_record),
-                generation_method,
-            })
+        let duration_write_to_file = File::create(&output_file)
+            .map(BufWriter::new)
+            .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
+            .map_err(|e| context.clone().into_error(e.into()))?;
+
+        context.pb_file = Some(output_file.clone());
+        let grammar_statistics = grammar.get_statistics();
+        let output_generation_duration =
+            *grammar_statistics.get_generation_time() + duration_write_to_file;
+        debug!(
+            "Created problem in: {:.3}ms",
+            (output_generation_duration.as_secs_f32() * 1000.0)
+        );
+
+        let pb_kind = settings.get_problem_kind();
+
+        match mode {
+            OrchestrationMode::Comparison(p1, p2) => {
+                let SolverAndParser {
+                    solver: s1,
+                    parser: p1,
+                } = p1;
+                let SolverAndParser {
+                    solver: s2,
+                    parser: p2,
+                } = p2;
+
+                let output_bin1 = s1
+                    .run(&output_file, with_option_fuzzing)
+                    .map_err(|e| context.clone().into_error(e.into()))?;
+                let time_bin1 = output_bin1.record.execution_time;
+                context.solver_runs = vec![output_bin1.record.clone()];
+
+                let output_bin2 = s2
+                    .run(&output_file, with_option_fuzzing)
+                    .map_err(|e| context.clone().into_error(e.into()))?;
+                let time_bin2 = output_bin2.record.execution_time;
+                context.solver_runs = context
+                    .solver_runs
+                    .into_iter()
+                    .chain(vec![output_bin2.record.clone()])
+                    .collect();
+
+                let start_output_extraction = Instant::now();
+                let r1 = p1
+                    .parse(output_bin1, pb_kind)
+                    .map_err(|e| context.clone().into_error(e.into()))?;
+                context.parser_status = Some(r1.parsed_status.clone());
+                let r2 = p2
+                    .parse(output_bin2, pb_kind)
+                    .map_err(|e| context.clone().into_error(e.into()))?;
+
+                let conflicts1 = r1.parsed_status.get_conflicts();
+                let conflicts2 = r2.parsed_status.get_conflicts();
+                let comparison_run = compare_runs(r1, r2, &grammar);
+                let time_output_extraction = start_output_extraction.elapsed();
+
+                let comparison_record = ComparisonRecord {
+                    result: comparison_run.outcome.get_status_as_string(),
+                    problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
+                    problem_solving_duration_solver1_ms: time_bin1.as_secs_f32() * 1000.0,
+                    problem_solving_duration_solver2_ms: time_bin2.as_secs_f32() * 1000.0,
+                    problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
+                    conflicts1,
+                    conflicts2,
+                    seed,
+                };
+
+                Ok(SolverVerdict {
+                    pb_file: output_file,
+                    proof_file: None,
+                    outcome: Outcome::Comparison(comparison_run),
+                    record: CsvRecord::Comparison(comparison_record),
+                })
+            }
+            OrchestrationMode::ProofChecking(solver_and_parser) => {
+                let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
+                let problem_solving_start = Instant::now();
+                let SolverAndParser { solver, parser } = solver_and_parser;
+
+                let output = solver
+                    .run_with_proof(&output_file, &proof_file, with_option_fuzzing)
+                    .map_err(|e| context.clone().into_error(e.into()))?;
+                let problem_solving_duration = problem_solving_start.elapsed();
+
+                let context = WorkErrorContext {
+                    solver_runs: vec![output.record.clone()],
+                    proof_file: Some(proof_file.clone()),
+                    ..context
+                };
+
+                let start_output_parsing = Instant::now();
+                let r = parser
+                    .parse(output, pb_kind)
+                    .map_err(|e| context.into_error(e.into()))?;
+                let duration_output_parsing = start_output_parsing.elapsed();
+                let conflicts = r.parsed_status.get_conflicts();
+
+                let proof_checking_start = Instant::now();
+                let proof_run = verify_with_proof(r, &grammar, &output_file, &proof_file);
+                let proof_checking_duration = proof_checking_start.elapsed();
+
+                let proof_record = ProofRecord {
+                    result: proof_run.outcome.get_status_as_string(),
+                    problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
+                    problem_solving_duration_program: problem_solving_duration.as_secs_f32()
+                        * 1000.0,
+                    problem_parsing_duration_ms: duration_output_parsing.as_secs_f32() * 1000.0,
+                    problem_checking_duration_ms: proof_checking_duration.as_secs_f32() * 1000.0,
+                    conflicts,
+                    seed,
+                };
+
+                Ok(SolverVerdict {
+                    pb_file: output_file,
+                    proof_file: Some(proof_file),
+                    outcome: Outcome::Proof(proof_run),
+                    record: CsvRecord::Proof(proof_record),
+                })
+            }
         }
-        OrchestrationMode::ProofChecking(solver_and_parser) => {
-            let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
-            let problem_solving_start = Instant::now();
-            let SolverAndParser { solver, parser } = solver_and_parser;
-            let output = solver
-                .run_with_proof(&output_file, &proof_file, with_option_fuzzing)
-                .map_err(|e| context.clone().into_error(e.into()))?;
-            let problem_solving_duration = problem_solving_start.elapsed();
-            let context = WorkErrorContext {
-                solver_runs: vec![output.record.clone()],
-                proof_file: Some(proof_file.clone()),
-                ..context
-            };
-            let start_output_parsing = Instant::now();
-            let r = parser
-                .parse(output, pb_kind)
-                .map_err(|e| context.into_error(e.into()))?;
-            let duration_output_parsing = start_output_parsing.elapsed();
-            let conflicts = r.parsed_status.get_conflicts();
-            let proof_checking_start = Instant::now();
-            let proof_run = verify_with_proof(r, &grammar, &output_file, &proof_file);
-            let proof_checking_duration = proof_checking_start.elapsed();
-            let proof_record = ProofRecord {
-                result: proof_run.outcome.get_status_as_string(),
-                problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
-                problem_solving_duration_program: problem_solving_duration.as_secs_f32() * 1000.0,
-                problem_parsing_duration_ms: duration_output_parsing.as_secs_f32() * 1000.0,
-                problem_checking_duration_ms: proof_checking_duration.as_secs_f32() * 1000.0,
-                conflicts,
-                seed,
-            };
-            Ok(WorkResult {
-                start_worker,
-                pb_file: output_file,
-                proof_file: Some(proof_file),
-                outcome: Outcome::Proof(proof_run),
-                record: CsvRecord::Proof(proof_record),
-                generation_method,
-            })
-        }
-    }
+    })();
+
+    let payload = match payload_result {
+        Ok(verdict) => WorkPayload::Verdict(Box::new(verdict)),
+        Err(err) => WorkPayload::Error(err),
+    };
+
+    WorkResult { meta, payload }
 }
-
 enum Outcome {
     Comparison(ComparisonRun),
     Proof(ProofRun),
-}
-
-impl IssueReport for Outcome {
-    fn create_report<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
-            writeln!(writer, "{:=^50}", "Solving")?;
-            writeln!(writer, "{}", data.record)?;
-            writeln!(writer)?;
-            writeln!(writer, "{:=^50}", "Parsing")?;
-            writeln!(writer, "{}", data.parsed_status)
-        };
-        match self {
-            Outcome::Comparison(comparison_run) => {
-                write_run_data(&comparison_run.parser_run1)?;
-                write_run_data(&comparison_run.parser_run2)?;
-            }
-            Outcome::Proof(proof_run) => write_run_data(&proof_run.parser_run)?,
-        }
-        writeln!(writer)?;
-        writeln!(writer, "{:=^50}", "Outcome")?;
-        writeln!(writer, "{}", self.get_outcome())
-    }
 }
 
 impl Outcome {
@@ -644,15 +644,120 @@ impl Outcome {
             Outcome::Proof(proof_run) => &proof_run.outcome,
         }
     }
+
+    fn get_solver_infos(&self) -> Vec<SolverInfo> {
+        match self {
+            Outcome::Comparison(comparison_run) => vec![
+                convert_to_solver_info(&comparison_run.parser_run1.record),
+                convert_to_solver_info(&comparison_run.parser_run2.record),
+            ],
+            Outcome::Proof(proof_run) => vec![convert_to_solver_info(&proof_run.parser_run.record)],
+        }
+    }
+}
+
+fn convert_to_solver_info(r: &SolverExecutionRecord) -> SolverInfo {
+    SolverInfo {
+        binary: r.binary.clone(),
+        used_args: r.used_args.clone(),
+    }
 }
 
 struct WorkResult {
+    meta: WorkMetaData,
+    payload: WorkPayload,
+}
+
+impl WorkResult {
+    fn get_execution_records(&self) -> Vec<SolverInfo> {
+        match &self.payload {
+            WorkPayload::Verdict(solver_verdict) => solver_verdict.outcome.get_solver_infos(),
+            WorkPayload::Error(work_error) => work_error
+                .context
+                .solver_runs
+                .iter()
+                .map(|r| SolverInfo {
+                    binary: r.binary.clone(),
+                    used_args: r.used_args.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl IssueReport for WorkResult {
+    fn create_report<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        let WorkMetaData {
+            start_worker: _,
+            seed,
+            generation_method,
+            with_option_fuzzing,
+        } = &self.meta;
+        writeln!(w, "Seed: {seed}")?;
+        writeln!(w, "Generation Method: {generation_method}")?;
+        writeln!(w, "Option fuzzing: {with_option_fuzzing}")?;
+        match &self.payload {
+            WorkPayload::Verdict(solver_verdict) => {
+                let outcome = &solver_verdict.outcome;
+                let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
+                    writeln!(w, "{:=^50}", "Solving")?;
+                    writeln!(w, "{}", data.record)?;
+                    writeln!(w)?;
+                    writeln!(w, "{:=^50}", "Parsing")?;
+                    writeln!(w, "{}", data.parsed_status)
+                };
+                match outcome {
+                    Outcome::Comparison(comparison_run) => {
+                        write_run_data(&comparison_run.parser_run1)?;
+                        write_run_data(&comparison_run.parser_run2)?;
+                    }
+                    Outcome::Proof(proof_run) => write_run_data(&proof_run.parser_run)?,
+                }
+                writeln!(w)?;
+                writeln!(w, "{:=^50}", "Outcome")?;
+                writeln!(w, "{}", outcome.get_outcome())
+            }
+
+            WorkPayload::Error(work_error) => {
+                let context = &work_error.context;
+                let _ = writeln!(w, "Error: {work_error}");
+                for (i, run) in context.solver_runs.iter().enumerate() {
+                    let _ = writeln!(w, "\n{:=^50}", format!("Run {}", i + 1));
+                    let _ = writeln!(w, "{run}");
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+struct WorkMetaData {
     start_worker: Instant,
+    seed: u64,
+    generation_method: GenerationMethod,
+    with_option_fuzzing: bool,
+}
+
+enum WorkPayload {
+    Verdict(Box<SolverVerdict>),
+    Error(Box<WorkError>),
+}
+impl WorkPayload {
+    fn get_status_as_string(&self) -> &str {
+        match self {
+            WorkPayload::Verdict(solver_verdict) => {
+                solver_verdict.outcome.get_outcome().get_status_as_string()
+            }
+            WorkPayload::Error(_) => "ERROR",
+        }
+    }
+}
+
+struct SolverVerdict {
     pb_file: PathBuf,
     proof_file: Option<PathBuf>,
     outcome: Outcome,
     record: CsvRecord,
-    generation_method: GenerationMethod,
 }
 
 #[derive(Debug, Error)]
@@ -663,41 +768,19 @@ struct WorkError {
 
 impl Display for WorkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "[seed={}] {}", self.context.seed, self.kind)
+        writeln!(f, "WorkError - Kind: {}", self.kind)
     }
 }
 
 #[derive(Debug, Clone, Default)]
 struct WorkErrorContext {
-    seed: u64,
     pb_file: Option<PathBuf>,
     proof_file: Option<PathBuf>,
     solver_runs: Vec<SolverExecutionRecord>,
     parser_status: Option<ParsedStatus>,
-    generation_method: GenerationMethod,
-}
-
-impl IssueReport for WorkError {
-    fn create_report<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let context = &self.context;
-        let _ = writeln!(writer, "Seed: {}", context.seed);
-        let _ = writeln!(writer, "Error: {self}");
-        for (i, run) in context.solver_runs.iter().enumerate() {
-            let _ = writeln!(writer, "\n{:=^50}", format!("Run {}", i + 1));
-            let _ = writeln!(writer, "{run}");
-        }
-        Ok(())
-    }
 }
 
 impl WorkErrorContext {
-    fn new(seed: u64) -> Self {
-        WorkErrorContext {
-            seed,
-            ..Default::default()
-        }
-    }
-
     fn into_error(self, kind: WorkErrorKind) -> WorkError {
         WorkError {
             context: self,

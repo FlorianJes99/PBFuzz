@@ -9,8 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use itertools::Itertools;
 use log::info;
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::orchestrator::solving::solver_config::{OptionalArgs, SolverConfig};
@@ -110,11 +110,6 @@ impl<P> SolverData<P> {
         });
 
         let name = self.name.clone();
-        let used_command = format!(
-            "{} {}",
-            cmd.get_program().display(),
-            cmd.get_args().map(|a| a.display()).join(" ")
-        );
         let (state, stderr) = match rx.recv_timeout(timeout) {
             Ok((stdout, stderr)) => {
                 let status = child.wait()?;
@@ -136,7 +131,8 @@ impl<P> SolverData<P> {
         };
         let record = SolverExecutionRecord {
             name,
-            used_command,
+            binary: cmd.get_program().display().to_string(),
+            used_args: cmd.get_args().map(|a| a.display().to_string()).collect(),
             execution_time: start.elapsed(),
             stderr,
         };
@@ -245,10 +241,11 @@ impl SolverData<NoProof> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SolverExecutionRecord {
     pub name: String,
-    pub used_command: String,
+    pub binary: String,
+    pub used_args: Vec<String>,
     pub execution_time: Duration,
     pub stderr: Vec<u8>,
 }
@@ -257,11 +254,13 @@ impl Display for SolverExecutionRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let SolverExecutionRecord {
             name,
-            used_command,
+            binary,
+            used_args,
             execution_time,
             stderr,
         } = &self;
-        writeln!(f, "Solver {}: {}", name, used_command)?;
+        writeln!(f, "Solver {}: {}", name, binary)?;
+        writeln!(f, "Arguments: {}", used_args.join(", "))?;
         writeln!(
             f,
             "Execution Time: {}s {}ms",
