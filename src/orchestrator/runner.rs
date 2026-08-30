@@ -122,6 +122,7 @@ pub fn run_orchestrator(
         mode,
         thread_count,
         case_writer,
+        save_all_files: args.save_all_files,
     }
     .run(stop_condition, meta_data)
 }
@@ -168,6 +169,7 @@ struct Orchestrator {
     mode: OrchestrationMode,
     thread_count: u8,
     case_writer: CaseWriter,
+    save_all_files: bool,
 }
 
 #[derive(Serialize)]
@@ -360,31 +362,28 @@ impl Orchestrator {
                 if let Some(proof_file) = &solver_verdict.proof_file {
                     files_to_move.push(proof_file);
                 }
-                match outcome {
-                    VerificationOutcome::Sat
-                    | VerificationOutcome::Unsat
-                    | VerificationOutcome::Timelimit => {
-                        for file in files_to_move {
-                            if let Err(e) = std::fs::remove_file(file) {
-                                error! {"{e}"};
-                            }
-                        }
+
+                let should_process = self.save_all_files
+                    || !matches!(
+                        outcome,
+                        VerificationOutcome::Sat
+                            | VerificationOutcome::Unsat
+                            | VerificationOutcome::Timelimit
+                    );
+                if let VerificationOutcome::Bug(bug_reason) = outcome {
+                    info!("Found bug with seed {})!\nBug: {}", seed, bug_reason);
+                }
+                if should_process {
+                    if let Err(e) =
+                        self.case_writer
+                            .process(&issue_record, &work_result, &files_to_move)
+                    {
+                        error!("{e}");
                     }
-                    VerificationOutcome::Bug(bug_reason) => {
-                        info!("Found bug with seed {})!\nBug: {}", seed, bug_reason);
-                        if let Err(e) =
-                            self.case_writer
-                                .process(&issue_record, &work_result, &files_to_move)
-                        {
-                            error!("{e}");
-                        }
-                    }
-                    VerificationOutcome::Unknown => {
-                        if let Err(e) =
-                            self.case_writer
-                                .process(&issue_record, &work_result, &files_to_move)
-                        {
-                            error!("{e}");
+                } else {
+                    for file in files_to_move {
+                        if let Err(e) = std::fs::remove_file(file) {
+                            error! {"{e}"};
                         }
                     }
                 }

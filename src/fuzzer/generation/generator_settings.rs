@@ -36,7 +36,7 @@ impl CoeffRange {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct DegreeRatio {
     /// Given the sampled literals in a constraint, the lower bound specifies the smallest possible
     /// fraction of the given range

@@ -150,7 +150,7 @@ impl PBGenerator {
                             constraints,
                             min_constraint,
                             start.elapsed(),
-                            crate::fuzzer::grammar::GenerationSource::Random {
+                            GenerationSource::Random {
                                 amount_unsat_assignments: Option::None,
                             },
                         ))

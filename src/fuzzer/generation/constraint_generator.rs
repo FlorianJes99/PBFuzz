@@ -4,7 +4,7 @@ use rand::{
     RngExt,
     distr::{Distribution, weighted::WeightedIndex},
     rngs::StdRng,
-    seq::{IndexedRandom, index},
+    seq::IndexedRandom,
 };
 use std::num::TryFromIntError;
 use thiserror::Error;
@@ -20,12 +20,15 @@ use crate::fuzzer::{
         three_literals::ThreeLiteralConstraint,
     },
     domain::{Comparison, Literal, LiteralIdent, MinFunction, SolutionModel},
-    generation::generator_settings::ConstraintSettings,
+    generation::{
+        generator_settings::{ConstraintSettings, DegreeRatio},
+        literal_sampler::LiteralSampler,
+    },
 };
 
 #[derive(Debug)]
 pub struct ConstraintGenerator {
-    rand: StdRng,
+    literal_sampler: LiteralSampler,
     dist: WeightedIndex<u32>,
     settings: ConstraintSettings,
 }
@@ -34,15 +37,16 @@ impl ConstraintGenerator {
     pub fn new(rand: StdRng, settings: ConstraintSettings) -> Self {
         let dist = WeightedIndex::new(settings.constraint_distribution.get_weights())
             .expect("We should only create valid distributions, when sampling constraint types");
+        let literal_sampler = LiteralSampler::new(rand, settings.max_vars);
         Self {
-            rand,
+            literal_sampler,
             dist,
             settings,
         }
     }
 
     fn sample_constraint_kind(&mut self) -> ConstraintKind {
-        let index = self.dist.sample(&mut self.rand);
+        let index = self.dist.sample(&mut self.literal_sampler.rand);
         match index {
             0 => ConstraintKind::ThreeLiteral,
             1 => ConstraintKind::Cardinality,
@@ -56,7 +60,7 @@ impl ConstraintGenerator {
     pub fn generate_random_constraint_with_unsat_count(
         &mut self,
     ) -> Result<Box<dyn CostraintWithUnsatAssignments>, ConstraintGenerationError> {
-        if self.rand.random_bool(0.5) {
+        if self.literal_sampler.rand.random_bool(0.5) {
             let mut c = self.generate_three_literal()?;
             // Assert we always return a constraint which fulfills max unsat assignments requirement
             let unsat_single_constraint: u128 =
@@ -66,7 +70,7 @@ impl ConstraintGenerator {
             }
             Ok(Box::new(c))
         } else {
-            let amount_literals = self.rand.random_range(5..=20);
+            let amount_literals = self.literal_sampler.rand.random_range(5..=20);
             let c = self.generate_cardinality(amount_literals)?;
             Ok(Box::new(c))
         }
@@ -127,43 +131,26 @@ impl ConstraintGenerator {
         &mut self,
         length: u32,
     ) -> Result<ArbitraryLengthConstraint, ConstraintGenerationError> {
-        assert!(length != 0, "Length of constraint needs to be > 0");
-        let ids = self.get_n_ids_sorted(length)?;
+        let ids = self.literal_sampler.get_n_ids_sorted(length)?;
         let (start_val, end_val) = self.settings.coeff_range.get_bounds();
-        let mut literals = vec![];
-        let mut min_coeff = i64::MAX;
-        let mut max_coeff = i64::MIN;
-        let mut min_sum_coeff = 0;
-        for id in &ids {
-            let coeff = self.sample_without_zero_from_range(start_val, end_val);
-            literals.push(id.to_literal(coeff));
-
-            let coeff = coeff.into();
-
-            if coeff < 0 {
-                min_sum_coeff += coeff;
-            }
-            if coeff > max_coeff {
-                max_coeff = coeff;
-            }
-            if coeff < min_coeff {
-                min_coeff = coeff
-            }
-        }
-        let distance = (max_coeff - min_coeff).abs() as f64;
-        let (lower_bound_degree, upper_bound_degree) = self.settings.degree_ratio.get_bounds();
-        let range_start = min_sum_coeff + (lower_bound_degree * distance).floor() as i64;
-        let range_end = min_coeff + (upper_bound_degree * distance).ceil() as i64;
-        let range_start = min_coeff.max(range_start);
-        // This ensures that we have always a single literal, which can already fulfill the equation
-        let range_end = max_coeff.min(range_end);
-        assert!(
-            range_start <= range_end,
-            "Range start should be smaller than / equal to range end"
-        );
+        let coeffs: Vec<_> = ids
+            .iter()
+            .map(|_| {
+                self.literal_sampler
+                    .sample_without_zero_from_range(start_val, end_val)
+            })
+            .collect();
+        let (start_range, end_range) = compute_degree_range(&coeffs, self.settings.degree_ratio);
 
         let comparison = Comparison::GrEqual;
-        let degree = self.rand.random_range(range_start..=range_end);
+        let degree = self
+            .literal_sampler
+            .sample_from_range_inclusive(start_range, end_range);
+        let literals = ids
+            .iter()
+            .zip(coeffs)
+            .map(|(id, c)| id.to_literal(c))
+            .collect();
         Ok(ArbitraryLengthConstraint::new(literals, comparison, degree))
     }
 
@@ -171,71 +158,40 @@ impl ConstraintGenerator {
         &mut self,
         length: u32,
     ) -> Result<CardinalityConstraint, ConstraintGenerationError> {
-        let ids = self.get_n_ids_sorted(length)?;
-        assert!(ids.len() as u32 == length);
-        let mut literals = vec![];
-        let mut lower_max: i32 = 0;
-        let mut upper_max: i32 = 0;
-        for id in &ids {
-            if self.rand.random_bool(0.5) {
-                literals.push(id.to_literal(1));
-                upper_max += 1;
-            } else {
-                literals.push(id.to_literal(-1));
-                lower_max -= 1;
-            }
-        }
-        assert!(literals.len() as u32 == length);
-        let distance = upper_max - lower_max;
-        let (lower_bound_degree, upper_bound_degree) = self.settings.degree_ratio.get_bounds();
-        let lower_bound = lower_max + (lower_bound_degree * distance as f64).ceil() as i32;
-        let upper_bound = lower_max + (upper_bound_degree * distance as f64).floor() as i32;
-        let degree = self.rand.random_range(lower_bound..upper_bound).into();
+        let ids = self.literal_sampler.get_n_ids_sorted(length)?;
+        let coeffs: Vec<_> = ids
+            .iter()
+            .map(|_| self.literal_sampler.sample_cardinality_value())
+            .collect();
+        let (start_range, end_range) = compute_degree_range(&coeffs, self.settings.degree_ratio);
+        let degree = self
+            .literal_sampler
+            .sample_from_range_inclusive(start_range, end_range);
+        let literals = ids
+            .iter()
+            .zip(coeffs)
+            .map(|(id, c)| id.to_literal(c))
+            .collect();
         CardinalityConstraint::new(literals, Comparison::GrEqual, degree).map_err(Into::into)
     }
 
     pub fn generate_three_literal(
         &mut self,
     ) -> Result<ThreeLiteralConstraint, ConstraintGenerationError> {
-        let ids = self.get_three_ids_sorted()?;
-        let comparison = Comparison::GrEqual;
         let (start_val, end_val) = self.settings.coeff_range.get_bounds();
-        let mut literals = vec![];
-        let mut min_coeff = i64::MAX;
-        let mut max_coeff = i64::MIN;
-        let mut min_sum_coeff = 0;
-        for id in &ids {
-            let coeff = self.sample_without_zero_from_range(start_val, end_val);
-            literals.push(id.to_literal(coeff));
-
-            let coeff = coeff.into();
-
-            if coeff < 0 {
-                min_sum_coeff += coeff;
-            }
-            if coeff > max_coeff {
-                max_coeff = coeff;
-            }
-            if coeff < min_coeff {
-                min_coeff = coeff
-            }
-        }
-        let distance = (max_coeff - min_coeff).abs() as f64;
-        let (lower_bound_degree, upper_bound_degree) = self.settings.degree_ratio.get_bounds();
-        let range_start = min_sum_coeff + (lower_bound_degree * distance).floor() as i64;
-        let range_end = min_coeff + (upper_bound_degree * distance).ceil() as i64;
-        let range_start = min_coeff.max(range_start);
-        // This ensures that we have always a single literal, which can already fulfill the equation
-        let range_end = max_coeff.min(range_end);
-        assert!(
-            range_start <= range_end,
-            "Range start should be smaller than / equal to range end"
-        );
-        let literals = literals.try_into().expect("Unreachable");
+        let ids = self.literal_sampler.get_three_ids_sorted()?;
+        let coeffs = ids.map(|_| {
+            self.literal_sampler
+                .sample_without_zero_from_range(start_val, end_val)
+        });
+        let (start_range, end_range) = compute_degree_range(&coeffs, self.settings.degree_ratio);
+        let literals = std::array::from_fn(|i| ids[i].to_literal(coeffs[i]));
+        let comparison = Comparison::GrEqual;
         Ok(ThreeLiteralConstraint::new(
             literals,
             comparison,
-            self.rand.random_range(range_start..=range_end),
+            self.literal_sampler
+                .sample_from_range_inclusive(start_range, end_range),
         ))
     }
 
@@ -244,6 +200,7 @@ impl ConstraintGenerator {
         length: u32,
     ) -> Result<ExactlyOneConstraint, ConstraintGenerationError> {
         let literals: Vec<Literal> = self
+            .literal_sampler
             .get_n_ids_sorted(length)?
             .iter()
             .map(|id| id.to_literal(1))
@@ -264,7 +221,7 @@ impl ConstraintGenerator {
         let amount_vars = self.settings.max_vars;
         let lits: Vec<_> = (1..=amount_vars).map(LiteralIdent::new).collect();
         let solution: SolutionModel = lits
-            .sample(&mut self.rand, (amount_vars / 3) as usize)
+            .sample(&mut self.literal_sampler.rand, (amount_vars / 3) as usize)
             .cloned()
             .into();
         let constraints = (0..amount_constraints)
@@ -283,9 +240,15 @@ impl ConstraintGenerator {
         let (start_val, end_val) = self.settings.coeff_range.get_bounds();
         let amount_lits = self.settings.amount_literals_per_constraint;
         let lits: Vec<_> = self
+            .literal_sampler
             .get_n_ids_sorted(amount_lits)?
             .iter()
-            .map(|id| id.to_literal(self.sample_without_zero_from_range(start_val, end_val)))
+            .map(|id| {
+                id.to_literal(
+                    self.literal_sampler
+                        .sample_without_zero_from_range(start_val, end_val),
+                )
+            })
             .collect();
         let comparison = Comparison::GrEqual;
         let (min_lit, sum_lit) = lits
@@ -308,77 +271,11 @@ impl ConstraintGenerator {
         amount: usize,
     ) -> MinFunction {
         let literals = possible_vars
-            .sample(&mut self.rand, amount)
+            .sample(&mut self.literal_sampler.rand, amount)
             .sorted()
-            .map(|id| id.to_literal(self.sample_without_zero_from_range(-3, 3)))
+            .map(|id| id.to_literal(self.literal_sampler.sample_without_zero_from_range(-3, 3)))
             .collect();
         MinFunction::new(literals)
-    }
-
-    fn sample_without_zero_from_range(&mut self, start_val: i32, end_val: i32) -> i32 {
-        loop {
-            let rand_sample = self.rand.random_range(start_val..=end_val);
-            if rand_sample != 0 {
-                if start_val > 0 && self.rand.random_bool(0.5) {
-                    // if the range is only positive we want to invert some coefficients
-                    return -rand_sample;
-                }
-                if end_val < 0 && self.rand.random_bool(0.5) {
-                    // if the range is only negative we want to invert some coefficients
-                    return -rand_sample;
-                }
-                return rand_sample;
-            }
-        }
-    }
-
-    fn get_n_ids_sorted(&mut self, n: u32) -> Result<Vec<LiteralIdent>, ConstraintGenerationError> {
-        self.get_n_ids(n, true)
-    }
-
-    /// Generate n ids to use for creation of literals in a single constraint
-    fn get_n_ids(
-        &mut self,
-        n: u32,
-        sort: bool,
-    ) -> Result<Vec<LiteralIdent>, ConstraintGenerationError> {
-        let mut indices: Vec<_> = index::sample(
-            &mut self.rand,
-            self.settings.max_vars.try_into()?,
-            n.try_into()?,
-        )
-        .iter()
-        .collect();
-
-        if sort {
-            // sort the indices in increasing oder
-            indices.sort_unstable();
-        }
-
-        indices
-            .into_iter()
-            .map(|x| -> Result<LiteralIdent, ConstraintGenerationError> {
-                // Add +1 because we want ids from 1..=len and sample are from 0..len
-                (x + 1)
-                    .try_into()
-                    .map(LiteralIdent::new)
-                    .map_err(Into::into)
-            })
-            .collect()
-    }
-
-    fn get_three_ids_sorted(&mut self) -> Result<[LiteralIdent; 3], ConstraintGenerationError> {
-        let mut ids: [LiteralIdent; 3] =
-            index::sample_array(&mut self.rand, self.settings.max_vars.try_into()?)
-                .ok_or(ConstraintGenerationError::InvalidSampling(
-                    3,
-                    self.settings.max_vars,
-                ))?
-                // Add +1 because we want ids from 1..=len and sample are from 0..len
-                .map(|x| x as u32 + 1)
-                .map(LiteralIdent::new);
-        ids.sort();
-        Ok(ids)
     }
 
     /// Generates constraint with the following structure
@@ -392,7 +289,7 @@ impl ConstraintGenerator {
             constraint_length.is_multiple_of(2),
             "This type of constraint expects to have an even amount of literals"
         );
-        let ids = self.get_n_ids(constraint_length, false)?;
+        let ids = self.literal_sampler.get_n_ids(constraint_length, false)?;
         let n: u32 = (ids.len() / 2).try_into()?;
         let literals = ids
             .chunks(2)
@@ -412,6 +309,26 @@ impl ConstraintGenerator {
     }
 }
 
+/// Finds the lower and upper bound values in a list of coefficients
+///
+/// Given n coeffs and a fractional lower and upper bound, determine the minimum
+/// and maximum value of a range
+fn compute_degree_range(coeffs: &[i32], degree_ratio: DegreeRatio) -> (i64, i64) {
+    assert!(!coeffs.is_empty());
+    let sum_negative: i64 = coeffs.iter().filter(|&&c| c < 0).map(|&c| c as i64).sum();
+    let sum_positive: i64 = coeffs.iter().filter(|&&c| c > 0).map(|&c| c as i64).sum();
+    let distance = (sum_positive - sum_negative).abs() as f64;
+    let (lower_bound_degree, upper_bound_degree) = degree_ratio.get_bounds();
+    let range_start = sum_negative + (lower_bound_degree * distance).floor() as i64;
+    let range_end = sum_negative + (upper_bound_degree * distance).ceil() as i64;
+
+    assert!(
+        range_start <= range_end,
+        "Range start should be smaller than / equal to range end"
+    );
+    (range_start, range_end)
+}
+
 pub struct FromSolutionData {
     pub constraints: Vec<Box<dyn Constraint>>,
     pub solution: SolutionModel,
@@ -422,8 +339,6 @@ pub struct FromSolutionData {
 /// This can be either Errors wrapped and propagated upwards from underlying calls or new error types
 #[derive(Debug, Error)]
 pub enum ConstraintGenerationError {
-    #[error("Subtraction failed due to overflow: {0} - {1}")]
-    SubtractionOverflow(i64, i64),
     #[error("Construction of constraint failed")]
     Invalid(#[from] InvalidConstraintConstruction),
     #[error(transparent)]
@@ -440,6 +355,19 @@ mod tests {
         CoeffRange, ConstraintDistribution, DegreeRatio,
     };
     use rand::SeedableRng;
+
+    #[test]
+    fn test_range_bounds() {
+        let degree_ratio = DegreeRatio::new(0.25, 0.5);
+        let coeffs = vec![-4, -2, 6, 8];
+        let (start, end) = compute_degree_range(&coeffs, degree_ratio);
+        println!("{}..={}", start, end);
+        assert!(!(start..=end).contains(&-2));
+        assert!((start..=end).contains(&-1));
+
+        assert!((start..=end).contains(&4));
+        assert!(!(start..=end).contains(&5));
+    }
 
     #[test]
     fn test_pairs_constraint() {

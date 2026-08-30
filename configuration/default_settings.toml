@@ -24,11 +24,11 @@ coeff_upper_bound = 10
 
 # Fraction of the possible assignment range used as the lower bound for the degree (RHS)
 # E.g. 0.3 means the lowest possible RHS is 30% of the total range
-lower_bound_degree = 0.4
+lower_bound_degree = 0.35
 
 # Fraction of the possible assignment range used as the upper bound for the degree (RHS)
 # E.g. 0.6 means the highest possible RHS is 60% of the total range
-upper_bound_degree = 0.6
+upper_bound_degree = 0.575
 
 # --- Cancel Condition ---
 #   "CountUnsat"       — stop after a total number of unsatisfying assignments
