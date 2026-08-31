@@ -123,7 +123,7 @@ impl RandomConstraintGenerator {
                 Ok(Box::new(c))
             }
             ConstraintKind::DoublingPairs => {
-                let n = 2; // TODO: determine length here
+                let n = self.settings.amount_literals_per_constraint;
                 let c = generate_doubling_pairs_constraint(literal_sampler, n)?;
                 Ok(Box::new(c))
             }

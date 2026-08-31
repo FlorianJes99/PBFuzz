@@ -99,7 +99,18 @@ impl ConstraintDistribution {
 
 impl Display for ConstraintDistribution {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let total = self.three_literal_weight + self.cardinality_weight + self.arbitrary_weight;
+        let ConstraintDistribution {
+            three_literal_weight,
+            cardinality_weight,
+            arbitrary_weight,
+            exactly_one_weight,
+            doubling_pairs_weight,
+        } = self;
+        let total = three_literal_weight
+            + cardinality_weight
+            + arbitrary_weight
+            + exactly_one_weight
+            + doubling_pairs_weight;
         let [
             three_literal,
             cardinality,
