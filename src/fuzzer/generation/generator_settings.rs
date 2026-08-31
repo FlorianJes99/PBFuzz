@@ -18,7 +18,7 @@ pub struct ConstraintSettings {
     pub constraint_distribution: ConstraintDistribution,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct CoeffRange {
     /// Minimal value a coefficient can have
     lower: i32,

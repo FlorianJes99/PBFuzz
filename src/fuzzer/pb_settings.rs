@@ -35,7 +35,7 @@ impl PbConfigFile {
             from_solution,
         } = self;
         let generation_method = generation_method.unwrap_or_else(|| {
-            if rand::random_bool(0.5) {
+            if rand::random_bool(1.0) {
                 GenerationMethod::Random
             } else {
                 GenerationMethod::FromSolution
@@ -111,26 +111,26 @@ impl PbSetting {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct GeneratorSettings {
     /// maximal amount of different variables used in the grammar
-    max_vars: u32,
+    pub max_vars: u32,
     /// different methods to determine when to stop generation of constraints
     cancel_condition: CancelCondition,
     /// How many literals a single constraint should have
-    amount_literals_per_constraint: u32,
+    pub amount_literals_per_constraint: u32,
     max_unsat_for_single_constraint: u32,
     /// The possible values a coefficient of a literal can be
     /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
-    coeff_lower_bound: i32,
-    coeff_upper_bound: i32,
+    pub coeff_lower_bound: i32,
+    pub coeff_upper_bound: i32,
     /// Given the sampled literals in a constraint, the lower bound specifies the smallest possible
     /// fraction of the given range
     /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
     ///       lowest possible degree (RHS) can be 3
-    lower_bound_degree: f64,
+    pub lower_bound_degree: f64,
     /// Given the sampled literals in a constraint, the upper bound specifies the highest possible
     /// fraction of the given range
     /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then
     ///       highest possible degree (RHS) can be 6
-    upper_bound_degree: f64,
+    pub upper_bound_degree: f64,
     constraint_distribution: ConstraintDistribution,
 }
 

@@ -1,17 +1,17 @@
 use crate::fuzzer::domain::LiteralIdent;
-use crate::fuzzer::generation::constraint_generator::ConstraintGenerationError;
+use crate::fuzzer::generation::constraint_errors::ConstraintGenerationError;
 use rand::RngExt;
 use rand::rngs::StdRng;
 use rand::seq::index;
 
 #[derive(Debug)]
-pub(super) struct LiteralSampler {
-    pub(super) rand: StdRng,
+pub struct LiteralSampler {
+    pub rand: StdRng,
     max_vars: u32,
 }
 
 impl LiteralSampler {
-    pub(super) fn new(rand: StdRng, max_vars: u32) -> Self {
+    pub fn new(rand: StdRng, max_vars: u32) -> Self {
         Self { rand, max_vars }
     }
 
@@ -25,7 +25,7 @@ impl LiteralSampler {
         if self.rand.random_bool(0.5) { 1 } else { -1 }
     }
 
-    pub(super) fn sample_without_zero_from_range(&mut self, start_val: i32, end_val: i32) -> i32 {
+    pub fn sample_without_zero_from_range(&mut self, start_val: i32, end_val: i32) -> i32 {
         loop {
             let rand_sample = self.rand.random_range(start_val..=end_val);
             if rand_sample != 0 {

@@ -1,9 +1,12 @@
+use crate::fuzzer::generation::constraint_errors::ConstraintGenerationError;
 use crate::fuzzer::{
     app_info::MetaData,
     constraints::constraint::Constraint,
-    domain::LiteralIdent,
-    generation::constraint_generator::{
-        ConstraintGenerationError, ConstraintGenerator, FromSolutionData,
+    domain::{LiteralIdent, MinFunction},
+    generation::{
+        from_solution_generator::{FromSolutionData, FromSolutionSettings, generate_from_solution},
+        literal_sampler::LiteralSampler,
+        random_constraints_generator::RandomConstraintGenerator,
     },
     grammar::{GenerationSource, PBGrammar, PBKind},
     pb_settings::{CancelCondition, GenerationMethod, PbSetting},
@@ -13,24 +16,24 @@ use log::info;
 use std::time::Instant;
 use thiserror::Error;
 
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
 
 #[derive(Debug)]
 pub struct PBGenerator {
     seed: u64,
-    constraint_generator: ConstraintGenerator,
+    literal_sampler: LiteralSampler,
     settings: PbSetting,
 }
 
 impl PBGenerator {
     fn new(seed: u64, settings: PbSetting) -> Self {
-        let constr_generator = ConstraintGenerator::new(
+        let literal_sampler = LiteralSampler::new(
             StdRng::seed_from_u64(seed),
-            settings.get_generator_settings().into(),
+            settings.get_generator_settings().max_vars,
         );
         Self {
             seed,
-            constraint_generator: constr_generator,
+            literal_sampler,
             settings,
         }
     }
@@ -70,10 +73,7 @@ impl PBGenerator {
                 let distinct_literal_ids: Vec<LiteralIdent> = distinct_literal_ids(&constraints);
                 let min_constraint = match self.settings.get_problem_kind() {
                     PBKind::PBS => Option::None,
-                    PBKind::PBO => Some(
-                        self.constraint_generator
-                            .generate_min_function(&distinct_literal_ids, 5),
-                    ),
+                    PBKind::PBO => Some(self.generate_min_function(&distinct_literal_ids, 5)),
                 };
                 Ok(PBGrammar::new(
                     program_info,
@@ -91,20 +91,21 @@ impl PBGenerator {
                 info!("Generating {} constraints", max_constraints);
                 match self.settings.get_generation_method() {
                     GenerationMethod::FromSolution => {
+                        let settings = FromSolutionSettings::create_from(
+                            self.settings.get_generator_settings(),
+                            *max_constraints,
+                        );
                         let FromSolutionData {
                             constraints,
                             solution,
-                        } = self
-                            .constraint_generator
-                            .generate_from_solution(*max_constraints)?;
+                        } = generate_from_solution(&mut self.literal_sampler, settings)?;
                         let distinct_literal_ids: Vec<LiteralIdent> =
                             distinct_literal_ids(&constraints);
                         let min_constraint = match self.settings.get_problem_kind() {
                             PBKind::PBS => Option::None,
-                            PBKind::PBO => Some(
-                                self.constraint_generator
-                                    .generate_min_function(&distinct_literal_ids, 20),
-                            ),
+                            PBKind::PBO => {
+                                Some(self.generate_min_function(&distinct_literal_ids, 20))
+                            }
                         };
                         let objective = min_constraint.as_ref().map(|obj| {
                             obj.get_literals()
@@ -129,8 +130,14 @@ impl PBGenerator {
                     }
 
                     GenerationMethod::Random => {
+                        let random_generator = RandomConstraintGenerator::new(
+                            self.settings.get_generator_settings().into(),
+                        );
                         let constraints: Vec<_> = (0..*max_constraints)
-                            .map(|_| self.constraint_generator.generate_random_constraint())
+                            .map(|_| {
+                                random_generator
+                                    .generate_random_constraint(&mut self.literal_sampler)
+                            })
                             .collect::<Result<_, _>>()?;
                         assert_eq!(*max_constraints, constraints.len() as u64);
 
@@ -138,10 +145,9 @@ impl PBGenerator {
                             distinct_literal_ids(&constraints);
                         let min_constraint = match self.settings.get_problem_kind() {
                             PBKind::PBS => Option::None,
-                            PBKind::PBO => Some(
-                                self.constraint_generator
-                                    .generate_min_function(&distinct_literal_ids, 5),
-                            ),
+                            PBKind::PBO => {
+                                Some(self.generate_min_function(&distinct_literal_ids, 5))
+                            }
                         };
                         Ok(PBGrammar::new(
                             program_info,
@@ -164,17 +170,31 @@ impl PBGenerator {
         &mut self,
         max_unsat_assignments: u64,
     ) -> Result<(Vec<Box<dyn Constraint>>, u64), ConstraintGenerationError> {
+        let random_generator =
+            RandomConstraintGenerator::new(self.settings.get_generator_settings().into());
         let mut constraints: Vec<Box<dyn Constraint>> = vec![];
         let mut current_unsat = 0;
         while current_unsat <= max_unsat_assignments {
-            let c = self
-                .constraint_generator
-                .generate_random_constraint_with_unsat_count()?;
+            let c = random_generator
+                .generate_random_constraint_with_unsat_count(&mut self.literal_sampler)?;
             let unsat_for_c = c.amount_unsat_assignments();
             current_unsat += unsat_for_c as u64;
             constraints.push(c);
         }
         Ok((constraints, current_unsat))
+    }
+
+    fn generate_min_function(
+        &mut self,
+        possible_vars: &[LiteralIdent],
+        amount: usize,
+    ) -> MinFunction {
+        let literals = possible_vars
+            .sample(&mut self.literal_sampler.rand, amount)
+            .sorted()
+            .map(|id| id.to_literal(self.literal_sampler.sample_without_zero_from_range(-3, 3)))
+            .collect();
+        MinFunction::new(literals)
     }
 }
 
