@@ -35,7 +35,7 @@ impl PbConfigFile {
             from_solution,
         } = self;
         let generation_method = generation_method.unwrap_or_else(|| {
-            if rand::random_bool(1.0) {
+            if rand::random_bool(0.5) {
                 GenerationMethod::Random
             } else {
                 GenerationMethod::FromSolution
