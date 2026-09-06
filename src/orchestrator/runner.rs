@@ -15,7 +15,7 @@ use crate::orchestrator::run_statistics::{
     RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats,
 };
 use crate::orchestrator::solving::solver::{
-    NoProof, SolverExecutionFailed, SolverExecutionRecord, SolverInitializationError, WithProof,
+    MissingProofLoggingArgument, NoProof, SolverExecutionFailed, SolverExecutionRecord, WithProof,
 };
 use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
@@ -44,6 +44,7 @@ use std::{
 };
 
 use csv::Writer;
+use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rand::{self, RngExt};
 use serde::Serialize;
@@ -94,9 +95,9 @@ pub fn run_orchestrator(
     let mode = match &args.program_config2 {
         Some(p2) => {
             let c1 = SolverConfig::load_from_file(&args.program_config1)?;
-            let solver1 = SolverAndParser::from_config(c1, timelimit)?;
+            let solver1 = SolverAndParser::from_config(c1, timelimit);
             let c2 = SolverConfig::load_from_file(p2)?;
-            let solver2 = SolverAndParser::from_config(c2, timelimit)?;
+            let solver2 = SolverAndParser::from_config(c2, timelimit);
             OrchestrationMode::Comparison(solver1, solver2)
         }
         None => {
@@ -133,15 +134,12 @@ struct SolverAndParser<T = NoProof> {
 }
 
 impl SolverAndParser {
-    fn from_config(
-        config: SolverConfig,
-        timelimit: Duration,
-    ) -> Result<Self, SolverInitializationError> {
+    fn from_config(config: SolverConfig, timelimit: Duration) -> Self {
         let parser = ParserImpl::from_kind(&config.parser_kind);
-        Ok(Self {
-            solver: SolverData::into_solver(config, timelimit)?,
+        Self {
+            solver: SolverData::into_solver(config, timelimit),
             parser,
-        })
+        }
     }
 }
 
@@ -149,7 +147,7 @@ impl SolverAndParser<WithProof> {
     fn from_config_proof(
         config: SolverConfig,
         timelimit: Duration,
-    ) -> Result<Self, SolverInitializationError> {
+    ) -> Result<Self, MissingProofLoggingArgument> {
         let parser = ParserImpl::from_kind(&config.parser_kind);
         Ok(Self {
             solver: SolverData::into_proof_solver(config, timelimit)?,
@@ -647,18 +645,19 @@ impl Outcome {
     fn get_solver_infos(&self) -> Vec<SolverInfo> {
         match self {
             Outcome::Comparison(comparison_run) => vec![
-                convert_to_solver_info(&comparison_run.parser_run1.record),
-                convert_to_solver_info(&comparison_run.parser_run2.record),
+                convert_to_solver_info(&comparison_run.parser_run1),
+                convert_to_solver_info(&comparison_run.parser_run2),
             ],
-            Outcome::Proof(proof_run) => vec![convert_to_solver_info(&proof_run.parser_run.record)],
+            Outcome::Proof(proof_run) => vec![convert_to_solver_info(&proof_run.parser_run)],
         }
     }
 }
 
-fn convert_to_solver_info(r: &SolverExecutionRecord) -> SolverInfo {
+fn convert_to_solver_info(parser_run: &ParserRun) -> SolverInfo {
     SolverInfo {
-        binary: r.binary.clone(),
-        used_args: r.used_args.clone(),
+        binary: parser_run.record.binary.clone(),
+        used_args: parser_run.record.used_args.clone(),
+        parsed_status: parser_run.parsed_status.get_status_str(),
     }
 }
 
@@ -671,15 +670,7 @@ impl WorkResult {
     fn get_execution_records(&self) -> Vec<SolverInfo> {
         match &self.payload {
             WorkPayload::Verdict(solver_verdict) => solver_verdict.outcome.get_solver_infos(),
-            WorkPayload::Error(work_error) => work_error
-                .context
-                .solver_runs
-                .iter()
-                .map(|r| SolverInfo {
-                    binary: r.binary.clone(),
-                    used_args: r.used_args.clone(),
-                })
-                .collect(),
+            WorkPayload::Error(work_error) => work_error.context.to_solver_infos(),
         }
     }
 }
@@ -785,6 +776,26 @@ impl WorkErrorContext {
             context: self,
             kind,
         }
+    }
+
+    fn to_solver_infos(&self) -> Vec<SolverInfo> {
+        self.solver_runs
+            .iter()
+            .zip_longest(&self.parser_status)
+            .map(|v| match v {
+                itertools::EitherOrBoth::Both(r, s) => SolverInfo {
+                    binary: r.binary.clone(),
+                    used_args: r.used_args.clone(),
+                    parsed_status: s.get_status_str(),
+                },
+                itertools::EitherOrBoth::Left(r) => SolverInfo {
+                    binary: r.binary.clone(),
+                    used_args: r.used_args.clone(),
+                    parsed_status: "Status not parsed!",
+                },
+                itertools::EitherOrBoth::Right(_) => unreachable!(),
+            })
+            .collect()
     }
 }
 

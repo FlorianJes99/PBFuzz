@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use log::info;
+use log::{error, info, warn};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -96,7 +96,18 @@ impl<P> SolverData<P> {
     /// starts the solver in a child process and terminates this process after the given output
     fn run_with_timeout(&self, mut cmd: Command, timeout: Duration) -> io::Result<SolverRun> {
         let start = Instant::now();
-        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+        let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+            Ok(c) => c,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                error!(
+                    "Given binary was not found: {}",
+                    cmd.get_program().display()
+                );
+                // if the binary is not found, panic and stop the entire run
+                panic!("Invalid binary: {}", cmd.get_program().display());
+            }
+            Err(e) => return Err(e),
+        };
         let mut stdout = child.stdout.take().expect("stdout was piped");
         let mut stderr = child.stderr.take().expect("stderr was piped");
         let (tx, rx) = mpsc::channel();
@@ -122,8 +133,9 @@ impl<P> SolverData<P> {
                     stderr,
                 )
             }
-            Err(_) => {
-                info!("Terminating solver {}...", self.get_name());
+            Err(e) => {
+                warn!("{}", e);
+                warn!("Terminating solver {}...", self.get_name());
                 child.kill()?;
                 let _ = child.wait(); // reap
                 (SolverState::Timeout, vec![])
@@ -144,16 +156,12 @@ impl SolverData<WithProof> {
     pub fn into_proof_solver(
         config: SolverConfig,
         timelimit: Duration,
-    ) -> Result<Self, SolverInitializationError> {
-        validate_binary(&config.binary)?;
+    ) -> Result<Self, MissingProofLoggingArgument> {
         config
             .proof_arg
-            .ok_or(
-                MissingProofLoggingArgument {
-                    program: config.name.clone(),
-                }
-                .into(),
-            )
+            .ok_or(MissingProofLoggingArgument {
+                program: config.name.clone(),
+            })
             .map(|proof_arg| Self {
                 binary: config.binary,
                 args: config.args,
@@ -202,19 +210,15 @@ impl SolverData<WithProof> {
 }
 
 impl SolverData<NoProof> {
-    pub fn into_solver(
-        config: SolverConfig,
-        timelimit: Duration,
-    ) -> Result<Self, SolverInitializationError> {
-        validate_binary(&config.binary)?;
-        Ok(Self {
+    pub fn into_solver(config: SolverConfig, timelimit: Duration) -> Self {
+        Self {
             binary: config.binary,
             args: config.args,
             optional_args: config.optional_args,
             name: config.name,
             timelimit,
             proof: NoProof,
-        })
+        }
     }
     pub fn run(
         &self,
@@ -277,16 +281,6 @@ impl Display for SolverExecutionRecord {
     }
 }
 
-fn validate_binary(binary: &Path) -> Result<(), InvalidBinaryPath> {
-    if binary.exists() {
-        Ok(())
-    } else {
-        Err(InvalidBinaryPath {
-            path: binary.to_path_buf(),
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct SolverRun {
     pub record: SolverExecutionRecord,
@@ -305,20 +299,6 @@ fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display
     }
     let prof_file = format!("profiles/{prof_file_name}.profraw");
     command.env("LLVM_PROFILE_FILE", prof_file);
-}
-
-#[derive(Debug, Error)]
-pub enum SolverInitializationError {
-    #[error(transparent)]
-    Binary(#[from] InvalidBinaryPath),
-    #[error(transparent)]
-    Proof(#[from] MissingProofLoggingArgument),
-}
-
-#[derive(Debug, Error)]
-#[error("Solver binary does not exist: {}", path.display())]
-pub struct InvalidBinaryPath {
-    path: PathBuf,
 }
 
 #[derive(Debug, Error)]

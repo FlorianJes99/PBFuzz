@@ -73,7 +73,7 @@ impl ParserImpl {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
-                StatusKind::Optimum => result
+                StatusKind::Optimum | StatusKind::Sat => result
                     .objective
                     .ok_or(OutputParsingError::ObjectiveMissing)
                     .map(|obj| ParsedStatus::Optimum {
@@ -84,8 +84,6 @@ impl ParserImpl {
                 StatusKind::Unsat => Ok(ParsedStatus::Unsat {
                     conflicts: result.conflicts.unwrap_or(0),
                 }),
-                // only sat means we could not find optimum in given time limit
-                StatusKind::Sat => Ok(ParsedStatus::TimeLimit),
                 StatusKind::TimeLimit => Ok(ParsedStatus::TimeLimit),
                 StatusKind::Unknown(s) => Ok(ParsedStatus::Unknown { status: s }),
             },
@@ -189,6 +187,16 @@ impl ParsedStatus {
             ParsedStatus::Unsat { conflicts } => Some(*conflicts),
             ParsedStatus::TimeLimit => None,
             ParsedStatus::Unknown { .. } => None,
+        }
+    }
+
+    pub fn get_status_str(&self) -> &'static str {
+        match self {
+            ParsedStatus::Sat { .. } => "sat",
+            ParsedStatus::Optimum { .. } => "optimum",
+            ParsedStatus::Unsat { .. } => "unsat",
+            ParsedStatus::TimeLimit => "timelimit",
+            ParsedStatus::Unknown { .. } => "unknown",
         }
     }
 }

@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, num::ParseIntError};
 
-use log::{debug, error};
+use log::{debug, warn};
 
 use crate::{
     fuzzer::domain::LiteralIdent,
@@ -48,10 +48,10 @@ impl DefaultParser {
                 }
             })),
             Some(("c", rest)) => match rest.split_once(' ') {
-                Some(("conflicts", rest)) => match rest.parse() {
+                Some(("conflicts", rest)) => match parse_conflicts(rest) {
                     Ok(c) => StatusLine::Conflicts(c),
                     Err(err) => {
-                        error!("{err}");
+                        warn!("Could not parse conflicts from {} - Error: {err}", rest);
                         StatusLine::Ignored
                     }
                 },
@@ -61,5 +61,37 @@ impl DefaultParser {
             Some(_) => StatusLine::Ignored,
             None => StatusLine::Ignored,
         }
+    }
+}
+
+/// Parse conflicts out of a given string
+///
+/// Handles a special case for "naps" solver
+fn parse_conflicts(rest: &str) -> Result<u32, ParseIntError> {
+    match rest.parse() {
+        Ok(c) => Ok(c),
+        Err(e) => {
+            // ugly hack to parse conflicts from naps output
+            // `c conflicts : num_to_parse (additional info)`
+            if let Some((_, rest)) = rest.split_once(':')
+                && let Some(word) = rest.split_whitespace().next()
+            {
+                word.parse()
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_conflict_parsing() {
+        let rest = " : 42 (XXXXXXXXX)";
+        let r = parse_conflicts(rest);
+        assert_eq!(42, r.unwrap())
     }
 }

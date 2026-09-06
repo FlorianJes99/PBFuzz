@@ -1,5 +1,5 @@
 binary = "roundingsat"
-args = ["--print-sol=1", "--time-limit=6"]
+args = ["--print-sol=1"] # , "--time-limit=6"
 name = "roundingsat"
 parser_kind = "Default"
 proof_arg = "--proof-log="
@@ -12,5 +12,106 @@ args = [
     { arg_name = "--vsids-var=", arg_type = { FloatRange = [0.5, 1.0] } },
     { arg_name = "--prop-counting=", arg_type = { FloatRange = [0.0, 1.0] } },
     { arg_name = "--cg-strat=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--luby-base=", arg_type = { FloatRange = [1.0, 1000000000.0] } },
+    { arg_name = "--luby-mult=", arg_type = { IntRange = [1, 1000000000] } },
+    { arg_name = "--vsids-clause=", arg_type = { FloatRange = [0.5, 0.9999999999] } },
+    { arg_name = "--db-inc=", arg_type = { IntRange = [1, 1000000000] } },
+    { arg_name = "--prop-clause=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--prop-card=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--prop-idx=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--prop-sup=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--lp=", arg_type = { FloatRange = [-1.0, 1000000000.0] } },
+    { arg_name = "--lp-intolerance=", arg_type = { FloatRange = [1e-1000000000, 1000000000.0] } },
+    { arg_name = "--lp-cut-gomory=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--lp-cut-learned=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--lp-cut-gomlim=", arg_type = { IntRange = [1, 1000000000] } },
+    { arg_name = "--lp-cut-maxcos=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--ca-slackdiv=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--ca-weaken-full=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--ca-weaken-nonimplying=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--bump-onlyfalse=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--bump-canceling=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--bump-lits=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--bits-overflow=", arg_type = { IntRange = [0, 1000000000] } },
+    { arg_name = "--bits-reduced=", arg_type = { IntRange = [0, 1000000000] } },
+    { arg_name = "--bits-learned=", arg_type = { IntRange = [0, 1000000000] } },
+    { arg_name = "--bits-input=", arg_type = { IntRange = [0, 1000000000] } },
+    { arg_name = "--cg-encoding=", arg_type = { Values = ["sum", "lazysum", "reified"] } },
+    { arg_name = "--cg-boost=", arg_type = { IntRange = [0, 1000000000] } },
+    { arg_name = "--cg-hybrid=", arg_type = { FloatRange = [0.0, 1.0] } },
+    { arg_name = "--cg-indcores=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--cg-solutionphase=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--cg-resprop=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--cg-decisioncore=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--cg-coreupper=", arg_type = { Values = ["0", "1"] } },
+    { arg_name = "--keepall=", arg_type = { Values = ["0", "1"] } },
 ]
 space_separated = false
+
+
+# Options:
+  # --luby-base=?             Base of the Luby restart sequence. (1 =< float; default: 2)
+# 
+  # --luby-mult=?             Multiplier of the Luby restart sequence. (1 =< int; default: 100)
+# 
+  # --vsids-clause=?          VSIDS clause decay factor. (0.5 =< float < 1; default: 0.999)
+# 
+  # --db-inc=?                Database cleanup interval increment. (1 =< int; default: 100)
+# 
+  # --prop-clause=?           Propagation: Optimized two-watched propagation for clauses. (0 or 1; default: 1)
+# 
+  # --prop-card=?             Propagation: Optimized two-watched propagation for cardinality constraints. (0 or 1; default: 1)
+# 
+  # --prop-idx=?              Propagation: Optimize index of watches during propagation. (0 or 1; default: 1)
+# 
+  # --prop-sup=?              Propagation: Avoid superfluous watch checks. (0 or 1; default: 1)
+# 
+  # --lp=?                    Linear programming solver: Ratio of #pivots/#conflicts limiting LP calls (negative means infinite, 0 means no LP solving). (-1 =< float; default: 1)
+# 
+  # --lp-intolerance=?        Linear programming solver: Intolerance for floating point artifacts. (0 < float; default: 1e-06)
+# 
+  # --lp-cut-gomory=?         Linear programming solver: Generate Gomory cuts. (0 or 1; default: 1)
+# 
+  # --lp-cut-learned=?        Linear programming solver: Use learned constraints as cuts. (0 or 1; default: 1)
+# 
+  # --lp-cut-gomlim=?         Linear programming solver: Max number of tableau rows considered for Gomory cuts in a single round. (1 =< int; default: 100)
+# 
+  # --lp-cut-maxcos=?         Linear programming solver: Upper bound on cosine of angle between cuts added in one round, higher means cuts can be more parallel. (0 =< float =< 1; default: 0.1)
+# 
+  # --ca-slackdiv=?           Conflict analysis: Use slack+1 as divisor for reason constraints (instead of the asserting coefficient). (0 or 1; default: 0)
+# 
+  # --ca-weaken-full=?        Conflict analysis: Weaken non-divisible non-falsified literals in reason constraints completely. (0 or 1; default: 0)
+# 
+  # --ca-weaken-nonimplying=? Conflict analysis: Weaken non-implying falsified literals from reason constraints. (0 or 1; default: 0)
+# 
+  # --bump-onlyfalse=?        Bump activity of literals encountered during conflict analysis only when falsified. (0 or 1; default: 0)
+# 
+  # --bump-canceling=?        Bump activity of literals encountered during conflict analysis when canceling. (0 or 1; default: 1)
+# 
+  # --bump-lits=?             Bump activity of literals encountered during conflict analysis, twice when occurring with opposing sign. (0 or 1; default: 1)
+# 
+  # --bits-overflow=?         Bit-width: Bit width of maximum coefficient during conflict analysis calculations (0 is unlimited, unlimited or greater than 62 may use slower arbitrary precision implementations). (0 =< int; default: 62)
+# 
+  # --bits-reduced=?          Bit-width: Bit width of maximum coefficient after reduction when exceeding bits-overflow (0 is unlimited, 1 reduces to cardinalities). (0 =< int; default: 29)
+# 
+  # --bits-learned=?          Bit-width: Bit width of maximum coefficient for learned constraints (0 is unlimited, 1 reduces to cardinalities). (0 =< int; default: 29)
+# 
+  # --bits-input=?            Bit width of maximum coefficient for input constraints (0 is unlimited, 1 allows only cardinalities). (0 =< int; default: 0)
+# 
+  # --cg-encoding=?           Core guided search: Encoding of the extension constraints. (sum, lazysum, reified; default: lazysum)
+# 
+  # --cg-boost=?              Core guided search: Seconds of core-boosted search before switching to linear search. (0 =< int; default: 10)
+# 
+  # --cg-hybrid=?             Core guided search: Ratio of core-guided search to linear search during hybrid optimization. (0 =< float =< 1; default: 0.5)
+# 
+  # --cg-indcores=?           Core guided search: Use independent cores for core-guided search. (0 or 1; default: 0)
+# 
+  # --cg-solutionphase=?      Core guided search: Fix the phase to the incumbent solution during linear optimization. (0 or 1; default: 1)
+# 
+  # --cg-resprop=?            Core guided search: Resolve propagated assumptions when extracting cores. (0 or 1; default: 0)
+# 
+  # --cg-decisioncore=?       Core guided search: Extract a second decision core, choose the best resulting cardinality core. (0 or 1; default: 1)
+# 
+  # --cg-coreupper=?          Core guided search: Exploit upper bound on cardinality cores. (0 or 1; default: 1)
+# 
+  # --keepall=?               Keep all learned constraints in the database indefinitely. (0 or 1; default: 0)

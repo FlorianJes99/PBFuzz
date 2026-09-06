@@ -1,0 +1,4 @@
+binary = "software/toulbar2"
+args = []
+name = "toulbar"
+parser_kind = "Default"

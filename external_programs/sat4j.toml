@@ -1,4 +1,4 @@
 binary = "java"
-args = ["-jar", "software/sat4j-pb.jar" ]
+args = ["-server", "-jar", "software/sat4j-pb.jar" ]
 name = "sat4j"
 parser_kind = "Default"

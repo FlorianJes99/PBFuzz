@@ -1,0 +1,73 @@
+binary = "software/naps"
+args = []
+name = "naps"
+parser_kind = "Default"
+
+[optional_args]
+args = [
+    # --- Cooperative SCIP tuning (no-ops if -cSCIP isn't used elsewhere, harmless either way) ---
+    { arg_name = "-scip-budget=", arg_type = { FloatRange = [0.1, 60.0] } },
+    { arg_name = "-scip-budget-factor=", arg_type = { FloatRange = [1.0, 3.0] } },
+    # { arg_name = "-scip-as-presolve=", arg_type = { IntRange = [0, 120] } },
+    # { arg_name = "-scip-as-presolve-dec=", arg_type = { IntRange = [0, 2000] } },
+    { arg_name = "-scip-promising-gap=", arg_type = { FloatRange = [-100.0, 100.0] } },
+    { arg_name = "-scip-promising-budget=", arg_type = { FloatRange = [1.0, 5000.0] } },
+
+    # --- SAT-call budgeting inside the cooperative loop (per-call, doesn't truncate final result) ---
+    { arg_name = "-sat-budget=", arg_type = { IntRange = [-1, 120] } },
+    { arg_name = "-sat-budget-factor=", arg_type = { FloatRange = [1.0, 3.0] } },
+    { arg_name = "-double-unknown-budget-factor=", arg_type = { FloatRange = [1.0, 10.0] } },
+
+    # --- Minimization search tuning ---
+    { arg_name = "-bin-coeff=", arg_type = { IntRange = [1, 20] } },
+    { arg_name = "-seq-thres=", arg_type = { IntRange = [0, 50] } },
+    { arg_name = "-consec-unsat=", arg_type = { IntRange = [1, 20] } },
+
+    # --- opt_base construction ---
+    { arg_name = "-om=", arg_type = { Values = ["0", "1", "2"] } },
+    { arg_name = "-primes=", arg_type = { IntRange = [1, 200] } },
+    { arg_name = "-optbase-thres=", arg_type = { IntRange = [0, 1000] } },
+    { arg_name = "-optbase-primes=", arg_type = { IntRange = [1, 29] } },
+
+    # --- Conversion resource thresholds (constraints) ---
+    { arg_name = "-cc-thres=", arg_type = { IntRange = [0, 200] } },
+    { arg_name = "-bdd-thres=", arg_type = { IntRange = [0, 2000] } },
+    { arg_name = "-sort-thres=", arg_type = { IntRange = [0, 2000] } },
+    { arg_name = "-bdd-max-const=", arg_type = { IntRange = [0, 10000000] } },
+    { arg_name = "-bdd-max-acost=", arg_type = { IntRange = [0, 10000] } },
+    { arg_name = "-sort-max-acost=", arg_type = { IntRange = [0, 2000000] } },
+
+    # --- Conversion resource thresholds (goal function) ---
+    { arg_name = "-goal-bdd-thres=", arg_type = { IntRange = [0, 2000] } },
+    { arg_name = "-goal-sort-thres=", arg_type = { IntRange = [0, 2000] } },
+    { arg_name = "-goal-bdd-max-const=", arg_type = { IntRange = [0, 10000000] } },
+    { arg_name = "-goal-bdd-max-acost=", arg_type = { IntRange = [0, 10000] } },
+    { arg_name = "-goal-sort-max-acost=", arg_type = { IntRange = [0, 2000000] } },
+
+    # --- SAT solver polarity (CaDiCaL is the default backend, so these always apply) ---
+    { arg_name = "-ps", arg_type = { Values = ["+", "-", "0"] } },
+    { arg_name = "-pdef", arg_type = { Values = ["+", "-", "0"] } },
+    { arg_name = "-sat-ratio=", arg_type = { FloatRange = [0.0, 1.0] } },
+
+    # --- Conversion method selection (constraints vs. goal function) ---
+    { arg_name = "-c", arg_type = { Values = ["a", "s", "b", "m", "m2", "m3", "m4", "m5", "m6"] } },
+    { arg_name = "-g", arg_type = { Values = ["a", "s", "b", "m", "m2", "m3", "m4", "m5", "m6"] } },
+
+    # --- Sorter/BDD construction style ---
+    { arg_name = "-gpw-", arg_type = { Values = ["pos", "neg", "lo", "hi", "both"] } },
+    { arg_name = "-bdd-", arg_type = { Values = ["decreasing-order", "increasing-order", "spread-factor-order"] } },
+
+    # Excluded on purpose:
+    # -initial-goal=/-goal-lb=  -> can change the search bound and thus the reported result, not just strategy
+    # -given-time=              -> hard wall-clock cutoff, can produce an incomplete/no result
+    # -ucore-mode=               -> UNSAT-core/proof diagnostic detail, debug-adjacent
+    # -rsz=, -cnf=, -nm          -> report length / CNF dump / model suppression, output-formatting not computation
+    # -v*, -vi*, -vs*, -mc       -> verbosity and debug/model-check
+    # -1/-A/-AI/-mx/-u           -> change the fundamental problem mode (first/all/maxsat/ucore), mutually exclusive
+    # -GM/-CD/-iGM/-iCD/-KS/-SCIP/-iSCIP -> backend selection, mutually exclusive, not "=value" form
+    # -of/-dm                   -> input file format switches, depend on the actual input file
+    # -b/-nb/-bl, -seq/-bin/-alt/-hitting/-seq-hitting/-single-stage,
+    # -bdd-d*/-bdd-b/-bdd-m-off  -> mutually exclusive alternative-mode flag families that don't share
+    #                               a clean common arg_name+value pattern, so they can't share one pool
+]
+space_separated = false
