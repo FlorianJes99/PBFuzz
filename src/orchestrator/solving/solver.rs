@@ -134,8 +134,7 @@ impl<P> SolverData<P> {
                 )
             }
             Err(e) => {
-                warn!("{}", e);
-                warn!("Terminating solver {}...", self.get_name());
+                warn!("Terminating solver {}... - {}", self.get_name(), e);
                 child.kill()?;
                 let _ = child.wait(); // reap
                 (SolverState::Timeout, vec![])

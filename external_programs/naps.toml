@@ -1,4 +1,4 @@
-binary = "software/naps"
+binary = "naps"
 args = []
 name = "naps"
 parser_kind = "Default"

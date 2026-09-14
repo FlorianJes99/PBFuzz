@@ -10,7 +10,7 @@ pub struct ScipParser;
 
 #[derive(Debug, Error)]
 pub enum ScipParsingError {
-    #[error("Parsing float failed")]
+    #[error(transparent)]
     ParseFloat(#[from] ParseFloatError),
     #[error(
         "Parsed number ({parsed}) is not close enough to expected integer ({expected}), max epsilon: {epsilon}"
@@ -25,26 +25,6 @@ pub enum ScipParsingError {
 }
 
 impl ScipParser {
-
-    /// Scip sometimes returns floats, which actually should be integers. This method will check for
-    /// this type of inconsistency in Scip and will still parse the value correctly.
-    fn parse_as_i32(&self, s: &str) -> Result<i32, ScipParsingError> {
-        let parsed: f64 = s.parse().map_err(ScipParsingError::ParseFloat)?;
-        let rounded = parsed.round();
-
-        // Only convert if it's close to an integer and non-negative
-        let epsilon = 1e-5;
-        if (parsed - rounded).abs() < epsilon && rounded >= 0.0 && rounded <= i32::MAX as f64 {
-            Ok(rounded as i32)
-        } else {
-            Err(ScipParsingError::FloatNotCloseEnough {
-                parsed,
-                expected: rounded as i32,
-                epsilon,
-            })
-        }
-    }
-
     pub fn parse_line(&self, line: &str) -> StatusLine {
         let line = line.trim();
 
@@ -55,7 +35,7 @@ impl ScipParser {
             return StatusLine::Status(StatusKind::TimeLimit);
         }
         if line.contains("[optimal solution found]") {
-            return StatusLine::Status(StatusKind::Sat);
+            return StatusLine::Status(StatusKind::Optimum);
         }
 
         if let Some(rest) = line.strip_prefix("objective value:") {
@@ -63,7 +43,7 @@ impl ScipParser {
                 .split_whitespace()
                 .last()
                 .ok_or_else(|| ScipParsingError::NoObjectiveFound(line.into()))
-                .and_then(|v| self.parse_as_i32(v.trim()));
+                .and_then(|v| parse_as_i32(v.trim()));
             return StatusLine::Objective(result.map_err(Into::into));
         }
 
@@ -78,5 +58,24 @@ impl ScipParser {
             ));
         }
         StatusLine::Ignored
+    }
+}
+
+/// Scip sometimes returns floats, which actually should be integers. This method will check for
+/// this type of inconsistency in Scip and will still parse the value correctly.
+fn parse_as_i32(s: &str) -> Result<i32, ScipParsingError> {
+    let parsed: f64 = s.parse().map_err(ScipParsingError::ParseFloat)?;
+    let rounded = parsed.round();
+
+    // Only convert if it's close to an integer and non-negative
+    let epsilon = 1e-5;
+    if (parsed - rounded).abs() < epsilon && rounded <= i32::MAX as f64 {
+        Ok(rounded as i32)
+    } else {
+        Err(ScipParsingError::FloatNotCloseEnough {
+            parsed,
+            expected: rounded as i32,
+            epsilon,
+        })
     }
 }

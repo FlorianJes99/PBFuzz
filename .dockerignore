@@ -1,0 +1,14 @@
+target/
+out/
+plots/
+important_findings/
+software/
+profiles/
+coverage_report/
+snapshots/
+good_settings/
+
+# cargo flamegraph ignores
+flamegraph.svg
+perf.*
+.git/

@@ -1,4 +1,4 @@
-binary = "software/hitpbo"
+binary = "hitpbo"
 args = ["--no-rc"] # "--proof-compatible"]
 name = "hitpbo"
 parser_kind = "Default"

@@ -1,4 +1,4 @@
-binary = "software/Exact"
+binary = "exact"
 args = ["--print-sol", "--print-uniform=0"] # "--timeout=6", exact outputs UNKNOWN when timeouting
 name = "exact"
 parser_kind = "Default"
@@ -55,7 +55,7 @@ args = [
     # BREAKING UNITS FOR NOW*" per help text - keep them but never enable
     # both nonzero at once in a single fuzz run
     { arg_name = "--inp-dombreaklim=", arg_type = { IntRange = [-1, 100] } },
-    { arg_name = "--inp-symmetry=", arg_type = { IntRange = [0, 2] } },
+    # { arg_name = "--inp-symmetry=", arg_type = { IntRange = [0, 2] } }, # not supported in some exact versions
     { arg_name = "--inp-probing=", arg_type = { Values = ["0", "1"] } },
     { arg_name = "--inp-atmostone=", arg_type = { FloatRange = [0.0, 1.0] } },
     { arg_name = "--inp-basetime=", arg_type = { FloatRange = [0.0, 10.0] } },

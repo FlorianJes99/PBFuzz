@@ -256,6 +256,6 @@ pub enum OutputParsingError {
         #[source]
         source: ParseIntError,
     },
-    #[error("Parsing scip output failed")]
+    #[error("Parsing scip output failed: {0}")]
     Scip(#[from] ScipParsingError),
 }
