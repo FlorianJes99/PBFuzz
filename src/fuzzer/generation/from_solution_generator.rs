@@ -1,9 +1,15 @@
-use crate::fuzzer::generation::constraint_errors::ConstraintGenerationError;
-use rand::seq::IndexedRandom;
+use crate::fuzzer::generation::{
+    builders::{
+        doubling_constraint_builder::create_sat_doubling_pairs_constraint,
+        generic_builder::create_sat_generic,
+    },
+    constraint_errors::ConstraintGenerationError,
+};
+use rand::{RngExt, seq::IndexedRandom};
 
 use crate::fuzzer::{
-    constraints::{constraint::Constraint, generic::ArbitraryLengthConstraint},
-    domain::{Comparison, LiteralIdent, SolutionModel},
+    constraints::constraint::Constraint,
+    domain::{LiteralIdent, SolutionModel},
     generation::{generator_settings::CoeffRange, literal_sampler::LiteralSampler},
     pb_settings::GeneratorSettings,
 };
@@ -48,8 +54,13 @@ pub fn generate_from_solution(
         .sample(&mut literal_sampler.rand, (amount_vars / 3) as usize)
         .cloned()
         .into();
+    let false_lits: Vec<_> = lits
+        .iter()
+        .filter(|l| !solution.contains(l))
+        .cloned()
+        .collect();
     let constraints = (0..settings.amount_constraints)
-        .map(|_| create_sat_constraint(literal_sampler, &settings, &solution))
+        .map(|_| sample_sat_constraint(literal_sampler, &settings, &solution, &false_lits))
         .collect::<Result<_, _>>()?;
     Ok(FromSolutionData {
         constraints,
@@ -57,29 +68,22 @@ pub fn generate_from_solution(
     })
 }
 
-fn create_sat_constraint(
+fn sample_sat_constraint(
     literal_sampler: &mut LiteralSampler,
     settings: &FromSolutionSettings,
-    model: &SolutionModel,
+    solution: &SolutionModel,
+    false_lits: &[LiteralIdent],
 ) -> Result<Box<dyn Constraint>, ConstraintGenerationError> {
-    let (start_val, end_val) = settings.coeff_range.get_bounds();
-    let amount_lits = settings.amount_literals_per_constraint;
-    let lits: Vec<_> = literal_sampler
-        .get_n_ids_sorted(amount_lits)?
-        .iter()
-        .map(|id| id.to_literal(literal_sampler.sample_without_zero_from_range(start_val, end_val)))
-        .collect();
-    let comparison = Comparison::GrEqual;
-    let (min_lit, sum_lit) = lits
-        .iter()
-        .filter(|l| model.contains(&l.literal_id))
-        .map(|l| i64::from(l.coeff))
-        .fold((0, 0), |acc, c| (acc.0.min(c), acc.1 + c));
-    let degree = min_lit.min(sum_lit);
-    let constraint = ArbitraryLengthConstraint::new(lits, comparison, degree);
-    assert!(
-        constraint.verify(model).is_ok(),
-        "When generating from a sampled solution, every constraint needs to be satisfiable\nModel: {model}\nConstraint: {constraint}"
-    );
-    Ok(Box::new(constraint))
+    if literal_sampler.rand.random_bool(0.5) {
+        let c = create_sat_doubling_pairs_constraint(
+            literal_sampler,
+            settings.amount_literals_per_constraint,
+            solution,
+            false_lits,
+        )?;
+        Ok(Box::new(c))
+    } else {
+        let c = create_sat_generic(literal_sampler, settings, solution)?;
+        Ok(Box::new(c))
+    }
 }
