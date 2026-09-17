@@ -5,8 +5,8 @@ use csv::Writer;
 pub const ORCHESTRATOR_DATA_FILE_PREFIX: &str = "orchestrator_data";
 
 pub enum CsvRecord {
-    Comparison(ComparisonRecord),
-    Proof(ProofRecord),
+    Comparison(Vec<ComparisonRecord>),
+    Proof(Vec<ProofRecord>),
 }
 
 impl CsvRecord {
@@ -17,13 +17,19 @@ impl CsvRecord {
         writer: &mut Writer<File>,
     ) -> Result<(), csv::Error> {
         match self {
-            CsvRecord::Comparison(comparison_record) => {
-                let r = comparison_record.create_iteration_record(iteration, duration_iteration_ms);
-                writer.serialize(r)
+            CsvRecord::Comparison(comparison_records) => {
+                for cr in comparison_records {
+                    let r = cr.create_iteration_record(iteration, duration_iteration_ms);
+                    writer.serialize(r)?;
+                }
+                Ok(())
             }
             CsvRecord::Proof(proof_record) => {
-                let r = proof_record.create_iteration_record(iteration, duration_iteration_ms);
-                writer.serialize(r)
+                for pr in proof_record {
+                    let r = pr.create_iteration_record(iteration, duration_iteration_ms);
+                    writer.serialize(r)?;
+                }
+                Ok(())
             }
         }
     }
@@ -32,11 +38,10 @@ impl CsvRecord {
 pub struct ComparisonRecord {
     pub result: &'static str,
     pub problem_generation_ms: f32,
-    pub problem_solving_duration_solver1_ms: f32,
-    pub problem_solving_duration_solver2_ms: f32,
+    pub solver_name: String,
+    pub problem_solving_duration_solver_ms: f32,
     pub problem_parsing_duration_ms: f32,
-    pub conflicts1: Option<u32>,
-    pub conflicts2: Option<u32>,
+    pub conflicts: Option<u32>,
     pub seed: u64,
 }
 
@@ -51,11 +56,10 @@ impl ComparisonRecord {
             result: self.result,
             duration_iteration_ms,
             problem_generation_ms: self.problem_generation_ms,
-            problem_solving_duration_solver1_ms: self.problem_solving_duration_solver1_ms,
-            problem_solving_duration_solver2_ms: self.problem_solving_duration_solver2_ms,
+            solver_name: self.solver_name.clone(),
+            problem_solving_duration_solver_ms: self.problem_solving_duration_solver_ms,
             problem_parsing_duration_ms: self.problem_parsing_duration_ms,
-            conflicts1: self.conflicts1,
-            conflicts2: self.conflicts2,
+            conflicts_solver: self.conflicts,
             seed: self.seed,
         }
     }
@@ -67,11 +71,10 @@ pub struct IterationComparisonRecord {
     pub result: &'static str,
     pub duration_iteration_ms: f32,
     pub problem_generation_ms: f32,
-    pub problem_solving_duration_solver1_ms: f32,
-    pub problem_solving_duration_solver2_ms: f32,
+    pub solver_name: String,
+    pub problem_solving_duration_solver_ms: f32,
     pub problem_parsing_duration_ms: f32,
-    pub conflicts1: Option<u32>,
-    pub conflicts2: Option<u32>,
+    pub conflicts_solver: Option<u32>,
     pub seed: u64,
 }
 
@@ -80,7 +83,6 @@ pub struct ProofRecord {
     pub problem_generation_ms: f32,
     pub problem_solving_duration_program: f32,
     pub problem_parsing_duration_ms: f32,
-    pub problem_checking_duration_ms: f32,
     pub conflicts: Option<u32>,
     pub seed: u64,
 }
@@ -98,7 +100,6 @@ impl ProofRecord {
             problem_generation_ms: self.problem_generation_ms,
             problem_solving_duration_program: self.problem_solving_duration_program,
             problem_parsing_duration_ms: self.problem_parsing_duration_ms,
-            problem_checking_duration_ms: self.problem_checking_duration_ms,
             conflicts: self.conflicts,
             seed: self.seed,
         }
@@ -113,7 +114,6 @@ pub struct IterationProofRecord {
     pub problem_generation_ms: f32,
     pub problem_solving_duration_program: f32,
     pub problem_parsing_duration_ms: f32,
-    pub problem_checking_duration_ms: f32,
     pub conflicts: Option<u32>,
     pub seed: u64,
 }

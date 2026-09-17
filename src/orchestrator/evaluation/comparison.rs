@@ -1,98 +1,72 @@
-use crate::{
-    fuzzer::grammar::PBGrammar,
-    orchestrator::{
-        evaluation::common::{BugReason, VerificationOutcome, wrap_objective, wrap_violation},
-        parsing::parser::{ParsedStatus, ParserRun},
-    },
+use crate::orchestrator::{
+    evaluation::common::{BugReason, ObjectiveInfo, wrap_objective},
+    parsing::parser::{ParsedStatus, ParserRun},
 };
 
-pub struct ComparisonRun {
-    pub parser_run1: ParserRun,
-    pub parser_run2: ParserRun,
-    pub outcome: VerificationOutcome,
+pub fn compare_status(runs: &[ParserRun]) -> Result<StatusFlat, BugReason> {
+    let useful_runs: Vec<_> = runs
+        .iter()
+        .filter(|r| !matches!(r.parsed_status, ParsedStatus::TimeLimit))
+        .collect();
+    if useful_runs.len() <= 1 {
+        // We need at least two finished solvers in order to compare them
+        return Ok(StatusFlat::TimeLimit);
+    }
+    let status = &useful_runs[0].parsed_status;
+    let status_as_str = status.get_status_str();
+    let stati: Vec<_> = useful_runs
+        .iter()
+        .map(|r| r.parsed_status.get_status_str().to_string())
+        .collect();
+    if stati.iter().any(|s| s != status_as_str) {
+        return Err(BugReason::OutputStatusDiffers(stati));
+    };
+    let objs: Vec<_> = useful_runs
+        .iter()
+        .filter_map(|r| extract_objective(&r.parsed_status, r.record.name.to_string()))
+        .collect();
+    if !objs.is_empty() {
+        let obj = objs[0].get_obj();
+        if !objs.iter().all(|o| o.get_obj() == obj) {
+            return Err(BugReason::DifferentObjectives(objs));
+        }
+    }
+    Ok(match status {
+        ParsedStatus::Sat { .. } => StatusFlat::Sat,
+        ParsedStatus::Optimum { .. } => StatusFlat::Optimum,
+        ParsedStatus::Unsat { .. } => StatusFlat::Unsat,
+        ParsedStatus::TimeLimit => StatusFlat::TimeLimit,
+        ParsedStatus::Unknown { .. } => StatusFlat::Unknown,
+    })
 }
 
-pub fn compare_runs(
-    parser_run1: ParserRun,
-    parser_run2: ParserRun,
-    grammar: &PBGrammar,
-) -> ComparisonRun {
-    let outcome = compare_status(&parser_run1, &parser_run2, grammar);
-    ComparisonRun {
-        parser_run1,
-        parser_run2,
-        outcome,
+pub enum StatusFlat {
+    Sat,
+    Optimum,
+    Unsat,
+    TimeLimit,
+    Unknown,
+}
+
+impl StatusFlat {
+    pub fn get_status_as_str(&self) -> &'static str {
+        match self {
+            StatusFlat::Sat => "sat",
+            StatusFlat::Optimum => "optimum",
+            StatusFlat::Unsat => "unsat",
+            StatusFlat::TimeLimit => "timeout",
+            StatusFlat::Unknown => "unknown",
+        }
     }
 }
 
-fn compare_status(r1: &ParserRun, r2: &ParserRun, grammar: &PBGrammar) -> VerificationOutcome {
-    match (&r1.parsed_status, &r2.parsed_status) {
-        (
-            ParsedStatus::Sat {
-                conflicts: _,
-                solution: s1,
-            },
-            ParsedStatus::Sat {
-                conflicts: _,
-                solution: s2,
-            },
-        ) => {
-            if let Err(e) = grammar.verify_solution(s1) {
-                return VerificationOutcome::Bug(wrap_violation(e, r1.record.name.clone()));
-            }
-
-            if let Err(e) = grammar.verify_solution(s2) {
-                return VerificationOutcome::Bug(wrap_violation(e, r2.record.name.clone()));
-            }
-            VerificationOutcome::Sat
-        }
-        (
-            ParsedStatus::Optimum {
-                conflicts: _,
-                solution: s1,
-                minimum: m1,
-            },
-            ParsedStatus::Optimum {
-                conflicts: _,
-                solution: s2,
-                minimum: m2,
-            },
-        ) => {
-            if let Err(e) = grammar.verify_solution(s1) {
-                return VerificationOutcome::Bug(wrap_violation(e, r1.record.name.clone()));
-            }
-
-            if let Err(e) = grammar.verify_solution(s2) {
-                return VerificationOutcome::Bug(wrap_violation(e, r2.record.name.clone()));
-            }
-            if m1 != m2 {
-                return VerificationOutcome::Bug(BugReason::DifferentObjectives(
-                    wrap_objective(*m1, r1.record.name.clone()),
-                    wrap_objective(*m2, r2.record.name.clone()),
-                ));
-            }
-            VerificationOutcome::Sat
-        }
-        (ParsedStatus::Unsat { .. }, ParsedStatus::Unsat { .. }) => VerificationOutcome::Unsat,
-        (ParsedStatus::Unknown { .. }, ParsedStatus::Unknown { .. }) => {
-            VerificationOutcome::Unknown
-        }
-        (ParsedStatus::TimeLimit, _) => VerificationOutcome::Timelimit,
-        (_, ParsedStatus::TimeLimit) => VerificationOutcome::Timelimit,
-        _ => VerificationOutcome::Bug(BugReason::OutputStatusDiffers(
-            get_output_status_str(&r1.parsed_status),
-            get_output_status_str(&r2.parsed_status),
-        )),
-    }
-}
-
-fn get_output_status_str(status: &ParsedStatus) -> String {
+fn extract_objective(status: &ParsedStatus, solver_name: String) -> Option<ObjectiveInfo> {
     match status {
-        ParsedStatus::Sat { .. } => "SAT",
-        ParsedStatus::Optimum { .. } => "OPTIMUM FOUND",
-        ParsedStatus::Unsat { .. } => "UNSAT",
-        ParsedStatus::TimeLimit => "TIMELIMIT",
-        ParsedStatus::Unknown { .. } => "UNKNOWN",
+        ParsedStatus::Optimum {
+            conflicts: _,
+            solution: _,
+            minimum,
+        } => Some(wrap_objective(*minimum, solver_name)),
+        _ => None,
     }
-    .into()
 }

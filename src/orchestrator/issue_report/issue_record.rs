@@ -16,5 +16,5 @@ pub struct IssueRecord {
 pub struct SolverInfo {
     pub binary: String,
     pub used_args: Vec<String>,
-    pub parsed_status: &'static str,
+    pub parsed_status: String,
 }

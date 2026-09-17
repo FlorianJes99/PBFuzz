@@ -1,55 +1,7 @@
-use crate::{
-    fuzzer::grammar::PBGrammar,
-    orchestrator::{
-        evaluation::common::{wrap_violation, BugReason, VerificationOutcome},
-        parsing::parser::{ParsedStatus, ParserRun},
-    },
-};
-
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 use veripb::{self, args::Args, run_checker};
-
-pub struct ProofRun {
-    pub parser_run: ParserRun,
-    pub outcome: VerificationOutcome,
-}
-
-pub fn verify_with_proof(
-    parser_run: ParserRun,
-    grammar: &PBGrammar,
-    formula: &Path,
-    derivation: &Path,
-) -> ProofRun {
-    let outcome = match &parser_run.parsed_status {
-        ParsedStatus::Sat {
-            conflicts: _,
-            solution,
-        }
-        | ParsedStatus::Optimum {
-            conflicts: _,
-            solution,
-            ..
-        } => match grammar.verify_solution(solution) {
-            Err(e) => VerificationOutcome::Bug(wrap_violation(e, parser_run.record.name.clone())),
-            Ok(()) => match check_proof(formula, derivation) {
-                Err(e) => VerificationOutcome::Bug(BugReason::ProofCheckerFailed(e)),
-                Ok(()) => VerificationOutcome::Sat,
-            },
-        },
-        ParsedStatus::Unsat { conflicts: _ } => match check_proof(formula, derivation) {
-            Err(e) => VerificationOutcome::Bug(BugReason::ProofCheckerFailed(e)),
-            Ok(()) => VerificationOutcome::Unsat,
-        },
-        ParsedStatus::TimeLimit => VerificationOutcome::Timelimit,
-        ParsedStatus::Unknown { status: _ } => VerificationOutcome::Unknown,
-    };
-    ProofRun {
-        parser_run,
-        outcome,
-    }
-}
 
 pub fn check_proof(formula: &Path, derivation: &Path) -> Result<(), ProofError> {
     let formula = formula.to_path_buf();

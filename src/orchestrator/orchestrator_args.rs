@@ -40,15 +40,10 @@ pub struct OrchestratorArgs {
     #[arg(long)]
     pub(crate) settings_file: PathBuf,
 
-    /// Specify the config file in toml format for program 1
-    #[arg(long)]
-    pub(crate) program_config1: PathBuf,
-
-    /// Specify the config file in toml format for program 2
-    ///
-    /// If nothing is specified orchestrator runs in proof mode, checking proofs generated for program 1
-    #[arg(long)]
-    pub(crate) program_config2: Option<PathBuf>,
+    /// Specify the config file in toml format for all solvers used in this run.
+    /// The first specified solver works as the ground truth when used in comparison to others.
+    #[arg(long, num_args=1..)]
+    pub(crate) solver_configs: Vec<PathBuf>,
 
     /// Set to true if `valid` results should be saved as well (default: false)
     ///

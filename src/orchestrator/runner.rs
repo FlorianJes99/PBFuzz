@@ -3,9 +3,9 @@ use crate::fuzzer::helpers::OFFSET;
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{CsvRecord, ProofRecord};
-use crate::orchestrator::evaluation::common::VerificationOutcome;
-use crate::orchestrator::evaluation::comparison::{ComparisonRun, compare_runs};
-use crate::orchestrator::evaluation::proof_checking::{ProofRun, verify_with_proof};
+use crate::orchestrator::evaluation::common::{BugReason, ValidationError, verify_solution};
+use crate::orchestrator::evaluation::comparison::{StatusFlat, compare_status};
+use crate::orchestrator::evaluation::proof_checking::check_proof;
 use crate::orchestrator::issue_report::case_writer::{CaseWriter, IssueReport};
 use crate::orchestrator::issue_report::issue_record::{IssueRecord, SolverInfo};
 use crate::orchestrator::parsing::parser::{
@@ -92,18 +92,19 @@ pub fn run_orchestrator(
         thread_count
     );
     let timelimit = Duration::from_secs(args.timeout_external_program_secs);
-    let mode = match &args.program_config2 {
-        Some(p2) => {
-            let c1 = SolverConfig::load_from_file(&args.program_config1)?;
-            let solver1 = SolverAndParser::from_config(c1, timelimit);
-            let c2 = SolverConfig::load_from_file(p2)?;
-            let solver2 = SolverAndParser::from_config(c2, timelimit);
-            OrchestrationMode::Comparison(solver1, solver2)
-        }
-        None => {
-            let config = SolverConfig::load_from_file(&args.program_config1)?;
-            OrchestrationMode::ProofChecking(SolverAndParser::from_config_proof(config, timelimit)?)
-        }
+    let mode = if args.solver_configs.len() > 1 {
+        let solvers = args
+            .solver_configs
+            .iter()
+            .map(|f| {
+                SolverConfig::load_from_file(f).map(|c| SolverAndParser::from_config(c, timelimit))
+            })
+            .collect::<Result<_, _>>()?;
+        OrchestrationMode::Comparison(solvers)
+    } else {
+        let config =
+            SolverConfig::load_from_file(args.solver_configs.first().expect("invalid config"))?;
+        OrchestrationMode::ProofChecking(SolverAndParser::from_config_proof(config, timelimit)?)
     };
     let config = PbConfigFile::load_from_file(&args.settings_file)?;
     let stop_condition = StopCondition::new(
@@ -156,7 +157,7 @@ impl SolverAndParser<WithProof> {
     }
 }
 enum OrchestrationMode {
-    Comparison(SolverAndParser, SolverAndParser),
+    Comparison(Vec<SolverAndParser>),
     ProofChecking(SolverAndParser<WithProof>),
 }
 
@@ -339,20 +340,24 @@ impl Orchestrator {
         match &work_result.payload {
             WorkPayload::Verdict(solver_verdict) => {
                 let mut large_solving_difference = false;
-                if let CsvRecord::Comparison(r) = &solver_verdict.record
-                    && (r.problem_solving_duration_solver1_ms
-                        - r.problem_solving_duration_solver2_ms)
-                        .abs()
-                        >= 2000.0
-                {
-                    warn!(
-                        "Solving time diverged more than 2 seconds!: {}ms - {}ms",
-                        r.problem_solving_duration_solver1_ms,
-                        r.problem_solving_duration_solver2_ms
-                    );
-                    large_solving_difference = true;
+                if let CsvRecord::Comparison(rs) = &solver_verdict.record {
+                    let min = rs
+                        .iter()
+                        .map(|r| r.problem_solving_duration_solver_ms)
+                        .fold(f32::INFINITY, f32::min);
+                    let max = rs
+                        .iter()
+                        .map(|r| r.problem_solving_duration_solver_ms)
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    if (max - min).abs() >= 2000.0 {
+                        warn!(
+                            "Solving time diverged more than 2 seconds!: {}ms - {}ms",
+                            min, max
+                        );
+                        large_solving_difference = true;
+                    }
                 }
-                let outcome = solver_verdict.outcome.get_outcome();
+                let iteration_result = &solver_verdict.outcome;
 
                 let mut files_to_move: Vec<&Path> = vec![];
                 let output_file = &solver_verdict.pb_file;
@@ -361,15 +366,17 @@ impl Orchestrator {
                     files_to_move.push(proof_file);
                 }
 
-                let should_process = self.save_all_files
-                    || !matches!(
-                        outcome,
-                        VerificationOutcome::Sat
-                            | VerificationOutcome::Unsat
-                            | VerificationOutcome::Timelimit
+                let should_process = self.save_all_files || iteration_result.should_process_data();
+                if !iteration_result.errors.is_empty() {
+                    info!(
+                        "Found bug with seed {})!\nBug: {}",
+                        seed,
+                        iteration_result
+                            .errors
+                            .iter()
+                            .map(|(name, e)| format!("Solver {name}: {e}"))
+                            .join(", ")
                     );
-                if let VerificationOutcome::Bug(bug_reason) = outcome {
-                    info!("Found bug with seed {})!\nBug: {}", seed, bug_reason);
                 }
                 if should_process {
                     if let Err(e) =
@@ -401,12 +408,16 @@ impl Orchestrator {
                         error!("Could not flush to file\n Error: {}", err);
                     }
                 }
-                let simple_result = match outcome {
-                    VerificationOutcome::Sat => SimpleResult::Sat,
-                    VerificationOutcome::Unsat => SimpleResult::Unsat,
-                    VerificationOutcome::Timelimit => SimpleResult::Timeout,
-                    VerificationOutcome::Bug(_) => SimpleResult::Bug,
-                    VerificationOutcome::Unknown => SimpleResult::Unknown,
+                let simple_result = match &iteration_result.mode_validation {
+                    _ if !iteration_result.errors.is_empty() => SimpleResult::Bug,
+                    ModeValidation::Valid(status_flat) => match status_flat {
+                        StatusFlat::Sat => SimpleResult::Sat,
+                        StatusFlat::Optimum => SimpleResult::Sat,
+                        StatusFlat::Unsat => SimpleResult::Unsat,
+                        StatusFlat::TimeLimit => SimpleResult::Timeout,
+                        StatusFlat::Unknown => SimpleResult::Unknown,
+                    },
+                    ModeValidation::Invalid(_) => SimpleResult::Bug,
                 };
                 SingleRunStats::Successfull(SingleRunRecord::new(
                     simple_result,
@@ -415,16 +426,9 @@ impl Orchestrator {
                     large_solving_difference,
                 ))
             }
-            WorkPayload::Error(work_error) => {
-                error!("{work_error}");
-                let mut files_to_move: Vec<&Path> = vec![];
-                let context = &work_error.context;
-                if let Some(pb_file) = &context.pb_file {
-                    files_to_move.push(pb_file);
-                }
-                if let Some(proof_file) = &context.proof_file {
-                    files_to_move.push(proof_file);
-                }
+            WorkPayload::PbGenerationError(work_error) => {
+                error!("{}", work_error.kind);
+                let files_to_move: Vec<&Path> = vec![&work_error.pb_file];
                 if let Err(e) =
                     self.case_writer
                         .process(&issue_record, &work_result, &files_to_move)
@@ -477,7 +481,7 @@ fn work_iteration(
 ) -> WorkResult {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let with_option_fuzzing = rand::random_bool(0.2); // option fuzzing with 20% probability
+    let with_option_fuzzing = rand::random_bool(1.0); // option fuzzing with 20% probability
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
@@ -489,166 +493,287 @@ fn work_iteration(
         generation_method,
         with_option_fuzzing,
     };
+    let file_name = format!("{thread_id}_test_{seed}");
+    let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
+    debug!("Running Fuzzer with seed {seed}...");
 
-    let payload_result: Result<SolverVerdict, Box<WorkError>> = (|| {
-        let file_name = format!("{thread_id}_test_{seed}");
-        let output_file = fuzzer_output_dir.join(format!("{file_name}.opb"));
-        debug!("Running Fuzzer with seed {seed}...");
-        let mut context = WorkErrorContext::default();
+    let grammar = match PBGenerator::create_grammar(seed, settings, program_info) {
+        Ok(g) => g,
+        Err(e) => {
+            return WorkResult {
+                meta,
+                payload: WorkPayload::PbGenerationError(FuzzGenerationError {
+                    pb_file: output_file,
+                    kind: e.into(),
+                }),
+            };
+        }
+    };
 
-        let grammar = PBGenerator::create_grammar(seed, settings, program_info)
-            .map_err(|kind| context.clone().into_error(kind.into()))?;
+    let duration_write_to_file = match File::create(&output_file)
+        .map(BufWriter::new)
+        .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
+    {
+        Ok(d) => d,
+        Err(e) => {
+            return WorkResult {
+                meta,
+                payload: WorkPayload::PbGenerationError(FuzzGenerationError {
+                    pb_file: output_file,
+                    kind: e.into(),
+                }),
+            };
+        }
+    };
 
-        let duration_write_to_file = File::create(&output_file)
-            .map(BufWriter::new)
-            .and_then(|mut buf_writer| grammar.produce(&mut buf_writer))
-            .map_err(|e| context.clone().into_error(e.into()))?;
+    let grammar_statistics = grammar.get_statistics();
+    let output_generation_duration =
+        *grammar_statistics.get_generation_time() + duration_write_to_file;
+    debug!(
+        "Created problem in: {:.3}ms",
+        (output_generation_duration.as_secs_f32() * 1000.0)
+    );
 
-        context.pb_file = Some(output_file.clone());
-        let grammar_statistics = grammar.get_statistics();
-        let output_generation_duration =
-            *grammar_statistics.get_generation_time() + duration_write_to_file;
-        debug!(
-            "Created problem in: {:.3}ms",
-            (output_generation_duration.as_secs_f32() * 1000.0)
-        );
+    let pb_kind = settings.get_problem_kind();
 
-        let pb_kind = settings.get_problem_kind();
-
-        match mode {
-            OrchestrationMode::Comparison(p1, p2) => {
+    let verdict: SolverVerdict = match mode {
+        OrchestrationMode::Comparison(sps) => {
+            let mut comparison_records = Vec::with_capacity(sps.len());
+            let mut valid_runs = Vec::with_capacity(sps.len());
+            let mut errors = vec![];
+            for sp in sps {
                 let SolverAndParser {
-                    solver: s1,
-                    parser: p1,
-                } = p1;
-                let SolverAndParser {
-                    solver: s2,
-                    parser: p2,
-                } = p2;
-
-                let output_bin1 = s1
-                    .run(&output_file, with_option_fuzzing)
-                    .map_err(|e| context.clone().into_error(e.into()))?;
-                let time_bin1 = output_bin1.record.execution_time;
-                context.solver_runs = vec![output_bin1.record.clone()];
-
-                let output_bin2 = s2
-                    .run(&output_file, with_option_fuzzing)
-                    .map_err(|e| context.clone().into_error(e.into()))?;
-                let time_bin2 = output_bin2.record.execution_time;
-                context.solver_runs = context
-                    .solver_runs
-                    .into_iter()
-                    .chain(vec![output_bin2.record.clone()])
-                    .collect();
-
-                let start_output_extraction = Instant::now();
-                let r1 = p1
-                    .parse(output_bin1, pb_kind)
-                    .map_err(|e| context.clone().into_error(e.into()))?;
-                context.parser_status = Some(r1.parsed_status.clone());
-                let r2 = p2
-                    .parse(output_bin2, pb_kind)
-                    .map_err(|e| context.clone().into_error(e.into()))?;
-
-                let conflicts1 = r1.parsed_status.get_conflicts();
-                let conflicts2 = r2.parsed_status.get_conflicts();
-                let comparison_run = compare_runs(r1, r2, &grammar);
-                let time_output_extraction = start_output_extraction.elapsed();
-
+                    solver: s,
+                    parser: p,
+                } = sp;
+                let output_solver = match s.run(&output_file, with_option_fuzzing) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        let work_error = WorkError {
+                            solver_run: None,
+                            kind: e.into(),
+                        };
+                        errors.push((s.get_name().to_string(), work_error));
+                        continue;
+                    }
+                };
+                let time_bin = output_solver.record.execution_time;
+                let start_time_parsing = Instant::now();
+                let execution_record = output_solver.record.clone();
+                let r = match p.parse(output_solver, pb_kind) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let run_record = SolverRunRecord {
+                            execution: execution_record.clone(),
+                            parsed_status: None,
+                        };
+                        let work_error = WorkError {
+                            solver_run: Some(run_record),
+                            kind: e.into(),
+                        };
+                        errors.push((s.get_name().to_string(), work_error));
+                        continue;
+                    }
+                };
+                let time_parsing = start_time_parsing.elapsed();
+                let conflicts = r.parsed_status.get_conflicts();
                 let comparison_record = ComparisonRecord {
-                    result: comparison_run.outcome.get_status_as_string(),
+                    result: r.parsed_status.get_status_str(),
                     problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
-                    problem_solving_duration_solver1_ms: time_bin1.as_secs_f32() * 1000.0,
-                    problem_solving_duration_solver2_ms: time_bin2.as_secs_f32() * 1000.0,
-                    problem_parsing_duration_ms: time_output_extraction.as_secs_f32() * 1000.0,
-                    conflicts1,
-                    conflicts2,
+                    solver_name: r.record.name.clone(),
+                    problem_solving_duration_solver_ms: time_bin.as_secs_f32() * 1000.0,
+                    problem_parsing_duration_ms: time_parsing.as_secs_f32() * 1000.0,
+                    conflicts,
                     seed,
                 };
-
-                Ok(SolverVerdict {
-                    pb_file: output_file,
-                    proof_file: None,
-                    outcome: Outcome::Comparison(comparison_run),
-                    record: CsvRecord::Comparison(comparison_record),
-                })
+                comparison_records.push(comparison_record);
+                match verify_solution(&r.parsed_status, &grammar) {
+                    Ok(_) => valid_runs.push(r),
+                    Err(e) => {
+                        let run_record = SolverRunRecord {
+                            execution: execution_record,
+                            parsed_status: Some(r.parsed_status),
+                        };
+                        let work_error = WorkError {
+                            solver_run: Some(run_record),
+                            kind: e.into(),
+                        };
+                        // it is not possible to insert into existing entry
+                        // every error continues the iteration of the for loop
+                        errors.push((r.record.name.clone(), work_error));
+                    }
+                }
             }
-            OrchestrationMode::ProofChecking(solver_and_parser) => {
-                let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
-                let problem_solving_start = Instant::now();
-                let SolverAndParser { solver, parser } = solver_and_parser;
+            let mode_validation = match compare_status(&valid_runs) {
+                Ok(s) => ModeValidation::Valid(s),
+                Err(e) => ModeValidation::Invalid(e),
+            };
+            let iteration_result = IterationResult {
+                errors,
+                runs: valid_runs,
+                mode_validation,
+            };
+            SolverVerdict {
+                pb_file: output_file,
+                proof_file: None,
+                outcome: iteration_result,
+                record: CsvRecord::Comparison(comparison_records),
+            }
+        }
+        OrchestrationMode::ProofChecking(solver_and_parser) => {
+            let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
+            let problem_solving_start = Instant::now();
 
-                let output = solver
-                    .run_with_proof(&output_file, &proof_file, with_option_fuzzing)
-                    .map_err(|e| context.clone().into_error(e.into()))?;
+            let mut errors = vec![];
+            let mut records = vec![];
+            let mut runs = vec![];
+            for sp in [solver_and_parser] {
+                let SolverAndParser { solver, parser } = sp;
+                let output =
+                    match solver.run_with_proof(&output_file, &proof_file, with_option_fuzzing) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            let work_error = WorkError {
+                                solver_run: None,
+                                kind: e.into(),
+                            };
+                            errors.push((solver.get_name().to_string(), work_error));
+                            continue;
+                        }
+                    };
                 let problem_solving_duration = problem_solving_start.elapsed();
-
-                let context = WorkErrorContext {
-                    solver_runs: vec![output.record.clone()],
-                    proof_file: Some(proof_file.clone()),
-                    ..context
-                };
-
                 let start_output_parsing = Instant::now();
-                let r = parser
-                    .parse(output, pb_kind)
-                    .map_err(|e| context.into_error(e.into()))?;
+                let execution_record = output.record.clone();
+                let r = match parser.parse(output, pb_kind) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let solver_run = SolverRunRecord {
+                            execution: execution_record.clone(),
+                            parsed_status: None,
+                        };
+                        let work_error = WorkError {
+                            solver_run: Some(solver_run),
+                            kind: e.into(),
+                        };
+                        errors.push((solver.get_name().to_string(), work_error));
+                        continue;
+                    }
+                };
                 let duration_output_parsing = start_output_parsing.elapsed();
                 let conflicts = r.parsed_status.get_conflicts();
-
-                let proof_checking_start = Instant::now();
-                let proof_run = verify_with_proof(r, &grammar, &output_file, &proof_file);
-                let proof_checking_duration = proof_checking_start.elapsed();
-
                 let proof_record = ProofRecord {
-                    result: proof_run.outcome.get_status_as_string(),
+                    result: r.parsed_status.get_status_str(),
                     problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
                     problem_solving_duration_program: problem_solving_duration.as_secs_f32()
                         * 1000.0,
                     problem_parsing_duration_ms: duration_output_parsing.as_secs_f32() * 1000.0,
-                    problem_checking_duration_ms: proof_checking_duration.as_secs_f32() * 1000.0,
                     conflicts,
                     seed,
                 };
+                records.push(proof_record);
+                match verify_solution(&r.parsed_status, &grammar) {
+                    Ok(_) => runs.push(r),
+                    Err(e) => {
+                        let run_record = SolverRunRecord {
+                            execution: execution_record,
+                            parsed_status: Some(r.parsed_status),
+                        };
+                        let work_error = WorkError {
+                            solver_run: Some(run_record),
+                            kind: e.into(),
+                        };
+                        // it is not possible to insert into existing entry
+                        // every error continues the iteration of the for loop
+                        errors.push((r.record.name.clone(), work_error));
+                    }
+                }
+            }
+            check_proof(&output_file, &proof_file);
 
-                Ok(SolverVerdict {
-                    pb_file: output_file,
-                    proof_file: Some(proof_file),
-                    outcome: Outcome::Proof(proof_run),
-                    record: CsvRecord::Proof(proof_record),
-                })
+            let status = match runs[0].parsed_status {
+                ParsedStatus::Sat { .. } => StatusFlat::Sat,
+                ParsedStatus::Optimum { .. } => StatusFlat::Optimum,
+                ParsedStatus::Unsat { .. } => StatusFlat::Unsat,
+                ParsedStatus::TimeLimit => StatusFlat::TimeLimit,
+                ParsedStatus::Unknown { .. } => StatusFlat::Unknown,
+            };
+            let mode_validation = match check_proof(&output_file, &proof_file) {
+                Ok(_) => ModeValidation::Valid(status),
+                Err(e) => ModeValidation::Invalid(e.into()),
+            };
+
+            let iteration_result = IterationResult {
+                errors,
+                runs,
+                mode_validation,
+            };
+            SolverVerdict {
+                pb_file: output_file,
+                proof_file: Some(proof_file),
+                outcome: iteration_result,
+                record: CsvRecord::Proof(records),
             }
         }
-    })();
-
-    let payload = match payload_result {
-        Ok(verdict) => WorkPayload::Verdict(Box::new(verdict)),
-        Err(err) => WorkPayload::Error(err),
     };
+
+    let payload = WorkPayload::Verdict(Box::new(verdict));
 
     WorkResult { meta, payload }
 }
-enum Outcome {
-    Comparison(ComparisonRun),
-    Proof(ProofRun),
+
+struct IterationResult {
+    errors: Vec<(String, WorkError)>,
+    runs: Vec<ParserRun>,
+    mode_validation: ModeValidation,
 }
 
-impl Outcome {
-    fn get_outcome(&self) -> &VerificationOutcome {
+enum ModeValidation {
+    Valid(StatusFlat),
+    Invalid(BugReason),
+}
+
+impl Display for ModeValidation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Outcome::Comparison(comparison_run) => &comparison_run.outcome,
-            Outcome::Proof(proof_run) => &proof_run.outcome,
+            ModeValidation::Valid(status_flat) => {
+                write!(f, "Valid result: {}", status_flat.get_status_as_str())
+            }
+            ModeValidation::Invalid(bug_reason) => write!(f, "Bug occured: {}", bug_reason),
         }
     }
+}
 
-    fn get_solver_infos(&self) -> Vec<SolverInfo> {
+impl ModeValidation {
+    fn get_status_str(&self) -> &str {
         match self {
-            Outcome::Comparison(comparison_run) => vec![
-                convert_to_solver_info(&comparison_run.parser_run1),
-                convert_to_solver_info(&comparison_run.parser_run2),
-            ],
-            Outcome::Proof(proof_run) => vec![convert_to_solver_info(&proof_run.parser_run)],
+            ModeValidation::Valid(status_flat) => status_flat.get_status_as_str(),
+            ModeValidation::Invalid(_) => "bug",
+        }
+    }
+}
+
+impl IterationResult {
+    fn get_solver_infos(&self) -> Vec<SolverInfo> {
+        self.runs.iter().map(convert_to_solver_info).collect()
+    }
+
+    fn get_status_as_string(&self) -> &str {
+        self.mode_validation.get_status_str()
+    }
+
+    fn should_process_data(&self) -> bool {
+        if !self.errors.is_empty() {
+            return true;
+        }
+        match &self.mode_validation {
+            ModeValidation::Valid(status_flat) => match status_flat {
+                StatusFlat::Sat => false,
+                StatusFlat::Optimum => false,
+                StatusFlat::Unsat => false,
+                StatusFlat::TimeLimit => false,
+                StatusFlat::Unknown => true,
+            },
+            ModeValidation::Invalid(_) => true,
         }
     }
 }
@@ -657,7 +782,7 @@ fn convert_to_solver_info(parser_run: &ParserRun) -> SolverInfo {
     SolverInfo {
         binary: parser_run.record.binary.clone(),
         used_args: parser_run.record.used_args.clone(),
-        parsed_status: parser_run.parsed_status.get_status_str(),
+        parsed_status: parser_run.parsed_status.get_status_str().to_string(),
     }
 }
 
@@ -670,7 +795,7 @@ impl WorkResult {
     fn get_execution_records(&self) -> Vec<SolverInfo> {
         match &self.payload {
             WorkPayload::Verdict(solver_verdict) => solver_verdict.outcome.get_solver_infos(),
-            WorkPayload::Error(work_error) => work_error.context.to_solver_infos(),
+            WorkPayload::PbGenerationError(_) => vec![],
         }
     }
 }
@@ -688,7 +813,11 @@ impl IssueReport for WorkResult {
         writeln!(w, "Option fuzzing: {with_option_fuzzing}")?;
         match &self.payload {
             WorkPayload::Verdict(solver_verdict) => {
-                let outcome = &solver_verdict.outcome;
+                let IterationResult {
+                    errors,
+                    runs,
+                    mode_validation,
+                } = &solver_verdict.outcome;
                 let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
                     writeln!(w, "{:=^50}", "Solving")?;
                     writeln!(w, "{}", data.record)?;
@@ -696,26 +825,34 @@ impl IssueReport for WorkResult {
                     writeln!(w, "{:=^50}", "Parsing")?;
                     writeln!(w, "{}", data.parsed_status)
                 };
-                match outcome {
-                    Outcome::Comparison(comparison_run) => {
-                        write_run_data(&comparison_run.parser_run1)?;
-                        write_run_data(&comparison_run.parser_run2)?;
+                for r in runs {
+                    write_run_data(r)?;
+                }
+                writeln!(w)?;
+                writeln!(w, "{:=^50}", "Errors")?;
+                for (solver_name, e) in errors {
+                    writeln!(w, "Solver {solver_name}: {}", e.kind)?;
+                    if let Some(solver_run) = &e.solver_run {
+                        let SolverRunRecord {
+                            execution,
+                            parsed_status,
+                        } = solver_run;
+                        writeln!(w, "{:-^50}", "Solving")?;
+                        writeln!(w, "{}", execution)?;
+                        if let Some(status) = parsed_status {
+                            writeln!(w)?;
+                            writeln!(w, "{:-^50}", "Parsing")?;
+                            writeln!(w, "{}", status)?;
+                        }
                     }
-                    Outcome::Proof(proof_run) => write_run_data(&proof_run.parser_run)?,
                 }
                 writeln!(w)?;
                 writeln!(w, "{:=^50}", "Outcome")?;
-                writeln!(w, "{}", outcome.get_outcome())
+                writeln!(w, "{}", mode_validation)
             }
 
-            WorkPayload::Error(work_error) => {
-                let context = &work_error.context;
-                let _ = writeln!(w, "Error: {work_error}");
-                for (i, run) in context.solver_runs.iter().enumerate() {
-                    let _ = writeln!(w, "\n{:=^50}", format!("Run {}", i + 1));
-                    let _ = writeln!(w, "{run}");
-                }
-                Ok(())
+            WorkPayload::PbGenerationError(error) => {
+                writeln!(w, "Error: {}", error.kind)
             }
         }
     }
@@ -730,15 +867,13 @@ struct WorkMetaData {
 
 enum WorkPayload {
     Verdict(Box<SolverVerdict>),
-    Error(Box<WorkError>),
+    PbGenerationError(FuzzGenerationError),
 }
 impl WorkPayload {
     fn get_status_as_string(&self) -> &str {
         match self {
-            WorkPayload::Verdict(solver_verdict) => {
-                solver_verdict.outcome.get_outcome().get_status_as_string()
-            }
-            WorkPayload::Error(_) => "ERROR",
+            WorkPayload::Verdict(solver_verdict) => solver_verdict.outcome.get_status_as_string(),
+            WorkPayload::PbGenerationError(_) => "pb file generation error",
         }
     }
 }
@@ -746,13 +881,13 @@ impl WorkPayload {
 struct SolverVerdict {
     pb_file: PathBuf,
     proof_file: Option<PathBuf>,
-    outcome: Outcome,
+    outcome: IterationResult,
     record: CsvRecord,
 }
 
 #[derive(Debug, Error)]
 struct WorkError {
-    context: WorkErrorContext,
+    solver_run: Option<SolverRunRecord>,
     kind: WorkErrorKind,
 }
 
@@ -762,41 +897,23 @@ impl Display for WorkError {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct WorkErrorContext {
-    pb_file: Option<PathBuf>,
-    proof_file: Option<PathBuf>,
-    solver_runs: Vec<SolverExecutionRecord>,
-    parser_status: Option<ParsedStatus>,
+#[derive(Debug, Clone)]
+struct SolverRunRecord {
+    execution: SolverExecutionRecord,
+    parsed_status: Option<ParsedStatus>,
 }
 
-impl WorkErrorContext {
-    fn into_error(self, kind: WorkErrorKind) -> WorkError {
-        WorkError {
-            context: self,
-            kind,
-        }
-    }
+struct FuzzGenerationError {
+    pb_file: PathBuf,
+    kind: FuzzGenerationErrorKind,
+}
 
-    fn to_solver_infos(&self) -> Vec<SolverInfo> {
-        self.solver_runs
-            .iter()
-            .zip_longest(&self.parser_status)
-            .map(|v| match v {
-                itertools::EitherOrBoth::Both(r, s) => SolverInfo {
-                    binary: r.binary.clone(),
-                    used_args: r.used_args.clone(),
-                    parsed_status: s.get_status_str(),
-                },
-                itertools::EitherOrBoth::Left(r) => SolverInfo {
-                    binary: r.binary.clone(),
-                    used_args: r.used_args.clone(),
-                    parsed_status: "Status not parsed!",
-                },
-                itertools::EitherOrBoth::Right(_) => unreachable!(),
-            })
-            .collect()
-    }
+#[derive(Debug, Error)]
+enum FuzzGenerationErrorKind {
+    #[error("Error in fuzzer: {0}")]
+    Fuzzer(#[from] PbGenerationError),
+    #[error("IO failed: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Debug, Error)]
@@ -809,6 +926,8 @@ enum WorkErrorKind {
     Solver(#[from] SolverExecutionFailed),
     #[error("Parser failed: {0}")]
     Parser(#[from] OutputParsingError),
+    #[error("Validation failed: {0}")]
+    Validation(#[from] ValidationError),
 }
 
 /// Cancel iterations of fuzzing runs

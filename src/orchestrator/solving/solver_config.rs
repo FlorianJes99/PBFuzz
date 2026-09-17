@@ -152,7 +152,7 @@ impl ArgumentType {
 
 #[cfg(test)]
 mod tests {
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{SeedableRng, rngs::StdRng};
 
     use super::*;
 
