@@ -7,6 +7,7 @@ use crate::fuzzer::helpers::{RunningAverage, RunningAverageDuration};
 
 #[derive(Serialize)]
 pub struct RunStatistics {
+    amount_runs: u32,
     amount_sat: u32,
     amount_unsat: u32,
     amount_unknown: u32,
@@ -25,10 +26,14 @@ pub enum SingleRunStats {
 
 pub enum SimpleResult {
     Sat,
+    Optimum,
     Unsat,
     Timeout,
     Bug,
+    Error,
+    BugError,
     Unknown,
+    Other,
 }
 
 pub struct SingleRunRecord {
@@ -57,6 +62,7 @@ impl SingleRunRecord {
 impl RunStatistics {
     pub fn new() -> Self {
         Self {
+            amount_runs: 0,
             amount_sat: 0,
             amount_unsat: 0,
             amount_unknown: 0,
@@ -84,6 +90,13 @@ impl RunStatistics {
                     SimpleResult::Unknown => self.amount_unknown += 1,
                     SimpleResult::Timeout => self.timeouts += 1,
                     SimpleResult::Bug => self.bugs_found += 1,
+                    SimpleResult::Optimum => self.amount_sat += 1,
+                    SimpleResult::Error => self.errors += 1,
+                    SimpleResult::BugError => {
+                        self.errors += 1;
+                        self.bugs_found += 1;
+                    }
+                    SimpleResult::Other => self.amount_unknown += 1,
                 }
                 self.average_conflicts.update(conflicts);
                 self.average_iteration_duration.update(&iteration_duration);
@@ -92,11 +105,8 @@ impl RunStatistics {
                 }
             }
             SingleRunStats::Error => self.errors += 1,
-        }
-    }
-
-    fn amount_runs(&self) -> u32 {
-        self.amount_sat + self.amount_unsat + self.amount_unknown + self.bugs_found + self.timeouts
+        };
+        self.amount_runs += 1;
     }
 
     fn percentage_sat(&self) -> f32 {
@@ -115,6 +125,7 @@ impl RunStatistics {
 impl Display for RunStatistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let RunStatistics {
+            amount_runs,
             amount_sat,
             amount_unsat,
             amount_unknown,
@@ -128,8 +139,7 @@ impl Display for RunStatistics {
         writeln!(
             f,
             "{:<OFFSET$}: {}",
-            "Total amount of instances generated",
-            self.amount_runs()
+            "Total amount of instances generated", amount_runs
         )?;
         writeln!(
             f,

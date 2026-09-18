@@ -102,9 +102,16 @@ pub fn run_orchestrator(
             .collect::<Result<_, _>>()?;
         OrchestrationMode::Comparison(solvers)
     } else {
-        let config =
-            SolverConfig::load_from_file(args.solver_configs.first().expect("invalid config"))?;
-        OrchestrationMode::ProofChecking(SolverAndParser::from_config_proof(config, timelimit)?)
+        let solvers = args
+            .solver_configs
+            .iter()
+            .map(|f| -> Result<SolverAndParser<WithProof>, Box<dyn Error>> {
+                let file = SolverConfig::load_from_file(f)?;
+                let sp = SolverAndParser::from_config_proof(file, timelimit)?;
+                Ok(sp)
+            })
+            .collect::<Result<_, _>>()?;
+        OrchestrationMode::ProofChecking(solvers)
     };
     let config = PbConfigFile::load_from_file(&args.settings_file)?;
     let stop_condition = StopCondition::new(
@@ -158,7 +165,7 @@ impl SolverAndParser<WithProof> {
 }
 enum OrchestrationMode {
     Comparison(Vec<SolverAndParser>),
-    ProofChecking(SolverAndParser<WithProof>),
+    ProofChecking(Vec<SolverAndParser<WithProof>>),
 }
 
 struct Orchestrator {
@@ -362,8 +369,9 @@ impl Orchestrator {
                 let mut files_to_move: Vec<&Path> = vec![];
                 let output_file = &solver_verdict.pb_file;
                 files_to_move.push(output_file);
-                if let Some(proof_file) = &solver_verdict.proof_file {
-                    files_to_move.push(proof_file);
+                let proof_files = &solver_verdict.proof_files;
+                if !proof_files.is_empty() {
+                    proof_files.iter().for_each(|p| files_to_move.push(p));
                 }
 
                 let should_process = self.save_all_files || iteration_result.should_process_data();
@@ -408,17 +416,7 @@ impl Orchestrator {
                         error!("Could not flush to file\n Error: {}", err);
                     }
                 }
-                let simple_result = match &iteration_result.mode_validation {
-                    _ if !iteration_result.errors.is_empty() => SimpleResult::Bug,
-                    ModeValidation::Valid(status_flat) => match status_flat {
-                        StatusFlat::Sat => SimpleResult::Sat,
-                        StatusFlat::Optimum => SimpleResult::Sat,
-                        StatusFlat::Unsat => SimpleResult::Unsat,
-                        StatusFlat::TimeLimit => SimpleResult::Timeout,
-                        StatusFlat::Unknown => SimpleResult::Unknown,
-                    },
-                    ModeValidation::Invalid(_) => SimpleResult::Bug,
-                };
+                let simple_result = iteration_result.get_simple_result();
                 SingleRunStats::Successfull(SingleRunRecord::new(
                     simple_result,
                     0,
@@ -481,7 +479,7 @@ fn work_iteration(
 ) -> WorkResult {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let with_option_fuzzing = rand::random_bool(1.0); // option fuzzing with 20% probability
+    let with_option_fuzzing = rand::random_bool(0.2); // option fuzzing with 20% probability
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
@@ -598,37 +596,39 @@ fn work_iteration(
                             solver_run: Some(run_record),
                             kind: e.into(),
                         };
-                        // it is not possible to insert into existing entry
-                        // every error continues the iteration of the for loop
                         errors.push((r.record.name.clone(), work_error));
                     }
                 }
             }
-            let mode_validation = match compare_status(&valid_runs) {
-                Ok(s) => ModeValidation::Valid(s),
-                Err(e) => ModeValidation::Invalid(e),
+            let (status, bugs) = match compare_status(&valid_runs) {
+                Ok(s) => (Some(s), vec![]),
+                Err(e) => (None, vec![e]),
             };
             let iteration_result = IterationResult {
                 errors,
-                runs: valid_runs,
-                mode_validation,
+                successfull_runs: valid_runs,
+                bugs,
+                status,
             };
             SolverVerdict {
                 pb_file: output_file,
-                proof_file: None,
+                proof_files: vec![],
                 outcome: iteration_result,
                 record: CsvRecord::Comparison(comparison_records),
             }
         }
         OrchestrationMode::ProofChecking(solver_and_parser) => {
-            let proof_file = fuzzer_output_dir.join(format!("{file_name}.pbp"));
             let problem_solving_start = Instant::now();
 
             let mut errors = vec![];
+            let mut bugs = vec![];
             let mut records = vec![];
-            let mut runs = vec![];
-            for sp in [solver_and_parser] {
+            let mut successfull_runs = vec![];
+            let mut proof_files = vec![];
+            for sp in solver_and_parser {
                 let SolverAndParser { solver, parser } = sp;
+                let proof_file =
+                    fuzzer_output_dir.join(format!("{}_{file_name}.pbp", solver.get_name()));
                 let output =
                     match solver.run_with_proof(&output_file, &proof_file, with_option_fuzzing) {
                         Ok(o) => o,
@@ -641,6 +641,7 @@ fn work_iteration(
                             continue;
                         }
                     };
+                proof_files.push(proof_file.clone());
                 let problem_solving_duration = problem_solving_start.elapsed();
                 let start_output_parsing = Instant::now();
                 let execution_record = output.record.clone();
@@ -672,7 +673,21 @@ fn work_iteration(
                 };
                 records.push(proof_record);
                 match verify_solution(&r.parsed_status, &grammar) {
-                    Ok(_) => runs.push(r),
+                    Ok(_) => {
+                        if matches!(
+                            r.parsed_status,
+                            ParsedStatus::TimeLimit | ParsedStatus::Unknown { .. }
+                        ) {
+                            successfull_runs.push(r);
+                        } else {
+                            match check_proof(&output_file, &proof_file) {
+                                Ok(_) => {
+                                    successfull_runs.push(r);
+                                }
+                                Err(e) => bugs.push(e.into()),
+                            };
+                        };
+                    }
                     Err(e) => {
                         let run_record = SolverRunRecord {
                             execution: execution_record,
@@ -688,28 +703,24 @@ fn work_iteration(
                     }
                 }
             }
-            check_proof(&output_file, &proof_file);
 
-            let status = match runs[0].parsed_status {
+            let status = successfull_runs.first().map(|r| match r.parsed_status {
                 ParsedStatus::Sat { .. } => StatusFlat::Sat,
                 ParsedStatus::Optimum { .. } => StatusFlat::Optimum,
                 ParsedStatus::Unsat { .. } => StatusFlat::Unsat,
                 ParsedStatus::TimeLimit => StatusFlat::TimeLimit,
                 ParsedStatus::Unknown { .. } => StatusFlat::Unknown,
-            };
-            let mode_validation = match check_proof(&output_file, &proof_file) {
-                Ok(_) => ModeValidation::Valid(status),
-                Err(e) => ModeValidation::Invalid(e.into()),
-            };
+            });
 
             let iteration_result = IterationResult {
                 errors,
-                runs,
-                mode_validation,
+                successfull_runs,
+                bugs,
+                status,
             };
             SolverVerdict {
                 pb_file: output_file,
-                proof_file: Some(proof_file),
+                proof_files,
                 outcome: iteration_result,
                 record: CsvRecord::Proof(records),
             }
@@ -722,58 +733,67 @@ fn work_iteration(
 }
 
 struct IterationResult {
+    successfull_runs: Vec<ParserRun>,
     errors: Vec<(String, WorkError)>,
-    runs: Vec<ParserRun>,
-    mode_validation: ModeValidation,
-}
-
-enum ModeValidation {
-    Valid(StatusFlat),
-    Invalid(BugReason),
-}
-
-impl Display for ModeValidation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModeValidation::Valid(status_flat) => {
-                write!(f, "Valid result: {}", status_flat.get_status_as_str())
-            }
-            ModeValidation::Invalid(bug_reason) => write!(f, "Bug occured: {}", bug_reason),
-        }
-    }
-}
-
-impl ModeValidation {
-    fn get_status_str(&self) -> &str {
-        match self {
-            ModeValidation::Valid(status_flat) => status_flat.get_status_as_str(),
-            ModeValidation::Invalid(_) => "bug",
-        }
-    }
+    bugs: Vec<BugReason>,
+    status: Option<StatusFlat>,
 }
 
 impl IterationResult {
     fn get_solver_infos(&self) -> Vec<SolverInfo> {
-        self.runs.iter().map(convert_to_solver_info).collect()
+        self.successfull_runs
+            .iter()
+            .map(convert_to_solver_info)
+            .collect()
     }
 
     fn get_status_as_string(&self) -> &str {
-        self.mode_validation.get_status_str()
+        match (self.bugs.is_empty(), self.errors.is_empty()) {
+            (true, true) => self
+                .status
+                .as_ref()
+                .map(|s| s.get_status_as_str())
+                .unwrap_or("UnexpectedFailure"),
+            (true, false) => "error",
+            (false, true) => "bug",
+            (false, false) => "BE",
+        }
     }
 
     fn should_process_data(&self) -> bool {
         if !self.errors.is_empty() {
             return true;
         }
-        match &self.mode_validation {
-            ModeValidation::Valid(status_flat) => match status_flat {
+        if !self.bugs.is_empty() {
+            return true;
+        }
+        match &self.status {
+            Some(s) => match s {
                 StatusFlat::Sat => false,
                 StatusFlat::Optimum => false,
                 StatusFlat::Unsat => false,
                 StatusFlat::TimeLimit => false,
                 StatusFlat::Unknown => true,
             },
-            ModeValidation::Invalid(_) => true,
+            None => true,
+        }
+    }
+
+    fn get_simple_result(&self) -> SimpleResult {
+        match (self.bugs.is_empty(), self.errors.is_empty()) {
+            (true, true) => match self.status.as_ref() {
+                Some(s) => match s {
+                    StatusFlat::Sat => SimpleResult::Sat,
+                    StatusFlat::Optimum => SimpleResult::Optimum,
+                    StatusFlat::Unsat => SimpleResult::Unsat,
+                    StatusFlat::TimeLimit => SimpleResult::Timeout,
+                    StatusFlat::Unknown => SimpleResult::Unknown,
+                },
+                None => SimpleResult::Other,
+            },
+            (true, false) => SimpleResult::Error,
+            (false, true) => SimpleResult::Bug,
+            (false, false) => SimpleResult::BugError,
         }
     }
 }
@@ -815,8 +835,9 @@ impl IssueReport for WorkResult {
             WorkPayload::Verdict(solver_verdict) => {
                 let IterationResult {
                     errors,
-                    runs,
-                    mode_validation,
+                    successfull_runs,
+                    bugs,
+                    status,
                 } = &solver_verdict.outcome;
                 let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
                     writeln!(w, "{:=^50}", "Solving")?;
@@ -825,7 +846,7 @@ impl IssueReport for WorkResult {
                     writeln!(w, "{:=^50}", "Parsing")?;
                     writeln!(w, "{}", data.parsed_status)
                 };
-                for r in runs {
+                for r in successfull_runs {
                     write_run_data(r)?;
                 }
                 writeln!(w)?;
@@ -847,8 +868,19 @@ impl IssueReport for WorkResult {
                     }
                 }
                 writeln!(w)?;
+                writeln!(w, "{:=^50}", "Bugs")?;
+                for b in bugs {
+                    writeln!(w, "{b}")?;
+                }
+                writeln!(w)?;
                 writeln!(w, "{:=^50}", "Outcome")?;
-                writeln!(w, "{}", mode_validation)
+                writeln!(w, "Successfull runs: {}", successfull_runs.len())?;
+                writeln!(w, "Errors: {}", errors.len())?;
+                writeln!(w, "Bugs: {}", bugs.len())?;
+                if let Some(s) = status {
+                    writeln!(w, "Status {}", s.get_status_as_str())?;
+                }
+                Ok(())
             }
 
             WorkPayload::PbGenerationError(error) => {
@@ -880,7 +912,7 @@ impl WorkPayload {
 
 struct SolverVerdict {
     pb_file: PathBuf,
-    proof_file: Option<PathBuf>,
+    proof_files: Vec<PathBuf>,
     outcome: IterationResult,
     record: CsvRecord,
 }
