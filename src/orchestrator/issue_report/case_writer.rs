@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use log::error;
+
 use crate::orchestrator::issue_report::issue_record::IssueRecord;
 
 pub trait IssueReport {
@@ -37,11 +39,26 @@ impl CaseWriter {
             .cases_folder
             .join(format!("case_{}", issue_record.iteration));
         std::fs::create_dir(&case_folder)?;
-        self.move_files(&case_folder, files_to_move)?;
+        if let Err(e) = self.move_files(&case_folder, files_to_move) {
+            error!(
+                "Error while moving relevant files into case {}: {e}",
+                issue_record.iteration
+            )
+        }
         let meta_json = &case_folder.join("meta.json");
-        self.write_case(meta_json, issue_record)?;
+        if let Err(e) = self.write_case(meta_json, issue_record) {
+            error!(
+                "Error while writing the json record of the case {}: {e}",
+                issue_record.iteration
+            )
+        }
         let report_file = &case_folder.join("report.md");
-        self.write_report(report_file, report_writer)?;
+        if let Err(e) = self.write_report(report_file, report_writer) {
+            error!(
+                "Error while writing the report for a case {}: {e}",
+                issue_record.iteration
+            )
+        }
         self.append_case(issue_record)
     }
 
@@ -56,7 +73,9 @@ impl CaseWriter {
 
     fn move_files(&self, case_folder: &Path, files_to_move: &[&Path]) -> io::Result<()> {
         for f in files_to_move {
-            if let Some(name) = f.file_name() {
+            if f.exists()
+                && let Some(name) = f.file_name()
+            {
                 let new_file = case_folder.join(name);
                 std::fs::rename(f, new_file)?
             }

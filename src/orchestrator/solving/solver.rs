@@ -9,19 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use log::{error, info, warn};
+use log::{error, warn};
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::orchestrator::solving::solver_config::{OptionalArgs, SolverConfig};
-
-/// Marker for Solvers, which do not support proofs
-pub struct NoProof;
-
-/// Marker for Solvers, which can generate proofs
-pub struct WithProof {
-    proof_arg: ProofArg,
-}
 
 enum ProofArg {
     Joined(String),
@@ -64,7 +56,7 @@ impl ProofArg {
 }
 
 /// This struct holds all the relevant data in order to execute a Solver
-pub struct SolverData<P = NoProof> {
+pub struct SolverData {
     /// path to the binary of the solver to execute
     binary: PathBuf,
     /// essential args needed in order to run the solver
@@ -76,11 +68,11 @@ pub struct SolverData<P = NoProof> {
     /// terminate running process of the solver after this duration
     timelimit: Duration,
     /// wheter solver supports generation of proofs or not
-    proof: P,
+    proof: Option<ProofArg>,
 }
 
 /// Shared behavior for all Solvers, no matter if they supports proofs or not
-impl<P> SolverData<P> {
+impl SolverData {
     /// every solver needs to have a name, which works as an identifier
     pub fn get_name(&self) -> &str {
         &self.name
@@ -151,82 +143,31 @@ impl<P> SolverData<P> {
     }
 }
 
-impl SolverData<WithProof> {
-    pub fn into_proof_solver(
-        config: SolverConfig,
-        timelimit: Duration,
-    ) -> Result<Self, MissingProofLoggingArgument> {
-        config
-            .proof_arg
-            .ok_or(MissingProofLoggingArgument {
-                program: config.name.clone(),
-            })
-            .map(|proof_arg| Self {
-                binary: config.binary,
-                args: config.args,
-                optional_args: config.optional_args,
-                name: config.name.clone(),
-                timelimit,
-                proof: WithProof {
-                    proof_arg: ProofArg::new(proof_arg),
-                },
-            })
-    }
-
-    pub fn run_with_proof(
-        &self,
-        file_path_pb: &Path,
-        file_path_proof: &Path,
-        with_option_fuzzing: bool,
-    ) -> Result<SolverRun, SolverExecutionFailed> {
-        let mut command = Command::new(self.binary.as_os_str());
-        // TODO: remove later, when profiling analysis is done
-        let _prof_file_name = file_path_pb
-            .file_stem()
-            .expect("PB File should exist")
-            .display();
-        // add_profiling_to_command(&mut command, &prof_file_name);
-
-        self.proof.proof_arg.apply(&mut command, file_path_proof);
-
-        for arg in &self.args {
-            command.arg(arg);
-        }
-
-        if with_option_fuzzing && !self.optional_args.is_empty() {
-            let rng = &mut rand::rng();
-            let sampled_args = &self.optional_args.sample(3, rng);
-            info!("Sampled args for this run: {}", sampled_args.join(", "));
-            for arg in sampled_args {
-                command.arg(arg);
-            }
-        }
-
-        command.arg(file_path_pb);
-        self.run_with_timeout(command, self.timelimit)
-            .map_err(|e| self.external_execution_error(e))
-    }
-}
-
-impl SolverData<NoProof> {
+impl SolverData {
     pub fn into_solver(config: SolverConfig, timelimit: Duration) -> Self {
+        let proof = config.proof_arg.map(ProofArg::new);
         Self {
             binary: config.binary,
             args: config.args,
             optional_args: config.optional_args,
             name: config.name,
             timelimit,
-            proof: NoProof,
+            proof,
         }
     }
     pub fn run(
         &self,
         file_path: &Path,
+        proof_file: &Path,
         with_option_fuzzing: bool,
     ) -> Result<SolverRun, SolverExecutionFailed> {
         let mut command = Command::new(self.binary.as_os_str());
         for arg in &self.args {
             command.arg(arg);
+        }
+
+        if let Some(proof_arg) = &self.proof {
+            proof_arg.apply(&mut command, proof_file);
         }
 
         if with_option_fuzzing && !self.optional_args.is_empty() {
@@ -241,6 +182,10 @@ impl SolverData<NoProof> {
         command.arg(file_path);
         self.run_with_timeout(command, self.timelimit)
             .map_err(|e| self.external_execution_error(e))
+    }
+
+    pub fn supports_proofs(&self) -> bool {
+        self.proof.is_some()
     }
 }
 
@@ -298,12 +243,6 @@ fn add_profiling_to_command(command: &mut Command, prof_file_name: &impl Display
     }
     let prof_file = format!("profiles/{prof_file_name}.profraw");
     command.env("LLVM_PROFILE_FILE", prof_file);
-}
-
-#[derive(Debug, Error)]
-#[error("{program}: missing required proof logging argument")]
-pub struct MissingProofLoggingArgument {
-    program: String,
 }
 
 #[derive(Debug, Error)]
