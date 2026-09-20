@@ -69,6 +69,7 @@ pub struct SolverData {
     timelimit: Duration,
     /// wheter solver supports generation of proofs or not
     proof: Option<ProofArg>,
+    proof_enabled: bool,
 }
 
 /// Shared behavior for all Solvers, no matter if they supports proofs or not
@@ -144,7 +145,7 @@ impl SolverData {
 }
 
 impl SolverData {
-    pub fn into_solver(config: SolverConfig, timelimit: Duration) -> Self {
+    pub fn into_solver(config: SolverConfig, timelimit: Duration, proof_enabled: bool) -> Self {
         let proof = config.proof_arg.map(ProofArg::new);
         Self {
             binary: config.binary,
@@ -153,6 +154,7 @@ impl SolverData {
             name: config.name,
             timelimit,
             proof,
+            proof_enabled,
         }
     }
     pub fn run(
@@ -166,7 +168,9 @@ impl SolverData {
             command.arg(arg);
         }
 
-        if let Some(proof_arg) = &self.proof {
+        if self.proof_enabled
+            && let Some(proof_arg) = &self.proof
+        {
             proof_arg.apply(&mut command, proof_file);
         }
 
@@ -185,7 +189,7 @@ impl SolverData {
     }
 
     pub fn supports_proofs(&self) -> bool {
-        self.proof.is_some()
+        self.proof_enabled && self.proof.is_some()
     }
 }
 

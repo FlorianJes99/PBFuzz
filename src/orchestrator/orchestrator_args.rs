@@ -63,4 +63,27 @@ pub struct OrchestratorArgs {
     /// flags to stop computation after some amount of time
     #[arg(long, default_value_t = u64::MAX)]
     pub(crate) timeout_external_program_secs: u64,
+
+    /// Disable comparison of solver outputs, when more than one solver is provided.
+    /// This assumes that provided solvers are capable of generating proofs.
+    #[arg(long, default_value_t = false)]
+    pub(crate) no_comparison: bool,
+
+    /// Specify how and if proofs are generated and validated.
+    ///
+    /// Default: One - Only the first proof supporting solver is used for proof generation (ground truth)
+    #[arg(long, default_value_t, value_enum)]
+    pub(crate) proofs: ProofMode,
+}
+
+/// Different Modes for generation and validation of proofs
+#[derive(Debug, Clone, Parser, Serialize, clap::ValueEnum, Default)]
+pub(crate) enum ProofMode {
+    /// Every solver which supports proof solving will produce a proof and
+    All,
+    /// Only the first proof supporting solver is used for proof generation (ground truth)
+    #[default]
+    One,
+    /// Proof generation is disabled
+    None,
 }

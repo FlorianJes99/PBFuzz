@@ -39,6 +39,36 @@ impl ObjectiveInfo {
     }
 }
 
+pub enum StatusFlat {
+    Sat,
+    Optimum,
+    Unsat,
+    TimeLimit,
+    Unknown,
+}
+
+impl StatusFlat {
+    pub fn from_parsed_status(status: &ParsedStatus) -> Self {
+        match status {
+            ParsedStatus::Sat { .. } => StatusFlat::Sat,
+            ParsedStatus::Optimum { .. } => StatusFlat::Optimum,
+            ParsedStatus::Unsat { .. } => StatusFlat::Unsat,
+            ParsedStatus::TimeLimit => StatusFlat::TimeLimit,
+            ParsedStatus::Unknown { .. } => StatusFlat::Unknown,
+        }
+    }
+
+    pub fn get_status_as_str(&self) -> &'static str {
+        match self {
+            StatusFlat::Sat => "sat",
+            StatusFlat::Optimum => "optimum",
+            StatusFlat::Unsat => "unsat",
+            StatusFlat::TimeLimit => "timeout",
+            StatusFlat::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum BugReason {
     #[error("Different objectives in solver: {}", .0.iter().map(|o| o.to_string()).join(", "))]

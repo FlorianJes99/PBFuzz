@@ -3,11 +3,14 @@ use crate::fuzzer::helpers::OFFSET;
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::CsvRecordsSingleIteration;
-use crate::orchestrator::evaluation::common::{BugReason, ValidationError, verify_solution};
-use crate::orchestrator::evaluation::comparison::{StatusFlat, compare_status};
+use crate::orchestrator::evaluation::common::{
+    BugReason, StatusFlat, ValidationError, verify_solution,
+};
+use crate::orchestrator::evaluation::comparison::compare_status;
 use crate::orchestrator::evaluation::proof_checking::check_proof;
 use crate::orchestrator::issue_report::case_writer::{CaseWriter, IssueReport};
 use crate::orchestrator::issue_report::issue_record::{IssueRecord, SolverInfo};
+use crate::orchestrator::orchestrator_args::ProofMode;
 use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
@@ -90,19 +93,38 @@ pub fn run_orchestrator(
         thread_count
     );
     let timelimit = Duration::from_secs(args.timeout_external_program_secs);
-    let solvers: Vec<_> = args
-        .solver_configs
-        .iter()
-        .map(|f| {
-            SolverConfig::load_from_file(f).map(|c| SolverAndParser::from_config(c, timelimit))
-        })
-        .collect::<Result<_, _>>()?;
+    let mut solvers = vec![];
+    let mut one_solver_enabled = false;
+    for config_file in &args.solver_configs {
+        let config = SolverConfig::load_from_file(config_file)?;
+        let solver = match args.proofs {
+            ProofMode::All => SolverAndParser::from_config(config, timelimit, true),
+            // We want to enable the first solver in the list which supports proofs
+            ProofMode::One if !one_solver_enabled && config.proof_arg.is_some() => {
+                one_solver_enabled = true;
+                SolverAndParser::from_config(config, timelimit, true)
+            }
+            ProofMode::One | ProofMode::None => {
+                SolverAndParser::from_config(config, timelimit, false)
+            }
+        };
+        solvers.push(solver);
+    }
     if solvers.is_empty() {
         return Err("No valid solver config provided!".into());
     }
 
     if solvers.len() == 1 && !solvers[0].solver.supports_proofs() {
         return Err("Only one solver specified, but it does not support proofs!".into());
+    }
+
+    if solvers.len() > 1 && args.no_comparison {
+        if !matches!(args.proofs, ProofMode::All) {
+            return Err("Misconfiguration: Provided amount of solvers is > 1, but no comparison mode and no 'All' Proof mode".into());
+        }
+        if solvers.iter().any(|sp| !sp.solver.supports_proofs()) {
+            return Err("Misconfiguration: Not all provided solvers support Proofs but comparison mode is deactivated".into());
+        }
     }
     let config = PbConfigFile::load_from_file(&args.settings_file)?;
     let stop_condition = StopCondition::new(
@@ -115,6 +137,10 @@ pub fn run_orchestrator(
 
     let index_file = run_root.join(DATA_FOLDER.name).join("cases.jsonl");
     let case_writer = CaseWriter::new(&run_root, index_file);
+    let harness_config = HarnessConfig {
+        with_comparison: !args.no_comparison,
+        save_all_files: args.save_all_files,
+    };
     Orchestrator {
         fuzzer_output_dir: run_root,
         config,
@@ -122,7 +148,7 @@ pub fn run_orchestrator(
         solvers,
         thread_count,
         case_writer,
-        save_all_files: args.save_all_files,
+        harness_config,
     }
     .run(stop_condition, meta_data)
 }
@@ -133,23 +159,28 @@ struct SolverAndParser {
 }
 
 impl SolverAndParser {
-    fn from_config(config: SolverConfig, timelimit: Duration) -> Self {
+    fn from_config(config: SolverConfig, timelimit: Duration, proof_enabled: bool) -> Self {
         let parser = ParserImpl::from_kind(&config.parser_kind);
         Self {
-            solver: SolverData::into_solver(config, timelimit),
+            solver: SolverData::into_solver(config, timelimit, proof_enabled),
             parser,
         }
     }
 }
 
+struct HarnessConfig {
+    with_comparison: bool,
+    save_all_files: bool,
+}
+
 struct Orchestrator {
     fuzzer_output_dir: PathBuf,
     config: PbConfigFile,
+    harness_config: HarnessConfig,
     orchestrator_start: Instant,
     solvers: Vec<SolverAndParser>,
     thread_count: u8,
     case_writer: CaseWriter,
-    save_all_files: bool,
 }
 
 #[derive(Serialize)]
@@ -205,6 +236,7 @@ impl Orchestrator {
                             let result = work_iteration(
                                 &self.fuzzer_output_dir,
                                 self.config.generate_settings(),
+                                self.harness_config.with_comparison,
                                 &self.solvers,
                                 meta_data,
                                 i,
@@ -348,7 +380,8 @@ impl Orchestrator {
                     proof_files.iter().for_each(|p| files_to_move.push(p));
                 }
 
-                let should_process = self.save_all_files || iteration_result.should_process_data();
+                let should_process =
+                    self.harness_config.save_all_files || iteration_result.should_process_data();
                 if !iteration_result.errors.is_empty() {
                     info!(
                         "Found bug with seed {})!\nBug: {}",
@@ -449,6 +482,7 @@ fn terminate_early(
 fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: PbSetting,
+    with_comparison: bool,
     sps: &[SolverAndParser],
     program_info: MetaData,
     thread_id: u8,
@@ -602,13 +636,13 @@ fn work_iteration(
         };
         comparison_records.push(comparison_record);
     }
-    let (status, bug) = match compare_status(&valid_runs) {
-        Ok(s) => (Some(s), None),
-        Err(e) => (None, Some(e)),
-    };
-    if let Some(b) = bug {
+    // compare all solvers if enabled
+    if with_comparison && let Err(b) = compare_status(&valid_runs) {
         bugs.push(b);
-    }
+    };
+    let status = valid_runs
+        .first()
+        .map(|r| StatusFlat::from_parsed_status(&r.parsed_status));
     let iteration_result = IterationResult {
         errors,
         successfull_runs: valid_runs,
