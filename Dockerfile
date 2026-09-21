@@ -140,6 +140,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libboost-all-dev \
         default-jre-headless \
         ca-certificates \
+        vim \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=fetch-scip /tmp/scip.deb /tmp/scip.deb
 RUN apt-get update && apt-get install -y --no-install-recommends /tmp/scip.deb \
