@@ -3,24 +3,35 @@ use rand::seq::IteratorRandom;
 
 use crate::fuzzer::domain::{LiteralIdent, SolutionModel};
 use crate::fuzzer::generation::constraint_errors::ConstraintGenerationError;
+use crate::fuzzer::pb_settings::DoublingPairsConfig;
 use crate::fuzzer::{
     constraints::doubling_pairs::DoublingPairs,
     domain::{Comparison, Literal},
     generation::literal_sampler::LiteralSampler,
 };
 
+#[derive(Copy, Clone)]
+pub struct DoublingPairsSettings {
+    amount_pairs: u32,
+}
+
+impl From<DoublingPairsConfig> for DoublingPairsSettings {
+    fn from(value: DoublingPairsConfig) -> Self {
+        Self {
+            amount_pairs: value.amount_pairs,
+        }
+    }
+}
+
 /// Generates constraint with the following structure
 ///
 /// `x_1 + y_1 + 2 x_2 + 2 y_2 + ... + 2^n x_n + 2^n y_n >= 2^(n+1)`
 pub fn generate_doubling_pairs_constraint(
+    settings: DoublingPairsSettings,
     literal_sampler: &mut LiteralSampler,
-    constraint_length: u32,
 ) -> Result<DoublingPairs, ConstraintGenerationError> {
-    assert!(
-        constraint_length.is_multiple_of(2),
-        "This type of constraint expects to have an even amount of literals"
-    );
-    let ids = literal_sampler.get_n_ids(constraint_length, false)?;
+    let amount_lits = settings.amount_pairs * 2;
+    let ids = literal_sampler.get_n_ids(amount_lits, false)?;
     let n: u32 = (ids.len() / 2).try_into()?;
     let literals = ids
         .chunks(2)
@@ -40,25 +51,23 @@ pub fn generate_doubling_pairs_constraint(
 }
 
 pub fn create_sat_doubling_pairs_constraint(
+    settings: DoublingPairsSettings,
     literal_sampler: &mut LiteralSampler,
-    constraint_length: u32,
     model: &SolutionModel,
     false_lits: &[LiteralIdent],
 ) -> Result<DoublingPairs, ConstraintGenerationError> {
-    assert!(
-        constraint_length.is_multiple_of(2),
-        "This type of constraint expects to have an even amount of literals"
-    );
-    let amount_pairs = constraint_length / 2;
     // given those pairs: 1 1 2 2 4 4 8 8 16 16 >= 32
     // we allways want to use a minimum amount of true vars to get as close as possible to 32.
     // the least amount of vars to fulfill the constraint would be 2: 16 16
     // the most amount of vars to fulfill the constraint would be 6 : 16 8 4 2 1 1
-    let amount_true_vars = literal_sampler.rand.random_range(2..=amount_pairs + 1);
+    let amount_true_vars = literal_sampler
+        .rand
+        .random_range(2..=settings.amount_pairs + 1);
     let mut true_vars = model.iter().cloned().sample(
         &mut literal_sampler.rand,
         amount_true_vars.try_into().expect("usize support"),
     );
+    let constraint_length = settings.amount_pairs * 2;
     let mut false_vars = false_lits.iter().cloned().sample(
         &mut literal_sampler.rand,
         (constraint_length - amount_true_vars)
@@ -66,7 +75,7 @@ pub fn create_sat_doubling_pairs_constraint(
             .expect("usize support"),
     );
     let mut literals = vec![];
-    for i in (0..amount_pairs).rev() {
+    for i in (0..settings.amount_pairs).rev() {
         let c = 2_i64.pow(i);
         let [i1, i2] = if true_vars.len() > 2 {
             [
@@ -89,7 +98,7 @@ pub fn create_sat_doubling_pairs_constraint(
     }
     // n pairs use exponents 0..=n-1, so highest coefficient is 2^(n-1)
     // therefore RHS needs to be 2^(n-1 + 1) = 2^n
-    let degree = 2_i64.pow(amount_pairs);
+    let degree = 2_i64.pow(settings.amount_pairs);
     Ok(DoublingPairs::new(literals, Comparison::GrEqual, degree))
 }
 
@@ -103,14 +112,16 @@ mod tests {
 
     #[test]
     fn test_pairs_constraint() {
-        let literal_size = 6;
+        let amount_pairs = 3;
+        let settings = DoublingPairsSettings { amount_pairs };
         let mut literal_sampler = LiteralSampler::new(StdRng::seed_from_u64(42), 50);
         let constraint =
-            generate_doubling_pairs_constraint(&mut literal_sampler, literal_size).unwrap();
+            generate_doubling_pairs_constraint(settings, &mut literal_sampler).unwrap();
         assert!(
             constraint.literals().len().is_multiple_of(2),
             "We expect amount of literals in this constraint to be even"
         );
+        let literal_size = amount_pairs * 2;
         assert_eq!(constraint.literals().len(), literal_size as usize);
         assert_eq!(constraint.degree(), 2_i64.pow(literal_size / 2));
         constraint

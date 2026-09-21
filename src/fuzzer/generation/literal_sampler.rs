@@ -7,7 +7,7 @@ use rand::seq::index;
 #[derive(Debug)]
 pub struct LiteralSampler {
     pub rand: StdRng,
-    max_vars: u32,
+    pub(super) max_vars: u32,
 }
 
 impl LiteralSampler {

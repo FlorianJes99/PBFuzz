@@ -1,7 +1,7 @@
 use crate::fuzzer::constraints::constraint::Constraint;
 use crate::fuzzer::domain::SolutionModel;
 use crate::fuzzer::generation::constraint_errors::ConstraintGenerationError;
-use crate::fuzzer::generation::from_solution_generator::FromSolutionSettings;
+use crate::fuzzer::pb_settings::GenericConfig;
 use crate::fuzzer::{
     constraints::generic::ArbitraryLengthConstraint,
     domain::Comparison,
@@ -12,19 +12,49 @@ use crate::fuzzer::{
     },
 };
 
-pub fn generate_generic(
-    literal_sampler: &mut LiteralSampler,
+#[derive(Copy, Clone)]
+pub struct GenericSettings {
+    amount_lits: u32,
     coeff_range: CoeffRange,
     degree_ratio: DegreeRatio,
-    length: u32,
+}
+
+impl From<GenericConfig> for GenericSettings {
+    fn from(value: GenericConfig) -> Self {
+        Self {
+            amount_lits: value.amount_lits,
+            coeff_range: CoeffRange::new(value.coeff_lower, value.coeff_upper),
+            degree_ratio: DegreeRatio::new(value.degree_lower, value.degree_upper),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct GenericFromSolutionSettings {
+    amount_lits: u32,
+    coeff_range: CoeffRange,
+}
+
+impl From<GenericConfig> for GenericFromSolutionSettings {
+    fn from(value: GenericConfig) -> Self {
+        Self {
+            amount_lits: value.amount_lits,
+            coeff_range: CoeffRange::new(value.coeff_lower, value.coeff_upper),
+        }
+    }
+}
+
+pub fn generate_generic(
+    settings: GenericSettings,
+    literal_sampler: &mut LiteralSampler,
 ) -> Result<ArbitraryLengthConstraint, ConstraintGenerationError> {
-    let ids = literal_sampler.get_n_ids_sorted(length)?;
-    let (start_val, end_val) = coeff_range.get_bounds();
+    let ids = literal_sampler.get_n_ids_sorted(settings.amount_lits)?;
+    let (start_val, end_val) = settings.coeff_range.get_bounds();
     let coeffs: Vec<_> = ids
         .iter()
         .map(|_| literal_sampler.sample_without_zero_from_range(start_val, end_val))
         .collect();
-    let (start_range, end_range) = compute_degree_range(&coeffs, degree_ratio);
+    let (start_range, end_range) = compute_degree_range(&coeffs, settings.degree_ratio);
 
     let comparison = Comparison::GrEqual;
     let degree = literal_sampler.sample_from_range_inclusive(start_range, end_range);
@@ -37,12 +67,12 @@ pub fn generate_generic(
 }
 
 pub fn create_sat_generic(
+    settings: GenericFromSolutionSettings,
     literal_sampler: &mut LiteralSampler,
-    settings: &FromSolutionSettings,
     model: &SolutionModel,
 ) -> Result<ArbitraryLengthConstraint, ConstraintGenerationError> {
     let (start_val, end_val) = settings.coeff_range.get_bounds();
-    let amount_lits = settings.amount_literals_per_constraint;
+    let amount_lits = settings.amount_lits;
     let lits: Vec<_> = literal_sampler
         .get_n_ids_sorted(amount_lits)?
         .iter()

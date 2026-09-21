@@ -24,9 +24,9 @@ use crate::fuzzer::domain::SolutionModel;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, clap::ValueEnum, Default)]
 pub enum PBKind {
     /// pseudo boolean solving
-    #[default]
     PBS,
     /// pseudo boolean optimization
+    #[default]
     PBO,
 }
 

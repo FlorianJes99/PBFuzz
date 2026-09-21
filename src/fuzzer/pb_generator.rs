@@ -1,15 +1,16 @@
 use crate::fuzzer::generation::constraint_errors::ConstraintGenerationError;
+use crate::fuzzer::generation::from_solution_generator::FromSolutionGenerator;
+use crate::fuzzer::pb_settings::GenerationMethodWithSettings;
 use crate::fuzzer::{
     app_info::MetaData,
     constraints::constraint::Constraint,
     domain::{LiteralIdent, MinFunction},
     generation::{
-        from_solution_generator::{FromSolutionData, FromSolutionSettings, generate_from_solution},
-        literal_sampler::LiteralSampler,
+        from_solution_generator::FromSolutionData, literal_sampler::LiteralSampler,
         random_constraints_generator::RandomConstraintGenerator,
     },
     grammar::{GenerationSource, PBGrammar, PBKind},
-    pb_settings::{CancelCondition, GenerationMethod, PbSetting},
+    pb_settings::{CancelCondition, PbSetting},
 };
 use itertools::Itertools;
 use log::info;
@@ -18,7 +19,6 @@ use thiserror::Error;
 
 use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
 
-#[derive(Debug)]
 pub struct PBGenerator {
     seed: u64,
     literal_sampler: LiteralSampler,
@@ -27,10 +27,8 @@ pub struct PBGenerator {
 
 impl PBGenerator {
     fn new(seed: u64, settings: PbSetting) -> Self {
-        let literal_sampler = LiteralSampler::new(
-            StdRng::seed_from_u64(seed),
-            settings.get_generator_settings().max_vars,
-        );
+        let literal_sampler =
+            LiteralSampler::new(StdRng::seed_from_u64(seed), settings.get_max_vars());
         Self {
             seed,
             literal_sampler,
@@ -89,16 +87,16 @@ impl PBGenerator {
             }
             CancelCondition::CountConstraints { max_constraints } => {
                 info!("Generating {} constraints", max_constraints);
-                match self.settings.get_generation_method() {
-                    GenerationMethod::FromSolution => {
-                        let settings = FromSolutionSettings::create_from(
-                            self.settings.get_generator_settings(),
+                match self.settings.get_generator_settings() {
+                    GenerationMethodWithSettings::FromSolution(generator_settings) => {
+                        let generator = FromSolutionGenerator::new(
+                            *generator_settings.get_builder_config(),
                             *max_constraints,
                         );
                         let FromSolutionData {
                             constraints,
                             solution,
-                        } = generate_from_solution(&mut self.literal_sampler, settings)?;
+                        } = generator.generate_from_solution(&mut self.literal_sampler)?;
                         let distinct_literal_ids: Vec<LiteralIdent> =
                             distinct_literal_ids(&constraints);
                         let min_constraint = match self.settings.get_problem_kind() {
@@ -129,10 +127,9 @@ impl PBGenerator {
                         ))
                     }
 
-                    GenerationMethod::Random => {
-                        let random_generator = RandomConstraintGenerator::new(
-                            self.settings.get_generator_settings().into(),
-                        );
+                    GenerationMethodWithSettings::Random(generator_settings) => {
+                        let builder_config = generator_settings.get_builder_config();
+                        let random_generator = RandomConstraintGenerator::new(*builder_config);
                         let constraints: Vec<_> = (0..*max_constraints)
                             .map(|_| {
                                 random_generator
@@ -170,8 +167,12 @@ impl PBGenerator {
         &mut self,
         max_unsat_assignments: u64,
     ) -> Result<(Vec<Box<dyn Constraint>>, u64), ConstraintGenerationError> {
+        let generator_settings = match self.settings.get_generator_settings() {
+            GenerationMethodWithSettings::Random(generator_settings) => generator_settings,
+            GenerationMethodWithSettings::FromSolution(_) => panic!("Not supported"),
+        };
         let random_generator =
-            RandomConstraintGenerator::new(self.settings.get_generator_settings().into());
+            RandomConstraintGenerator::new(*generator_settings.get_builder_config());
         let mut constraints: Vec<Box<dyn Constraint>> = vec![];
         let mut current_unsat = 0;
         while current_unsat <= max_unsat_assignments {

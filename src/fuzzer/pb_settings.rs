@@ -1,7 +1,3 @@
-use crate::fuzzer::generation::generator_settings::CoeffRange;
-use crate::fuzzer::generation::generator_settings::ConstraintDistribution;
-use crate::fuzzer::generation::generator_settings::ConstraintSettings;
-use crate::fuzzer::generation::generator_settings::DegreeRatio;
 use crate::fuzzer::helpers::OFFSET;
 use std::io;
 use std::path::Path;
@@ -17,8 +13,197 @@ use crate::fuzzer::grammar::PBKind;
 pub struct PbConfigFile {
     pub grammar_kind: PBKind,
     pub generation_method: Option<GenerationMethod>,
-    pub random: GeneratorSettings,
-    pub from_solution: GeneratorSettings,
+    pub random: GeneratorSettings<RandomBuildersConfig>,
+    pub from_solution: GeneratorSettings<FromSolutionBuildersConfig>,
+}
+
+/// This struct holds all possible configuration parameters for the generation of a random grammar
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub struct GeneratorSettings<B: Display> {
+    /// maximal amount of different variables used in the grammar
+    pub max_vars: u32,
+    /// different methods to determine when to stop generation of constraints
+    cancel_condition: CancelCondition,
+    builders_config: B,
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone)]
+pub struct BuilderEntry<C: Display> {
+    pub weight: u32,
+    #[serde(flatten)]
+    pub settings: C,
+}
+
+impl<C: Display> Display for BuilderEntry<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { weight, settings } = self;
+        writeln!(f, "{:<OFFSET$}: {weight}", "Weight")?;
+        write!(f, "{settings}")
+    }
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone)]
+pub struct RandomBuildersConfig {
+    pub three_literal: BuilderEntry<ThreeLiteralConfig>,
+    pub cardinality: BuilderEntry<CardinalityConfig>,
+    pub generic: BuilderEntry<GenericConfig>,
+    pub exactly_one: BuilderEntry<ExactlyOneConfig>,
+    pub doubling_pairs: BuilderEntry<DoublingPairsConfig>,
+}
+
+impl Display for RandomBuildersConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            three_literal,
+            cardinality,
+            generic,
+            exactly_one,
+            doubling_pairs,
+        } = self;
+        writeln!(f, "Three literal constraint:")?;
+        writeln!(f, "{three_literal}")?;
+        writeln!(f)?;
+        writeln!(f, "Cardinality constraint:")?;
+        writeln!(f, "{cardinality}")?;
+        writeln!(f)?;
+        writeln!(f, "Arbitrary length constraint:")?;
+        writeln!(f, "{generic}")?;
+        writeln!(f)?;
+        writeln!(f, "Exactly one constraint:")?;
+        writeln!(f, "{exactly_one}")?;
+        writeln!(f)?;
+        writeln!(f, "Doubling pairs constraint:")?;
+        write!(f, "{doubling_pairs}")
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub struct FromSolutionBuildersConfig {
+    pub generic: BuilderEntry<GenericConfig>,
+    pub doubling_pairs: BuilderEntry<DoublingPairsConfig>,
+}
+
+impl Display for FromSolutionBuildersConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            generic,
+            doubling_pairs,
+        } = self;
+        writeln!(f, "Generic constraint:")?;
+        writeln!(f, "{generic}")?;
+        writeln!(f)?;
+        writeln!(f, "Doubling pairs constraint:")?;
+        write!(f, "{doubling_pairs}")
+    }
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone)]
+pub struct ThreeLiteralConfig {
+    pub coeff_lower: i32,
+    pub coeff_upper: i32,
+    pub degree_lower: f64,
+    pub degree_upper: f64,
+}
+
+impl Display for ThreeLiteralConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            coeff_lower,
+            coeff_upper,
+            degree_lower,
+            degree_upper,
+        } = self;
+        writeln!(
+            f,
+            "{:<OFFSET$}: {coeff_lower}..{coeff_upper}",
+            "Coefficient range"
+        )?;
+        write!(
+            f,
+            "{:<OFFSET$}: {degree_lower}..{degree_upper}",
+            "Degree range"
+        )
+    }
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone)]
+pub struct GenericConfig {
+    pub amount_lits: u32,
+    pub coeff_lower: i32,
+    pub coeff_upper: i32,
+    pub degree_lower: f64,
+    pub degree_upper: f64,
+}
+
+impl Display for GenericConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            amount_lits,
+            coeff_lower,
+            coeff_upper,
+            degree_lower,
+            degree_upper,
+        } = self;
+        writeln!(f, "{:<OFFSET$}: {amount_lits}", "Literals per constraint")?;
+        writeln!(
+            f,
+            "{:<OFFSET$}: {coeff_lower}..{coeff_upper}",
+            "Coefficient range"
+        )?;
+        write!(
+            f,
+            "{:<OFFSET$}: {degree_lower}..{degree_upper}",
+            "Degree range"
+        )
+    }
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone)]
+pub struct CardinalityConfig {
+    pub amount_lits: u32,
+    pub degree_lower: f64,
+    pub degree_upper: f64,
+}
+
+impl Display for CardinalityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            amount_lits,
+            degree_lower,
+            degree_upper,
+        } = self;
+        writeln!(f, "{:<OFFSET$}: {amount_lits}", "Literals per constraint")?;
+        write!(
+            f,
+            "{:<OFFSET$}: {degree_lower}..{degree_upper}",
+            "Degree range"
+        )
+    }
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone)]
+pub struct ExactlyOneConfig {
+    pub amount_lits: u32,
+}
+
+impl Display for ExactlyOneConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { amount_lits } = self;
+        write!(f, "{:<OFFSET$}: {amount_lits}", "Literals per constraint")
+    }
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone)]
+pub struct DoublingPairsConfig {
+    pub amount_pairs: u32,
+}
+
+impl Display for DoublingPairsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { amount_pairs } = self;
+        let amount_lits = amount_pairs * 2;
+        write!(f, "{:<OFFSET$}: {amount_lits}", "Literals per constraint")
+    }
 }
 
 impl PbConfigFile {
@@ -42,10 +227,13 @@ impl PbConfigFile {
             }
         });
         match generation_method {
-            GenerationMethod::Random => PbSetting::new(grammar_kind, generation_method, random),
-            GenerationMethod::FromSolution => {
-                PbSetting::new(grammar_kind, generation_method, from_solution)
+            GenerationMethod::Random => {
+                PbSetting::new(grammar_kind, GenerationMethodWithSettings::Random(random))
             }
+            GenerationMethod::FromSolution => PbSetting::new(
+                grammar_kind,
+                GenerationMethodWithSettings::FromSolution(from_solution),
+            ),
         }
     }
 }
@@ -70,32 +258,58 @@ impl Display for PbConfigFile {
             f,
             "Settings used for constraint generation from existing solution:"
         )?;
-        writeln!(f, "{}", from_solution)
+        write!(f, "{}", from_solution)
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy)]
+pub enum GenerationMethodWithSettings {
+    Random(GeneratorSettings<RandomBuildersConfig>),
+    FromSolution(GeneratorSettings<FromSolutionBuildersConfig>),
+}
+
+impl GenerationMethodWithSettings {
+    pub fn get_max_vars(&self) -> u32 {
+        match self {
+            GenerationMethodWithSettings::Random(generator_settings) => generator_settings.max_vars,
+            GenerationMethodWithSettings::FromSolution(generator_settings) => {
+                generator_settings.max_vars
+            }
+        }
+    }
+
+    pub fn get_cancel_condition(&self) -> &CancelCondition {
+        match self {
+            GenerationMethodWithSettings::Random(generator_settings) => {
+                &generator_settings.cancel_condition
+            }
+            GenerationMethodWithSettings::FromSolution(generator_settings) => {
+                &generator_settings.cancel_condition
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
 pub struct PbSetting {
     /// which type of grammar we want to generate: PBS | PBO
     grammar_kind: PBKind,
-    generation_method: GenerationMethod,
-    generator_settings: GeneratorSettings,
+    generation_method: GenerationMethodWithSettings,
 }
 
 impl PbSetting {
-    pub fn new(
-        grammar_kind: PBKind,
-        generation_method: GenerationMethod,
-        generator_settings: GeneratorSettings,
-    ) -> Self {
+    pub fn new(grammar_kind: PBKind, generation_method: GenerationMethodWithSettings) -> Self {
         Self {
             grammar_kind,
             generation_method,
-            generator_settings,
         }
     }
-    pub fn get_generator_settings(&self) -> GeneratorSettings {
-        self.generator_settings
+
+    pub fn get_max_vars(&self) -> u32 {
+        self.generation_method.get_max_vars()
+    }
+    pub fn get_generator_settings(&self) -> GenerationMethodWithSettings {
+        self.generation_method
     }
 
     pub fn get_problem_kind(&self) -> &PBKind {
@@ -103,35 +317,11 @@ impl PbSetting {
     }
 
     pub fn get_generation_method(&self) -> &GenerationMethod {
-        &self.generation_method
+        match self.generation_method {
+            GenerationMethodWithSettings::Random(_) => &GenerationMethod::Random,
+            GenerationMethodWithSettings::FromSolution(_) => &GenerationMethod::FromSolution,
+        }
     }
-}
-
-/// This struct holds all possible configuration parameters for the generation of a random grammar
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-pub struct GeneratorSettings {
-    /// maximal amount of different variables used in the grammar
-    pub max_vars: u32,
-    /// different methods to determine when to stop generation of constraints
-    cancel_condition: CancelCondition,
-    /// How many literals a single constraint should have
-    pub amount_literals_per_constraint: u32,
-    max_unsat_for_single_constraint: u32,
-    /// The possible values a coefficient of a literal can be
-    /// E.g.: if `coeff_range = 8`, then values can range from -8..8 except 0
-    pub coeff_lower_bound: i32,
-    pub coeff_upper_bound: i32,
-    /// Given the sampled literals in a constraint, the lower bound specifies the smallest possible
-    /// fraction of the given range
-    /// E.g.: If possible assignments yield a range of 0..10 and `lower_bound_degree = 0.3`, then
-    ///       lowest possible degree (RHS) can be 3
-    pub lower_bound_degree: f64,
-    /// Given the sampled literals in a constraint, the upper bound specifies the highest possible
-    /// fraction of the given range
-    /// E.g.: If possible assignments yield a range of 0..10 and `upper_bound_degree = 0.6`, then
-    ///       highest possible degree (RHS) can be 6
-    pub upper_bound_degree: f64,
-    constraint_distribution: ConstraintDistribution,
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -173,196 +363,26 @@ impl Display for GenerationMethod {
     }
 }
 
-impl From<GeneratorSettings> for ConstraintSettings {
-    fn from(val: GeneratorSettings) -> Self {
-        let coeff_range = CoeffRange::new(val.coeff_lower_bound, val.coeff_upper_bound);
-        let degree_ratio = DegreeRatio::new(val.lower_bound_degree, val.upper_bound_degree);
-        ConstraintSettings::new(
-            val.max_vars,
-            val.max_unsat_for_single_constraint,
-            val.amount_literals_per_constraint,
-            coeff_range,
-            degree_ratio,
-            val.constraint_distribution,
-        )
-    }
-}
-
-impl GeneratorSettings {
+impl<B: Display + Clone + Copy> GeneratorSettings<B> {
     pub fn get_cancel_condition(&self) -> &CancelCondition {
         &self.cancel_condition
     }
+
+    pub fn get_builder_config(&self) -> &B {
+        &self.builders_config
+    }
 }
 
-impl Display for GeneratorSettings {
+impl<B: Display> Display for GeneratorSettings<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let GeneratorSettings {
             max_vars,
             cancel_condition,
-            amount_literals_per_constraint,
-            max_unsat_for_single_constraint,
-            coeff_lower_bound,
-            coeff_upper_bound,
-            lower_bound_degree,
-            upper_bound_degree,
-            constraint_distribution,
+            builders_config,
         } = self;
         writeln!(f, "{:<OFFSET$}: {}", "Max used vars", max_vars)?;
         writeln!(f, "{}", cancel_condition)?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Literals per constraint", amount_literals_per_constraint
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Max unsat assignments for a single constraint", max_unsat_for_single_constraint
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}..{}",
-            "Coefficient range", coeff_lower_bound, coeff_upper_bound
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Lower bound for RHS of constraint", lower_bound_degree
-        )?;
-        writeln!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Upper bound for RHS of constraint", upper_bound_degree
-        )?;
-        write!(
-            f,
-            "{:<OFFSET$}: {}",
-            "Constraint distribution", constraint_distribution
-        )
-    }
-}
-
-/// Builder to create Settings for the fuzzer
-///
-/// Defaults:
-/// `coeff_range: 3`
-/// `amount_literals_per_constraint: 3`
-/// `max_unsat_for_single_constraint: 5`
-/// `lower_bound_degree: 0.3`
-/// `upper_bound_degree: 0.5`
-/// max_unsat_assignments: max_vars * 2.4
-#[derive(Debug)]
-pub struct GeneratorSettingsBuilder {
-    max_vars: u32,
-    max_unsat_for_single_constraint: u32,
-    cancel_condition: CancelCondition,
-    amount_literals_per_constraint: u32,
-    coeff_lower_bound: i32,
-    coeff_upper_bound: i32,
-    lower_bound_degree: f64,
-    upper_bound_degree: f64,
-    constraint_distribution: ConstraintDistribution,
-}
-
-impl Default for GeneratorSettingsBuilder {
-    fn default() -> Self {
-        let cancel_condition = CancelCondition::CountConstraints {
-            max_constraints: 150,
-        };
-        GeneratorSettingsBuilder::new(100)
-            .max_unsat_for_single_constraint(3)
-            .cancel_condition(cancel_condition)
-            .coeff_lower_bound(-200)
-            .coeff_upper_bound(200)
-    }
-}
-
-impl GeneratorSettingsBuilder {
-    pub fn new(max_vars: u32) -> Self {
-        let coeff_lower_bound = -3;
-        let coeff_upper_bound = 3;
-        let amount_literals_per_constraint = 30;
-        let max_unsat_for_single_constraint = 5;
-        let lower_bound_degree = 0.3;
-        let upper_bound_degree = 0.5;
-        let cancel_condition = CancelCondition::CountUnsat {
-            max_unsat_assignments: (max_vars as f32 * 2.4).floor() as u64,
-        };
-        let constraint_distribution = ConstraintDistribution::new(2, 1, 1, 1, 1);
-        Self {
-            max_vars,
-            max_unsat_for_single_constraint,
-            cancel_condition,
-            amount_literals_per_constraint,
-            coeff_lower_bound,
-            coeff_upper_bound,
-            lower_bound_degree,
-            upper_bound_degree,
-            constraint_distribution,
-        }
-    }
-
-    pub fn from_settings(settings: GeneratorSettings) -> Self {
-        GeneratorSettingsBuilder {
-            max_vars: settings.max_vars,
-            max_unsat_for_single_constraint: settings.max_unsat_for_single_constraint,
-            cancel_condition: settings.cancel_condition,
-            amount_literals_per_constraint: settings.amount_literals_per_constraint,
-            coeff_lower_bound: settings.coeff_lower_bound,
-            coeff_upper_bound: settings.coeff_upper_bound,
-            lower_bound_degree: settings.lower_bound_degree,
-            upper_bound_degree: settings.upper_bound_degree,
-            constraint_distribution: settings.constraint_distribution,
-        }
-    }
-
-    pub fn max_unsat_for_single_constraint(mut self, max: u32) -> Self {
-        self.max_unsat_for_single_constraint = max;
-        self
-    }
-
-    pub fn cancel_condition(mut self, cancel_condition: CancelCondition) -> Self {
-        self.cancel_condition = cancel_condition;
-        self
-    }
-
-    pub fn coeff_lower_bound(mut self, lower_bound: i32) -> Self {
-        self.coeff_lower_bound = lower_bound;
-        self
-    }
-
-    pub fn coeff_upper_bound(mut self, upper_bound: i32) -> Self {
-        self.coeff_upper_bound = upper_bound;
-        self
-    }
-
-    /// this method panics if lower > upper!
-    pub fn set_bounds_degree(mut self, lower: f64, upper: f64) -> Self {
-        assert!(lower <= upper, "{lower} expected to be <= {upper}");
-        self.lower_bound_degree = lower;
-        self.upper_bound_degree = upper;
-        self
-    }
-
-    pub fn set_constraint_distribution(
-        mut self,
-        constraint_distribution: ConstraintDistribution,
-    ) -> Self {
-        self.constraint_distribution = constraint_distribution;
-        self
-    }
-
-    pub fn build(self) -> GeneratorSettings {
-        GeneratorSettings {
-            max_vars: self.max_vars,
-            max_unsat_for_single_constraint: self.max_unsat_for_single_constraint,
-            cancel_condition: self.cancel_condition,
-            amount_literals_per_constraint: self.amount_literals_per_constraint,
-            coeff_lower_bound: self.coeff_lower_bound,
-            coeff_upper_bound: self.coeff_upper_bound,
-            lower_bound_degree: self.lower_bound_degree,
-            upper_bound_degree: self.upper_bound_degree,
-            constraint_distribution: self.constraint_distribution,
-        }
+        writeln!(f)?;
+        write!(f, "{builders_config}")
     }
 }
