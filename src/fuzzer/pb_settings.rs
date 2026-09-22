@@ -359,9 +359,8 @@ impl Display for CancelCondition {
     }
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GenerationMethod {
-    #[default]
     Random,
     FromSolution,
 }
@@ -370,7 +369,7 @@ impl Display for GenerationMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GenerationMethod::Random => write!(f, "Random"),
-            GenerationMethod::FromSolution => write!(f, "From sampled solution"),
+            GenerationMethod::FromSolution => write!(f, "From solution"),
         }
     }
 }
