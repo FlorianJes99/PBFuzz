@@ -2,7 +2,9 @@ use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::helpers::OFFSET;
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
-use crate::orchestrator::csv_data::CsvRecordsSingleIteration;
+use crate::orchestrator::csv_data::{
+    CsvRecordsSingleIteration, OrchestratorCsvWriters, WorkRecord,
+};
 use crate::orchestrator::evaluation::common::{
     BugReason, StatusFlat, ValidationError, verify_solution,
 };
@@ -22,7 +24,7 @@ use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
     fuzzer::helpers::get_hms_parts,
     orchestrator::{
-        csv_data::{ORCHESTRATOR_DATA_FILE_PREFIX, SolverRecord},
+        csv_data::SolverRecord,
         folders::{DATA_FOLDER, prepare_sub_folders},
         orchestrator_args::OrchestratorArgs,
         solving::solver::SolverData,
@@ -44,7 +46,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use csv::Writer;
 use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rand::{self, RngExt};
@@ -203,11 +204,8 @@ impl Orchestrator {
         stop_condition: StopCondition,
         meta_data: MetaData,
     ) -> Result<(), Box<dyn Error>> {
-        let csv_file_path = &self
-            .fuzzer_output_dir
-            .join(DATA_FOLDER.name)
-            .join(format!("{}.csv", ORCHESTRATOR_DATA_FILE_PREFIX,));
-        let mut csv_writer = csv::Writer::from_path(csv_file_path)?;
+        let data_folder = self.fuzzer_output_dir.join(DATA_FOLDER.name);
+        let mut csv_writers = OrchestratorCsvWriters::new(&data_folder)?;
         let stop_condtion = Arc::new(stop_condition);
         let cancelled = Arc::new(AtomicBool::new(false));
         let ctrc_flag = cancelled.clone();
@@ -274,7 +272,7 @@ impl Orchestrator {
                     // We don't break here, because we want to process the remaining running threads
                     // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
                 }
-                let stats_iteration = self.process_result(res, iteration, &mut csv_writer);
+                let stats_iteration = self.process_result(res, iteration, &mut csv_writers);
 
                 stats.update(stats_iteration);
 
@@ -288,7 +286,7 @@ impl Orchestrator {
                 ].join("\n");
                 print_block(&format!("Iteration {iteration}"), body);
             }
-            let result = &mut csv_writer.flush();
+            let result = &mut csv_writers.flush();
             if let Err(err) = result {
                 error!("Could not flush to file\n Error: {}", err);
             }
@@ -337,7 +335,7 @@ impl Orchestrator {
         &self,
         work_result: WorkResult,
         iteration: u32,
-        csv_writer: &mut Writer<File>,
+        csv_writers: &mut OrchestratorCsvWriters,
     ) -> SingleRunStats {
         let seed = work_result.meta.seed;
 
@@ -356,11 +354,11 @@ impl Orchestrator {
                 let rs = solver_verdict.records.get_records();
                 let min = rs
                     .iter()
-                    .map(|r| r.problem_solving_duration_solver_ms)
+                    .map(|r| r.problem_solving_duration_ms)
                     .fold(f32::INFINITY, f32::min);
                 let max = rs
                     .iter()
-                    .map(|r| r.problem_solving_duration_solver_ms)
+                    .map(|r| r.problem_solving_duration_ms)
                     .fold(f32::NEG_INFINITY, f32::max);
                 if (max - min).abs() >= 2000.0 {
                     warn!(
@@ -413,14 +411,14 @@ impl Orchestrator {
                 let result = solver_verdict.records.serialize(
                     iteration,
                     duration_iteration_ms.as_secs_f32() * 1000.0,
-                    csv_writer,
+                    csv_writers,
                 );
                 if let Err(err) = result {
                     error!("Could not write record into csv\nError: {}", err);
                 }
                 if iteration.is_multiple_of(1000) {
                     // flush every 1000 iterations to file
-                    let result = csv_writer.flush();
+                    let result = csv_writers.flush();
                     if let Err(err) = result {
                         error!("Could not flush to file\n Error: {}", err);
                     }
@@ -630,13 +628,11 @@ fn work_iteration(
             }
         };
         let comparison_record = SolverRecord {
-            result: status_as_str,
-            problem_generation_ms: output_generation_duration.as_secs_f32() * 1000.0,
             solver_name,
-            problem_solving_duration_solver_ms: time_bin.as_secs_f32() * 1000.0,
+            solver_conflicts: conflicts,
+            solver_status: status_as_str,
+            problem_solving_duration_ms: time_bin.as_secs_f32() * 1000.0,
             problem_parsing_duration_ms: time_parsing.as_secs_f32() * 1000.0,
-            conflicts,
-            seed,
             proof_verification_time_ms: verification_time.map(|t| t.as_secs_f32() * 1000.0),
         };
         comparison_records.push(comparison_record);
@@ -648,6 +644,16 @@ fn work_iteration(
     let status = valid_runs
         .first()
         .map(|r| StatusFlat::from_parsed_status(&r.parsed_status));
+    let status_as_str = match status.as_ref() {
+        Some(s) => s.get_status_as_str(),
+        None => "Failure",
+    };
+    let work_record = WorkRecord::new(
+        seed,
+        generation_method.to_string(),
+        duration_write_to_file.as_secs_f32() * 1000.0,
+        status_as_str,
+    );
     let iteration_result = IterationResult {
         errors,
         successfull_runs: valid_runs,
@@ -658,7 +664,7 @@ fn work_iteration(
         pb_file: output_file,
         proof_files,
         outcome: iteration_result,
-        records: CsvRecordsSingleIteration::new(comparison_records),
+        records: CsvRecordsSingleIteration::new(comparison_records, work_record),
     };
 
     let payload = WorkPayload::Verdict(Box::new(verdict));

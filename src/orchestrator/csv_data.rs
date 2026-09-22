@@ -1,16 +1,40 @@
-use std::fs::File;
+use std::{fs::File, path::Path};
 
 use csv::Writer;
+use serde::Serialize;
 
-pub const ORCHESTRATOR_DATA_FILE_PREFIX: &str = "orchestrator_data";
+pub struct OrchestratorCsvWriters {
+    work_writer: Writer<File>,
+    solver_writer: Writer<File>,
+}
+
+impl OrchestratorCsvWriters {
+    pub fn new(data_folder: &Path) -> Result<Self, csv::Error> {
+        let work_writer = csv::Writer::from_path(data_folder.join("orchestrator_data.csv"))?;
+        let solver_writer = csv::Writer::from_path(data_folder.join("solver_data.csv"))?;
+        Ok(Self {
+            work_writer,
+            solver_writer,
+        })
+    }
+
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.solver_writer.flush()?;
+        self.work_writer.flush()
+    }
+}
 
 pub struct CsvRecordsSingleIteration {
     records: Vec<SolverRecord>,
+    work_record: WorkRecord,
 }
 
 impl CsvRecordsSingleIteration {
-    pub fn new(records: Vec<SolverRecord>) -> Self {
-        Self { records }
+    pub fn new(records: Vec<SolverRecord>, work_record: WorkRecord) -> Self {
+        Self {
+            records,
+            work_record,
+        }
     }
 
     pub fn get_records(&self) -> &[SolverRecord] {
@@ -21,58 +45,97 @@ impl CsvRecordsSingleIteration {
         &self,
         iteration: u32,
         duration_iteration_ms: f32,
-        writer: &mut Writer<File>,
+        writers: &mut OrchestratorCsvWriters,
     ) -> Result<(), csv::Error> {
         for cr in &self.records {
-            let r = cr.create_iteration_record(iteration, duration_iteration_ms);
-            writer.serialize(r)?;
+            let r = cr.create_iteration_record(iteration);
+            writers.solver_writer.serialize(r)?;
         }
-        Ok(())
+        let r = self
+            .work_record
+            .crete_iteration_record(iteration, duration_iteration_ms);
+        writers.work_writer.serialize(r)
     }
 }
 
 pub struct SolverRecord {
-    pub result: &'static str,
-    pub problem_generation_ms: f32,
     pub solver_name: String,
-    pub problem_solving_duration_solver_ms: f32,
+    pub solver_status: &'static str,
+    pub solver_conflicts: Option<u32>,
+    pub problem_solving_duration_ms: f32,
     pub problem_parsing_duration_ms: f32,
     pub proof_verification_time_ms: Option<f32>,
-    pub conflicts: Option<u32>,
-    pub seed: u64,
 }
 
 impl SolverRecord {
-    pub fn create_iteration_record(
-        &self,
-        iteration: u32,
-        duration_iteration_ms: f32,
-    ) -> IterationSolverRecord {
+    pub fn create_iteration_record(&self, iteration: u32) -> IterationSolverRecord {
         IterationSolverRecord {
             iteration,
-            result: self.result,
-            duration_iteration_ms,
-            problem_generation_ms: self.problem_generation_ms,
             solver_name: self.solver_name.clone(),
-            problem_solving_duration_solver_ms: self.problem_solving_duration_solver_ms,
+            solver_status: self.solver_status,
+            solver_conflicts: self.solver_conflicts,
+            problem_solving_duration_ms: self.problem_solving_duration_ms,
             problem_parsing_duration_ms: self.problem_parsing_duration_ms,
-            conflicts_solver: self.conflicts,
-            seed: self.seed,
             proof_verification_time_ms: self.proof_verification_time_ms,
         }
     }
 }
 
-#[derive(serde::Serialize)]
+pub struct WorkRecord {
+    pub seed: u64,
+    pub generation_method: String,
+    pub problem_generation_ms: f32,
+    pub result: &'static str,
+}
+
+impl WorkRecord {
+    pub fn new(
+        seed: u64,
+        generation_method: String,
+        problem_generation_ms: f32,
+        result: &'static str,
+    ) -> Self {
+        Self {
+            seed,
+            generation_method,
+            problem_generation_ms,
+            result,
+        }
+    }
+
+    pub fn crete_iteration_record(
+        &self,
+        iteration: u32,
+        duration_iteration_ms: f32,
+    ) -> IterationWorkRecord {
+        IterationWorkRecord {
+            iteration,
+            seed: self.seed,
+            generation_method: self.generation_method.clone(),
+            problem_generation_ms: self.problem_generation_ms,
+            duration_iteration_ms,
+            result: self.result,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct IterationWorkRecord {
+    pub iteration: u32,
+    pub seed: u64,
+    pub generation_method: String,
+    pub problem_generation_ms: f32,
+    pub duration_iteration_ms: f32,
+    pub result: &'static str,
+}
+
+#[derive(Serialize)]
 pub struct IterationSolverRecord {
     pub iteration: u32,
     pub solver_name: String,
-    pub result: &'static str,
-    pub duration_iteration_ms: f32,
-    pub problem_generation_ms: f32,
-    pub problem_solving_duration_solver_ms: f32,
+    pub solver_status: &'static str,
+    pub solver_conflicts: Option<u32>,
+    pub problem_solving_duration_ms: f32,
     pub problem_parsing_duration_ms: f32,
     pub proof_verification_time_ms: Option<f32>,
-    pub conflicts_solver: Option<u32>,
-    pub seed: u64,
 }
