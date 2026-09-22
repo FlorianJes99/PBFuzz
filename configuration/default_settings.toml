@@ -1,4 +1,4 @@
-# GeneratorSettings — configuration for random grammar generation
+# GeneratorSettings — configuration for all fuzzer properties
 
 # Type of grammar to generate: "PBS" (pseudo boolean solving) or "PBO" (pseudo boolean optimization)
 # Default is "PBO"
@@ -6,7 +6,7 @@ grammar_kind = "PBO"
 
 # Options are: "FromSolution" and "Random" or nothing at all
 # If no generation_method is provided, the chosen config is sampled 50:50
-generation_method = "Random"
+# generation_method = "Random"
 
 [random]
  # Maximum number of distinct variables used in the grammar
