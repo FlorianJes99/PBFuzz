@@ -38,7 +38,7 @@ pub enum SimpleResult {
 
 pub struct SingleRunRecord {
     result: SimpleResult,
-    conflicts: u32,
+    conflicts: Vec<u32>,
     iteration_duration: Duration,
     large_solving_time_difference: bool,
 }
@@ -46,7 +46,7 @@ pub struct SingleRunRecord {
 impl SingleRunRecord {
     pub fn new(
         result: SimpleResult,
-        conflicts: u32,
+        conflicts: Vec<u32>,
         iteration_duration: Duration,
         large_solving_time_difference: bool,
     ) -> Self {
@@ -98,7 +98,9 @@ impl RunStatistics {
                     }
                     SimpleResult::Other => self.amount_unknown += 1,
                 }
-                self.average_conflicts.update(conflicts);
+                for c in conflicts {
+                    self.average_conflicts.update(c);
+                }
                 self.average_iteration_duration.update(&iteration_duration);
                 if large_solving_time_difference {
                     self.large_solving_difference += 1;

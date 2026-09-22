@@ -71,7 +71,7 @@ impl PBGenerator {
                 let distinct_literal_ids: Vec<LiteralIdent> = distinct_literal_ids(&constraints);
                 let min_constraint = match self.settings.get_problem_kind() {
                     PBKind::PBS => Option::None,
-                    PBKind::PBO => Some(self.generate_min_function(&distinct_literal_ids, 5)),
+                    PBKind::PBO => Some(self.generate_min_function(&distinct_literal_ids)),
                 };
                 Ok(PBGrammar::new(
                     program_info,
@@ -101,9 +101,7 @@ impl PBGenerator {
                             distinct_literal_ids(&constraints);
                         let min_constraint = match self.settings.get_problem_kind() {
                             PBKind::PBS => Option::None,
-                            PBKind::PBO => {
-                                Some(self.generate_min_function(&distinct_literal_ids, 20))
-                            }
+                            PBKind::PBO => Some(self.generate_min_function(&distinct_literal_ids)),
                         };
                         let objective = min_constraint.as_ref().map(|obj| {
                             obj.get_literals()
@@ -142,9 +140,7 @@ impl PBGenerator {
                             distinct_literal_ids(&constraints);
                         let min_constraint = match self.settings.get_problem_kind() {
                             PBKind::PBS => Option::None,
-                            PBKind::PBO => {
-                                Some(self.generate_min_function(&distinct_literal_ids, 5))
-                            }
+                            PBKind::PBO => Some(self.generate_min_function(&distinct_literal_ids)),
                         };
                         Ok(PBGrammar::new(
                             program_info,
@@ -185,13 +181,16 @@ impl PBGenerator {
         Ok((constraints, current_unsat))
     }
 
-    fn generate_min_function(
-        &mut self,
-        possible_vars: &[LiteralIdent],
-        amount: usize,
-    ) -> MinFunction {
+    fn generate_min_function(&mut self, possible_vars: &[LiteralIdent]) -> MinFunction {
+        let literals_min_objective = self
+            .settings
+            .get_generator_settings()
+            .get_literals_min_objective();
         let literals = possible_vars
-            .sample(&mut self.literal_sampler.rand, amount)
+            .sample(
+                &mut self.literal_sampler.rand,
+                literals_min_objective as usize,
+            )
             .sorted()
             .map(|id| id.to_literal(self.literal_sampler.sample_without_zero_from_range(-3, 3)))
             .collect();

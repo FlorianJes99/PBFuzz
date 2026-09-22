@@ -54,11 +54,11 @@ impl ParserImpl {
         match result.status {
             Some(s) => match s {
                 StatusKind::Optimum => Ok(ParsedStatus::Sat {
-                    conflicts: result.conflicts.unwrap_or(0),
+                    conflicts: result.conflicts,
                     solution: result.solution.into(),
                 }),
                 StatusKind::Unsat => Ok(ParsedStatus::Unsat {
-                    conflicts: result.conflicts.unwrap_or(0),
+                    conflicts: result.conflicts,
                 }),
                 // only sat means we could not find optimum in given time limit
                 StatusKind::Sat => Ok(ParsedStatus::TimeLimit),
@@ -77,12 +77,12 @@ impl ParserImpl {
                     .objective
                     .ok_or(OutputParsingError::ObjectiveMissing)
                     .map(|obj| ParsedStatus::Optimum {
-                        conflicts: result.conflicts.unwrap_or(0),
+                        conflicts: result.conflicts,
                         solution: result.solution.into(),
                         minimum: obj.into(),
                     }),
                 StatusKind::Unsat => Ok(ParsedStatus::Unsat {
-                    conflicts: result.conflicts.unwrap_or(0),
+                    conflicts: result.conflicts,
                 }),
                 StatusKind::TimeLimit => Ok(ParsedStatus::TimeLimit),
                 StatusKind::Unknown(s) => Ok(ParsedStatus::Unknown { status: s }),
@@ -126,17 +126,17 @@ pub struct ParserRun {
 #[derive(Debug, Clone)]
 pub enum ParsedStatus {
     Sat {
-        conflicts: u32,
+        conflicts: Option<u32>,
         solution: SolutionModel,
     },
     Optimum {
-        conflicts: u32,
+        conflicts: Option<u32>,
         solution: SolutionModel,
         minimum: MinObjectiveValue,
     },
 
     Unsat {
-        conflicts: u32,
+        conflicts: Option<u32>,
     },
 
     TimeLimit,
@@ -153,7 +153,10 @@ impl Display for ParsedStatus {
                 solution,
             } => {
                 writeln!(f, "Status: SAT")?;
-                writeln!(f, "Conflicts: {conflicts}")?;
+                match conflicts {
+                    Some(c) => writeln!(f, "Conflicts: {c}")?,
+                    None => writeln!(f, "Conflicts: NULL")?,
+                }
                 writeln!(f, "Solution: {solution}")
             }
             ParsedStatus::Optimum {
@@ -162,13 +165,20 @@ impl Display for ParsedStatus {
                 minimum,
             } => {
                 writeln!(f, "Status: Optimum found")?;
-                writeln!(f, "Conflicts: {conflicts}")?;
+                match conflicts {
+                    Some(c) => writeln!(f, "Conflicts: {c}")?,
+                    None => writeln!(f, "Conflicts: NULL")?,
+                }
                 writeln!(f, "Solution: {solution}")?;
                 writeln!(f, "Minimum: {minimum}")
             }
             ParsedStatus::Unsat { conflicts } => {
                 writeln!(f, "Status: UNSAT")?;
-                writeln!(f, "Conflicts: {conflicts}")
+                match conflicts {
+                    Some(c) => writeln!(f, "Conflicts: {c}")?,
+                    None => writeln!(f, "Conflicts: NULL")?,
+                }
+                Ok(())
             }
             ParsedStatus::TimeLimit => writeln!(f, "Status: TIMELIMIT"),
             ParsedStatus::Unknown { status } => {
@@ -182,9 +192,9 @@ impl Display for ParsedStatus {
 impl ParsedStatus {
     pub fn get_conflicts(&self) -> Option<u32> {
         match self {
-            ParsedStatus::Sat { conflicts, .. } => Some(*conflicts),
-            ParsedStatus::Optimum { conflicts, .. } => Some(*conflicts),
-            ParsedStatus::Unsat { conflicts } => Some(*conflicts),
+            ParsedStatus::Sat { conflicts, .. } => *conflicts,
+            ParsedStatus::Optimum { conflicts, .. } => *conflicts,
+            ParsedStatus::Unsat { conflicts } => *conflicts,
             ParsedStatus::TimeLimit => None,
             ParsedStatus::Unknown { .. } => None,
         }

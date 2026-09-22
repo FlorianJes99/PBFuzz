@@ -426,9 +426,14 @@ impl Orchestrator {
                     }
                 }
                 let simple_result = iteration_result.get_simple_result();
+                let conflicts = iteration_result
+                    .successfull_runs
+                    .iter()
+                    .filter_map(|r| r.parsed_status.get_conflicts())
+                    .collect();
                 SingleRunStats::Successfull(SingleRunRecord::new(
                     simple_result,
-                    0,
+                    conflicts,
                     duration_iteration_ms,
                     large_solving_difference,
                 ))

@@ -22,6 +22,7 @@ pub struct PbConfigFile {
 pub struct GeneratorSettings<B: Display> {
     /// maximal amount of different variables used in the grammar
     pub max_vars: u32,
+    pub amount_lits_min_term: u32,
     /// different methods to determine when to stop generation of constraints
     cancel_condition: CancelCondition,
     builders_config: B,
@@ -278,6 +279,17 @@ impl GenerationMethodWithSettings {
         }
     }
 
+    pub fn get_literals_min_objective(&self) -> u32 {
+        match self {
+            GenerationMethodWithSettings::Random(generator_settings) => {
+                generator_settings.amount_lits_min_term
+            }
+            GenerationMethodWithSettings::FromSolution(generator_settings) => {
+                generator_settings.amount_lits_min_term
+            }
+        }
+    }
+
     pub fn get_cancel_condition(&self) -> &CancelCondition {
         match self {
             GenerationMethodWithSettings::Random(generator_settings) => {
@@ -377,10 +389,16 @@ impl<B: Display> Display for GeneratorSettings<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let GeneratorSettings {
             max_vars,
+            amount_lits_min_term,
             cancel_condition,
             builders_config,
         } = self;
         writeln!(f, "{:<OFFSET$}: {}", "Max used vars", max_vars)?;
+        writeln!(
+            f,
+            "{:<OFFSET$}: {}",
+            "Amount literals in minimization term", amount_lits_min_term
+        )?;
         writeln!(f, "{}", cancel_condition)?;
         writeln!(f)?;
         write!(f, "{builders_config}")
