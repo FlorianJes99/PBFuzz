@@ -1,101 +1,77 @@
 # GeneratorSettings — configuration for random grammar generation
 
 # Type of grammar to generate: "PBS" (pseudo boolean solving) or "PBO" (pseudo boolean optimization)
+# Default is "PBO"
 grammar_kind = "PBO"
 
 # Options are: "FromSolution" and "Random" or nothing at all
 # If no generation_method is provided, the chosen config is sampled 50:50
-# generation_method = "Random"
+generation_method = "Random"
 
-# this section configures all the settings, when creating constraints based on random sampling of constraints
 [random]
-# Maximum number of distinct variables used in the grammar
-max_vars = 70
+ # Maximum number of distinct variables used in the grammar
+max_vars = 80
 
-# How many literals a single constraint should have
-amount_literals_per_constraint = 19
-
-# Maximum number of unsatisfying assignments allowed for a single constraint
-max_unsat_for_single_constraint = 3
-
-# Coefficient bounds: values will be sampled from coeff_lower_bound..coeff_upper_bound (excluding 0)
-coeff_lower_bound = -10
-coeff_upper_bound = 10
-
-# Fraction of the possible assignment range used as the lower bound for the degree (RHS)
-# E.g. 0.3 means the lowest possible RHS is 30% of the total range
-lower_bound_degree = 0.35
-
-# Fraction of the possible assignment range used as the upper bound for the degree (RHS)
-# E.g. 0.6 means the highest possible RHS is 60% of the total range
-upper_bound_degree = 0.575
+# How many literals are sampled for the optimization (minimization) term
+amount_lits_min_term = 15
 
 # --- Cancel Condition ---
 #   "CountUnsat"       — stop after a total number of unsatisfying assignments
 #   "CountConstraints" — stop after a fixed number of constraints
-[random.cancel_condition.CountConstraints]
-max_constraints = 88
+[random.cancel_condition]
+CountConstraints = { max_constraints = 100 }
 
-# Alternatively, to cancel based on unsat assignments:
-# [cancel_condition.unsat_assingments]
-# max_unsat_assignments = 10000
+[random.builders_config.three_literal]
+weight = 6
+coeff_lower = -5
+coeff_upper = 5
+degree_lower = 0.38
+degree_upper = 0.52
 
-# --- Constraint Distribution ---
-# Relative weights controlling how often each constraint shape is generated.
-# Higher weight = more likely to be sampled. Weights are relative to each other.
-[random.constraint_distribution]
-three_literal_weight = 7   # simple 3-literal constraints
-cardinality_weight = 8     # cardinality constraints
-arbitrary_weight = 4       # arbitrary PB constraints
-exactly_one_weight = 0     # exactly one true literal constraints
-doubling_pairs_weight = 0  # doubling pairs
+[random.builders_config.cardinality]
+weight = 10
+amount_lits = 20
+degree_lower = 0.38
+degree_upper = 0.52
 
-# ------------------------------------------------------------------------------------------------------------------
-# 
-# this section configures all the settings, when creating constraints based on a previously sampled subset of true
-# variables.
+[random.builders_config.generic]
+weight = 1
+amount_lits = 15
+coeff_lower = -5
+coeff_upper = 5
+degree_lower = 0.38
+degree_upper = 0.52
+
+[random.builders_config.exactly_one]
+weight = 1
+amount_lits = 4
+
+[random.builders_config.doubling_pairs]
+weight = 1
+amount_pairs = 4
+
+# ---------------------------------------------------------------------------
+# from_solution only supports generic_length and doubling_pairs at the moment
+# ---------------------------------------------------------------------------
+
 [from_solution]
-
-# Maximum number of distinct variables used in the grammar
 max_vars = 120
 
-# How many literals a single constraint should have
-amount_literals_per_constraint = 10
+# How many literals are sampled for the optimization (minimization) term
+amount_lits_min_term = 40
 
-# Maximum number of unsatisfying assignments allowed for a single constraint
-max_unsat_for_single_constraint = 3
+[from_solution.cancel_condition]
+CountConstraints = { max_constraints = 500 }
 
-# Coefficient bounds: values will be sampled from coeff_lower_bound..coeff_upper_bound (excluding 0)
-coeff_lower_bound = -10
-coeff_upper_bound = 10
+[from_solution.builders_config.generic]
+weight = 1
+amount_lits = 20
+coeff_lower = -10
+coeff_upper = 10
+# does not matter for from solution generation
+degree_lower = 0.0
+degree_upper = 1.0
 
-# Fraction of the possible assignment range used as the lower bound for the degree (RHS)
-# E.g. 0.3 means the lowest possible RHS is 30% of the total range
-lower_bound_degree = 0.4
-
-# Fraction of the possible assignment range used as the upper bound for the degree (RHS)
-# E.g. 0.6 means the highest possible RHS is 60% of the total range
-upper_bound_degree = 0.6
-
-# Type of grammar to generate: "PBS" (pseudo boolean solving) or "PBO" (pseudo boolean optimization)
-grammar_kind = "PBO"
-
-# --- Cancel Condition ---
-#   "CountUnsat"       — stop after a total number of unsatisfying assignments
-#   "CountConstraints" — stop after a fixed number of constraints
-[from_solution.cancel_condition.CountConstraints]
-max_constraints = 500
-
-# Alternatively, to cancel based on unsat assignments:
-# [cancel_condition.unsat_assingments]
-# max_unsat_assignments = 10000
-
-# --- Constraint Distribution ---
-# Relative weights controlling how often each constraint shape is generated.
-# Higher weight = more likely to be sampled. Weights are relative to each other.
-[from_solution.constraint_distribution]
-three_literal_weight = 7   # simple 3-literal constraints
-cardinality_weight = 8     # cardinality constraints
-arbitrary_weight = 4       # arbitrary PB constraints
-exactly_one_weight = 0     # exactly one true literal constraints
-doubling_pairs_weight = 0  # doubling pairs
+[from_solution.builders_config.doubling_pairs]
+weight = 2
+amount_pairs = 20
