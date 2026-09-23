@@ -1,0 +1,89 @@
+# Intended use for this:
+# 
+# fuzzer_orchestrator \
+#   -t <time in minutes> \
+#   --thread-count <amount threads> \
+#   --log warn \
+#   --timeout-external-program-secs 30 \
+#   --proofs none \
+#   --settings-file configuration/difficult_settings_30_sec.toml \
+#   --solver-configs external_programs/exact.toml external_programs/hitpbo.toml  external_programs/roundingsat.toml external_programs/sat4j.toml external_programs/naps.toml external_programs/scip.toml
+#
+# 
+# GeneratorSettings — configuration for random grammar generation
+
+# Type of grammar to generate: "PBS" (pseudo boolean solving) or "PBO" (pseudo boolean optimization)
+# Default is "PBO"
+grammar_kind = "PBO"
+
+# Options are: "FromSolution" and "Random" or nothing at all
+# If no generation_method is provided, the chosen config is sampled 50:50
+# generation_method = "Random"
+
+[random]
+ # Maximum number of distinct variables used in the grammar
+max_vars = 130
+
+# How many literals are sampled for the optimization (minimization) term
+amount_lits_min_term = 55
+
+# --- Cancel Condition ---
+#   "CountUnsat"       — stop after a total number of unsatisfying assignments
+#   "CountConstraints" — stop after a fixed number of constraints
+[random.cancel_condition]
+CountConstraints = { max_constraints = 141 }
+
+[random.builders_config.three_literal]
+weight = 3
+coeff_lower = -3
+coeff_upper = 3
+degree_lower = 0.38
+degree_upper = 0.52
+
+[random.builders_config.cardinality]
+weight = 4
+amount_lits = 18
+degree_lower = 0.38
+degree_upper = 0.52
+
+[random.builders_config.generic]
+weight = 2
+amount_lits = 14
+coeff_lower = -150
+coeff_upper = 150
+degree_lower = 0.38
+degree_upper = 0.52
+
+[random.builders_config.exactly_one]
+weight = 1
+amount_lits = 4
+
+[random.builders_config.doubling_pairs]
+weight = 1
+amount_pairs = 4
+
+# ---------------------------------------------------------------------------
+# from_solution only supports generic_length and doubling_pairs at the moment
+# ---------------------------------------------------------------------------
+
+[from_solution]
+max_vars = 80
+
+# How many literals are sampled for the optimization (minimization) term
+amount_lits_min_term = 40
+
+[from_solution.cancel_condition]
+CountConstraints = { max_constraints = 100 }
+
+[from_solution.builders_config.generic]
+weight = 1
+amount_lits = 20
+coeff_lower = -80
+coeff_upper = 80
+# does not matter for from solution generation
+degree_lower = 0.0
+degree_upper = 1.0
+
+[from_solution.builders_config.doubling_pairs]
+weight = 2
+amount_pairs = 20
