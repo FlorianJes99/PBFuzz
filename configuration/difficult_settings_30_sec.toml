@@ -6,8 +6,8 @@
 #   --log warn \
 #   --timeout-external-program-secs 30 \
 #   --proofs none \
-#   --settings-file configuration/difficult_settings_30_sec.toml \
-#   --solver-configs external_programs/exact.toml external_programs/hitpbo.toml  external_programs/roundingsat.toml external_programs/sat4j.toml external_programs/naps.toml external_programs/scip.toml
+#   --settings-file /app/configuration/difficult_settings_30_sec.toml \
+#   --solver-configs /app/external_programs/exact.toml /app/external_programs/hitpbo.toml  /app/external_programs/roundingsat.toml /app/external_programs/sat4j.toml /app/external_programs/naps.toml /app/external_programs/scip.toml
 #
 # 
 # GeneratorSettings — configuration for random grammar generation

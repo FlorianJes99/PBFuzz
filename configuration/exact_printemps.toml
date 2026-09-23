@@ -5,8 +5,8 @@
 #   --thread-count <amount threads> \
 #   --log warn \
 #   --timeout-external-program-secs 5 \
-#   --settings-file configuration/exact_printemps.toml \
-#   --solver-configs external_programs/exact.toml external_programs/printemps.toml
+#   --settings-file /app/configuration/exact_printemps.toml \
+#   --solver-configs /app/external_programs/exact.toml /app/external_programs/printemps.toml
 # 
 # 
 # GeneratorSettings — configuration for all fuzzer properties
