@@ -6,7 +6,7 @@ grammar_kind = "PBO"
 
 # Options are: "FromSolution" and "Random" or nothing at all
 # If no generation_method is provided, the chosen config is sampled 50:50
-# generation_method = "Random"
+# generation_method = "FromSolution"
 
 [random]
  # Maximum number of distinct variables used in the grammar
@@ -55,17 +55,17 @@ amount_pairs = 4
 # ---------------------------------------------------------------------------
 
 [from_solution]
-max_vars = 120
+max_vars = 80
 
 # How many literals are sampled for the optimization (minimization) term
-amount_lits_min_term = 40
+amount_lits_min_term = 30
 
 [from_solution.cancel_condition]
-CountConstraints = { max_constraints = 500 }
+CountConstraints = { max_constraints = 100 }
 
 [from_solution.builders_config.generic]
 weight = 1
-amount_lits = 20
+amount_lits = 15
 coeff_lower = -10
 coeff_upper = 10
 # does not matter for from solution generation
@@ -74,4 +74,4 @@ degree_upper = 1.0
 
 [from_solution.builders_config.doubling_pairs]
 weight = 2
-amount_pairs = 20
+amount_pairs = 10
