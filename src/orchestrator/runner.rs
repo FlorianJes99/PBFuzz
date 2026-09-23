@@ -39,7 +39,6 @@ use std::{
     fmt::Display,
     fs::File,
     io::{BufWriter, Write},
-    ops::Range,
     path::PathBuf,
     sync::mpsc::channel,
     thread,
@@ -256,22 +255,6 @@ impl Orchestrator {
                     GenerationMethod::Random => random_count += 1,
                     GenerationMethod::FromSolution => from_solution_count += 1,
                 }
-                let percentage_range_sat = 0.20..0.7;
-                if terminate_early(
-                    iteration,
-                    &res.meta.generation_method,
-                    &stats,
-                    &percentage_range_sat,
-                ) {
-                    println!("Terminating early!");
-                    println!(
-                        "Percentage SAT Instances not in range ({}..{})",
-                        percentage_range_sat.start, percentage_range_sat.end
-                    );
-                    cancelled.store(true, Ordering::Relaxed);
-                    // We don't break here, because we want to process the remaining running threads
-                    // By setting cancelled to false, we ensure threads won't start new work, but finish already running work
-                }
                 let stats_iteration = self.process_result(res, iteration, &mut csv_writers);
 
                 stats.update(stats_iteration);
@@ -464,24 +447,6 @@ fn get_seed() -> u64 {
     rand::rng().random()
 }
 
-/// Terminate early if:
-/// - random constraint generation and
-/// - amount sat instances not in range and
-/// - more than 1000 iterations are scheduled
-fn terminate_early(
-    iteration: u32,
-    generation_method: &GenerationMethod,
-    stats: &RunStatistics,
-    percentage_range_sat: &Range<f32>,
-) -> bool {
-    match generation_method {
-        GenerationMethod::FromSolution => false,
-        GenerationMethod::Random => {
-            iteration == 1001 && !stats.is_sat_percentage_in_range(percentage_range_sat)
-        }
-    }
-}
-
 fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: PbSetting,
@@ -637,29 +602,33 @@ fn work_iteration(
         };
         comparison_records.push(comparison_record);
     }
+
+    let runs_without_timeout: Vec<_> = valid_runs
+        .iter()
+        .filter(|r| r.parsed_status.did_not_timeout())
+        .collect();
     // compare all solvers if enabled
-    if with_comparison && let Err(b) = compare_status(&valid_runs) {
+    if with_comparison && let Err(b) = compare_status(&runs_without_timeout) {
         bugs.push(b);
     };
-    let status = valid_runs
+    let status = runs_without_timeout
         .first()
-        .map(|r| StatusFlat::from_parsed_status(&r.parsed_status));
-    let status_as_str = match status.as_ref() {
-        Some(s) => s.get_status_as_str(),
-        None => "Failure",
-    };
-    let work_record = WorkRecord::new(
-        seed,
-        generation_method.to_string(),
-        duration_write_to_file.as_secs_f32() * 1000.0,
-        status_as_str,
-    );
+        .map(|r| StatusFlat::from_parsed_status(&r.parsed_status))
+        .or(valid_runs
+            .first()
+            .map(|r| StatusFlat::from_parsed_status(&r.parsed_status)));
     let iteration_result = IterationResult {
         errors,
         successfull_runs: valid_runs,
         bugs,
         status,
     };
+    let work_record = WorkRecord::new(
+        seed,
+        generation_method.to_string(),
+        duration_write_to_file.as_secs_f32() * 1000.0,
+        iteration_result.get_status_as_string(),
+    );
     let verdict = SolverVerdict {
         pb_file: output_file,
         proof_files,
@@ -687,7 +656,7 @@ impl IterationResult {
             .collect()
     }
 
-    fn get_status_as_string(&self) -> &str {
+    fn get_status_as_string(&self) -> &'static str {
         match (self.bugs.is_empty(), self.errors.is_empty()) {
             (true, true) => self
                 .status

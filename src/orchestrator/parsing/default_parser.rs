@@ -1,4 +1,4 @@
-use std::{collections::HashSet, num::ParseIntError};
+use std::collections::HashSet;
 
 use log::{debug, warn};
 
@@ -67,8 +67,8 @@ impl DefaultParser {
 /// Parse conflicts out of a given string
 ///
 /// Handles a special case for "naps" solver
-fn parse_conflicts(rest: &str) -> Result<u32, ParseIntError> {
-    match rest.parse() {
+fn parse_conflicts(rest: &str) -> Result<u32, String> {
+    match parse_exp_as_u32(rest) {
         Ok(c) => Ok(c),
         Err(e) => {
             // ugly hack to parse conflicts from naps output
@@ -76,12 +76,23 @@ fn parse_conflicts(rest: &str) -> Result<u32, ParseIntError> {
             if let Some((_, rest)) = rest.split_once(':')
                 && let Some(word) = rest.split_whitespace().next()
             {
-                word.parse()
+                parse_exp_as_u32(word)
             } else {
                 Err(e)
             }
         }
     }
+}
+
+/// Helper method to also be able to parse scientific notation like 1.34e5
+fn parse_exp_as_u32(num: &str) -> Result<u32, String> {
+    let value = num.parse::<f64>().map_err(|e| e.to_string())?;
+    if value.fract() != 0.0 || value < 0.0 {
+        return Err(format!("value is not a non-negative whole number: {num}"));
+    }
+    let value = value as u64;
+    let value = TryInto::<u32>::try_into(value).map_err(|e| e.to_string())?;
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -93,5 +104,12 @@ mod tests {
         let rest = " : 42 (XXXXXXXXX)";
         let r = parse_conflicts(rest);
         assert_eq!(42, r.unwrap())
+    }
+
+    #[test]
+    fn test_exp_notation_parsing() {
+        let num = "1.23e5";
+        let parsed_num = parse_exp_as_u32(num).unwrap();
+        assert_eq!(123000, parsed_num)
     }
 }

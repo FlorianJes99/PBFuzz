@@ -1,5 +1,5 @@
 use crate::fuzzer::helpers::OFFSET;
-use std::{fmt::Display, ops::Range, time::Duration};
+use std::{fmt::Display, time::Duration};
 
 use serde::Serialize;
 
@@ -117,10 +117,6 @@ impl RunStatistics {
             return 0.0;
         }
         self.amount_sat as f32 / sat_unsat as f32
-    }
-
-    pub fn is_sat_percentage_in_range(&self, range: &Range<f32>) -> bool {
-        range.contains(&self.percentage_sat())
     }
 }
 

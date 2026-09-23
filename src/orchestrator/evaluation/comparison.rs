@@ -3,25 +3,21 @@ use crate::orchestrator::{
     parsing::parser::{ParsedStatus, ParserRun},
 };
 
-pub fn compare_status(runs: &[ParserRun]) -> Result<(), BugReason> {
-    let useful_runs: Vec<_> = runs
-        .iter()
-        .filter(|r| !matches!(r.parsed_status, ParsedStatus::TimeLimit))
-        .collect();
-    if useful_runs.len() <= 1 {
+pub fn compare_status(runs: &[&ParserRun]) -> Result<(), BugReason> {
+    if runs.len() <= 1 {
         // We need at least two finished solvers in order to compare them
         return Ok(());
     }
-    let status = &useful_runs[0].parsed_status;
+    let status = &runs[0].parsed_status;
     let status_as_str = status.get_status_str();
-    let stati: Vec<_> = useful_runs
+    let stati: Vec<_> = runs
         .iter()
         .map(|r| r.parsed_status.get_status_str().to_string())
         .collect();
     if stati.iter().any(|s| s != status_as_str) {
         return Err(BugReason::OutputStatusDiffers(stati));
     };
-    let objs: Vec<_> = useful_runs
+    let objs: Vec<_> = runs
         .iter()
         .filter_map(|r| extract_objective(&r.parsed_status, r.record.name.to_string()))
         .collect();

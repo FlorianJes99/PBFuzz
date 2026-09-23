@@ -53,15 +53,13 @@ impl ParserImpl {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
-                StatusKind::Optimum => Ok(ParsedStatus::Sat {
+                StatusKind::Optimum | StatusKind::Sat => Ok(ParsedStatus::Sat {
                     conflicts: result.conflicts,
                     solution: result.solution.into(),
                 }),
                 StatusKind::Unsat => Ok(ParsedStatus::Unsat {
                     conflicts: result.conflicts,
                 }),
-                // only sat means we could not find optimum in given time limit
-                StatusKind::Sat => Ok(ParsedStatus::TimeLimit),
                 StatusKind::TimeLimit => Ok(ParsedStatus::TimeLimit),
                 StatusKind::Unknown(s) => Ok(ParsedStatus::Unknown { status: s }),
             },
@@ -208,6 +206,10 @@ impl ParsedStatus {
             ParsedStatus::TimeLimit => "timelimit",
             ParsedStatus::Unknown { .. } => "unknown",
         }
+    }
+
+    pub fn did_not_timeout(&self) -> bool {
+        !matches!(self, ParsedStatus::TimeLimit)
     }
 }
 
