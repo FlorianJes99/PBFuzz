@@ -36,8 +36,8 @@ In order to use this mode, the solver needs to support the generation of a proof
 | Exact       | compiled [source](https://gitlab.com/nonfiction-software/exact)         | Yes       | Yes   | Yes            | ?       |                    |
 | Roundingsat | compiled [source](https://gitlab.com/MIAOresearch/software/roundingsat) | Yes       | Yes   | Yes            | ?       |                    |
 | Hitpbo      | compiled [source](https://bitbucket.org/coreo-group/hitpbo/src/main/)   | Yes       | Yes   | Yes            | ?       |                    |
+| Sat4J       | jar      [source](https://gitlab.ow2.org/sat4j/sat4j/-/releases/)       | Yes       | Yes   | No             | ?       |                    |
 | Naps        | compiled [source](https://gitlab.com/naps2040334/naps/-/tree/master)    | Yes       | No    | Yes            | ?       |                    |
-| Sat4J       | jar      [source](https://gitlab.ow2.org/sat4j/sat4j/-/releases/)       | Yes       | No    | No             | ?       |                    |
 | Scip        | compiled [source](https://github.com/scipopt/scip)                      | Yes       | No    | No             | ?       |                    |
 | Printtemps  | compiled [source](https://github.com/msakai/printemps-pb26)             | Yes       | No    | No             | ?       | No UNSAT answer    |
 | Toulbar     | compiled [source](https://github.com/toulbar2/toulbar2)                 | No        | No    | No             | ?       | Need custom parser |

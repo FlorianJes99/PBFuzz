@@ -137,9 +137,18 @@ pub fn run_orchestrator(
 
     let index_file = run_root.join(DATA_FOLDER.name).join("cases.jsonl");
     let case_writer = CaseWriter::new(&run_root, index_file);
+    let option_fuzzing_perc = if (0.0..=1.0).contains(&args.option_fuzzing_perc) {
+        args.option_fuzzing_perc
+    } else {
+        return Err(format!(
+            "Invalid value for option fuzzing, expted value between 0 and 1 but was: {}",
+            args.option_fuzzing_perc
+        ))?;
+    };
     let harness_config = HarnessConfig {
         with_comparison: !args.no_comparison,
         save_all_files: args.save_all_files,
+        option_fuzzing_perc,
     };
     Orchestrator {
         fuzzer_output_dir: run_root,
@@ -170,6 +179,7 @@ impl SolverAndParser {
 
 struct HarnessConfig {
     with_comparison: bool,
+    option_fuzzing_perc: f64,
     save_all_files: bool,
 }
 
@@ -234,6 +244,7 @@ impl Orchestrator {
                                 &self.fuzzer_output_dir,
                                 self.config.generate_settings(),
                                 self.harness_config.with_comparison,
+                                self.harness_config.option_fuzzing_perc,
                                 &self.solvers,
                                 meta_data,
                                 i,
@@ -451,13 +462,14 @@ fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: PbSetting,
     with_comparison: bool,
+    option_fuzzing_perc: f64,
     sps: &[SolverAndParser],
     program_info: MetaData,
     thread_id: u8,
 ) -> WorkResult {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let with_option_fuzzing = rand::random_bool(0.2); // option fuzzing with 20% probability
+    let with_option_fuzzing = rand::random_bool(option_fuzzing_perc); // option fuzzing with 20% probability
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
