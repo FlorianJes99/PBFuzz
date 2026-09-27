@@ -43,6 +43,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rand::{self, RngExt};
 use serde::Serialize;
@@ -334,7 +335,7 @@ impl Orchestrator {
             iteration,
             seed,
             generation_method: work_result.meta.generation_method,
-            status: work_result.payload.get_status_as_string().to_string(),
+            status: work_result.payload.get_status_as_string(),
             with_option_fuzzing: work_result.meta.with_option_fuzzing,
             solver_infos: work_result.get_execution_records(),
         };
@@ -653,6 +654,7 @@ fn work_iteration(
         .or(valid_runs
             .first()
             .map(|r| StatusFlat::from_parsed_status(&r.parsed_status)));
+    let had_errors = !errors.is_empty();
     let iteration_result = IterationResult {
         errors,
         successfull_runs: valid_runs,
@@ -663,6 +665,7 @@ fn work_iteration(
         generation_method.to_string(),
         duration_write_to_file.as_secs_f32() * 1000.0,
         with_option_fuzzing,
+        had_errors,
         iteration_result.get_status_as_string(),
     );
     let verdict = SolverVerdict {
@@ -691,15 +694,18 @@ impl IterationResult {
             .collect()
     }
 
-    fn get_status_as_string(&self) -> &'static str {
-        match self.errors.len() {
-            0 => self
-                .status
+    fn get_status_as_string(&self) -> String {
+        if self.errors.is_empty() {
+            self.status
                 .as_ref()
-                .map(|s| s.get_status_as_str())
-                .unwrap_or("UnexpectedFailure"),
-            1 => "error",
-            _ => "errors",
+                .map(|s| s.get_status_as_str().to_string())
+                .unwrap_or("UnexpectedFailure".to_string())
+        } else {
+            self.errors
+                .iter()
+                .map(|(_, e)| &e.kind)
+                .map(|kind| kind.classify_error())
+                .join(", ")
         }
     }
 
@@ -836,10 +842,10 @@ enum WorkPayload {
     PbGenerationError(FuzzGenerationError),
 }
 impl WorkPayload {
-    fn get_status_as_string(&self) -> &str {
+    fn get_status_as_string(&self) -> String {
         match self {
             WorkPayload::Verdict(solver_verdict) => solver_verdict.outcome.get_status_as_string(),
-            WorkPayload::PbGenerationError(_) => "pb file generation error",
+            WorkPayload::PbGenerationError(_) => "pb file generation error".to_string(),
         }
     }
 }
@@ -890,6 +896,16 @@ enum WorkErrorKind {
     Parser(#[from] OutputParsingError),
     #[error("Bug found: {0}")]
     Bug(#[from] BugReason),
+}
+
+impl WorkErrorKind {
+    fn classify_error(&self) -> &'static str {
+        match self {
+            WorkErrorKind::Solver(_) => "solver_failed",
+            WorkErrorKind::Parser(_) => "parser_failed",
+            WorkErrorKind::Bug(bug_reason) => bug_reason.classify_bug(),
+        }
+    }
 }
 
 /// Cancel iterations of fuzzing runs

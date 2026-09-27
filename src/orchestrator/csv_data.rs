@@ -104,8 +104,9 @@ pub struct WorkRecord {
     pub seed: u64,
     pub generation_method: String,
     pub with_option_fuzzing: bool,
+    pub had_errors: bool,
     pub problem_generation_ms: f32,
-    pub result: &'static str,
+    pub result: String,
 }
 
 impl WorkRecord {
@@ -114,13 +115,15 @@ impl WorkRecord {
         generation_method: String,
         problem_generation_ms: f32,
         with_option_fuzzing: bool,
-        result: &'static str,
+        had_errors: bool,
+        result: String,
     ) -> Self {
         Self {
             seed,
             generation_method,
             problem_generation_ms,
             with_option_fuzzing,
+            had_errors,
             result,
         }
     }
@@ -136,8 +139,9 @@ impl WorkRecord {
             generation_method: self.generation_method.clone(),
             problem_generation_ms: self.problem_generation_ms,
             with_option_fuzzing: self.with_option_fuzzing,
+            had_errors: self.had_errors,
             duration_iteration_ms,
-            result: self.result,
+            result: self.result.clone(),
         }
     }
 }
@@ -148,9 +152,10 @@ pub struct IterationWorkRecord {
     seed: u64,
     generation_method: String,
     with_option_fuzzing: bool,
+    had_errors: bool,
     problem_generation_ms: f32,
     duration_iteration_ms: f32,
-    result: &'static str,
+    result: String,
 }
 
 #[derive(Serialize)]

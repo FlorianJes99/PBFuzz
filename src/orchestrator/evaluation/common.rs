@@ -90,6 +90,17 @@ pub enum BugReason {
     InvalidModel(#[from] ValidationError),
 }
 
+impl BugReason {
+    pub fn classify_bug(&self) -> &'static str {
+        match self {
+            BugReason::DifferentObjectives(_) => "different_objectives",
+            BugReason::OutputStatusDiffers(_) => "different_status",
+            BugReason::ProofCheckerFailed(_) => "proof_invalid",
+            BugReason::InvalidModel(_) => "invalid_model",
+        }
+    }
+}
+
 pub fn verify_solution(status: &ParsedStatus, grammar: &PBGrammar) -> Result<(), ValidationError> {
     match status {
         ParsedStatus::Sat {
