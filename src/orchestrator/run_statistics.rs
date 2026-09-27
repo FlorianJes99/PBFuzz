@@ -13,7 +13,6 @@ pub struct RunStatistics {
     amount_unknown: u32,
     average_conflicts: RunningAverage,
     average_iteration_duration: RunningAverageDuration,
-    bugs_found: u32,
     errors: u32,
     timeouts: u32,
     large_solving_difference: u32,
@@ -29,9 +28,7 @@ pub enum SimpleResult {
     Optimum,
     Unsat,
     Timeout,
-    Bug,
-    Error,
-    BugError,
+    Errors(u32),
     Unknown,
     Other,
 }
@@ -68,7 +65,6 @@ impl RunStatistics {
             amount_unknown: 0,
             average_conflicts: RunningAverage::default(),
             average_iteration_duration: RunningAverageDuration::default(),
-            bugs_found: 0,
             errors: 0,
             timeouts: 0,
             large_solving_difference: 0,
@@ -89,12 +85,9 @@ impl RunStatistics {
                     SimpleResult::Unsat => self.amount_unsat += 1,
                     SimpleResult::Unknown => self.amount_unknown += 1,
                     SimpleResult::Timeout => self.timeouts += 1,
-                    SimpleResult::Bug => self.bugs_found += 1,
                     SimpleResult::Optimum => self.amount_sat += 1,
-                    SimpleResult::Error => self.errors += 1,
-                    SimpleResult::BugError => {
-                        self.errors += 1;
-                        self.bugs_found += 1;
+                    SimpleResult::Errors(n) => {
+                        self.errors += n;
                     }
                     SimpleResult::Other => self.amount_unknown += 1,
                 }
@@ -129,7 +122,6 @@ impl Display for RunStatistics {
             amount_unknown,
             average_conflicts,
             average_iteration_duration,
-            bugs_found,
             errors,
             timeouts,
             large_solving_difference,
@@ -166,7 +158,6 @@ impl Display for RunStatistics {
             "Average conflicts to solve",
             average_conflicts.get_average()
         )?;
-        writeln!(f, "{:<OFFSET$}: {}", "Bugs found", bugs_found)?;
         writeln!(f, "{:<OFFSET$}: {}", "Errors occured", errors)?;
         writeln!(f, "{:<OFFSET$}: {}", "Timeouts", timeouts)?;
         writeln!(

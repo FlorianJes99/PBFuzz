@@ -26,6 +26,15 @@ pub enum ValidationError {
     Objective(#[from] MinObjectiveInvalid),
 }
 
+impl ValidationError {
+    pub fn short_str(&self) -> &'static str {
+        match self {
+            ValidationError::Constraint(_) => "invalid_constraint",
+            ValidationError::Objective(_) => "invalid_objective",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 #[error("{solver_name} - minimum: {min_objective}")]
 pub struct ObjectiveInfo {
@@ -77,6 +86,8 @@ pub enum BugReason {
     OutputStatusDiffers(Vec<String>),
     #[error(transparent)]
     ProofCheckerFailed(#[from] ProofError),
+    #[error(transparent)]
+    InvalidModel(#[from] ValidationError),
 }
 
 pub fn verify_solution(status: &ParsedStatus, grammar: &PBGrammar) -> Result<(), ValidationError> {

@@ -27,3 +27,12 @@ pub enum ProofError {
     #[error(transparent)]
     VeriPB(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }
+
+impl ProofError {
+    pub fn short_str(&self) -> &'static str {
+        match self {
+            ProofError::FileDoesNotExist(_, _) => "no_proof_file",
+            ProofError::VeriPB(_) => "proof_invalid",
+        }
+    }
+}
