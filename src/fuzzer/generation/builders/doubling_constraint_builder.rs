@@ -1,7 +1,7 @@
 use rand::RngExt;
 use rand::seq::IteratorRandom;
 
-use crate::fuzzer::domain::{LiteralIdent, SolutionModel};
+use crate::fuzzer::domain::LiteralIdent;
 use crate::fuzzer::generation::constraint_errors::ConstraintGenerationError;
 use crate::fuzzer::pb_settings::DoublingPairsConfig;
 use crate::fuzzer::{
@@ -53,7 +53,7 @@ pub fn generate_doubling_pairs_constraint(
 pub fn create_sat_doubling_pairs_constraint(
     settings: DoublingPairsSettings,
     literal_sampler: &mut LiteralSampler,
-    model: &SolutionModel,
+    true_lits: &[LiteralIdent],
     false_lits: &[LiteralIdent],
 ) -> Result<DoublingPairs, ConstraintGenerationError> {
     // given those pairs: 1 1 2 2 4 4 8 8 16 16 >= 32
@@ -63,7 +63,7 @@ pub fn create_sat_doubling_pairs_constraint(
     let amount_true_vars = literal_sampler
         .rand
         .random_range(2..=settings.amount_pairs + 1);
-    let mut true_vars = model.iter().cloned().sample(
+    let mut true_vars = true_lits.iter().cloned().sample(
         &mut literal_sampler.rand,
         amount_true_vars.try_into().expect("usize support"),
     );
