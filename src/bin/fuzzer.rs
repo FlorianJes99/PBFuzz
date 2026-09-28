@@ -9,8 +9,8 @@ use fuzzer_pseudo_bool::fuzzer::helpers::current_time_as_timestamp;
 use fuzzer_pseudo_bool::fuzzer::helpers::print_block;
 use fuzzer_pseudo_bool::fuzzer::pb_generator::PBGenerator;
 use fuzzer_pseudo_bool::fuzzer::pb_settings::PbConfigFile;
-use log::info;
 use log::Level;
+use log::info;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let program_version = env!("CARGO_PKG_VERSION");
@@ -28,6 +28,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         commit_hash: git_hash.into(),
     };
     let config = PbConfigFile::load_from_file(&args.settings_file)?;
+    if config.generation_method.is_none() {
+        return Err(
+            "When running the fuzzer standalone, generation method must be set in config file!"
+                .into(),
+        );
+    }
     let grammar = PBGenerator::create_grammar(args.seed, config.generate_settings(), meta_data)?;
     if args.print_statistics {
         print_block("Grammar Statistics", grammar.get_statistics());

@@ -66,17 +66,20 @@ impl FromSolutionGenerator {
     ) -> Result<FromSolutionData, ConstraintGenerationError> {
         let amount_vars = literal_sampler.max_vars;
         let lits: Vec<_> = (1..=amount_vars).map(LiteralIdent::new).collect();
-        let solution: SolutionModel = lits
+        let true_lits: Vec<_> = lits
             .sample(&mut literal_sampler.rand, (amount_vars / 3) as usize)
             .cloned()
-            .into();
+            .collect();
+        let solution: SolutionModel = true_lits.iter().cloned().into();
         let false_lits: Vec<_> = lits
             .iter()
             .filter(|l| !solution.contains(l))
             .cloned()
             .collect();
         let constraints = (0..self.settings.amount_constraints)
-            .map(|_| self.sample_sat_constraint(literal_sampler, &solution, &false_lits))
+            .map(|_| {
+                self.sample_sat_constraint(literal_sampler, &solution, &true_lits, &false_lits)
+            })
             .collect::<Result<_, _>>()?;
         Ok(FromSolutionData {
             constraints,
@@ -88,6 +91,7 @@ impl FromSolutionGenerator {
         &self,
         literal_sampler: &mut LiteralSampler,
         solution: &SolutionModel,
+        true_lits: &[LiteralIdent],
         false_lits: &[LiteralIdent],
     ) -> Result<Box<dyn Constraint>, ConstraintGenerationError> {
         let constraint_kind = self.sample_constraint_kind(literal_sampler);
@@ -100,7 +104,7 @@ impl FromSolutionGenerator {
                 let c = create_sat_doubling_pairs_constraint(
                     self.settings.doubling_pairs,
                     literal_sampler,
-                    solution,
+                    true_lits,
                     false_lits,
                 )?;
                 Ok(Box::new(c))
