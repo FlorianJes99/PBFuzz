@@ -95,8 +95,8 @@ impl BugReason {
         match self {
             BugReason::DifferentObjectives(_) => "different_objectives",
             BugReason::OutputStatusDiffers(_) => "different_status",
-            BugReason::ProofCheckerFailed(_) => "proof_invalid",
-            BugReason::InvalidModel(_) => "invalid_model",
+            BugReason::ProofCheckerFailed(e) => e.short_str(),
+            BugReason::InvalidModel(e) => e.short_str(),
         }
     }
 }

@@ -61,6 +61,9 @@ impl CsvRecordsSingleIteration {
 pub struct SolverRecord {
     pub solver_name: String,
     pub solver_status: &'static str,
+    pub found_optimum: Option<i32>,
+    pub model_verified: Option<bool>,
+    pub proof_verified: Option<bool>,
     pub term_signal: Option<i32>,
     pub solver_conflicts: Option<u32>,
     pub problem_solving_duration_ms: Option<f32>,
@@ -74,6 +77,9 @@ impl SolverRecord {
             iteration,
             solver_name: self.solver_name.clone(),
             solver_status: self.solver_status,
+            found_optimum: self.found_optimum,
+            model_verified: self.model_verified,
+            proof_verified: self.proof_verified,
             term_signal: self.term_signal,
             solver_conflicts: self.solver_conflicts,
             problem_solving_duration_ms: self.problem_solving_duration_ms,
@@ -82,7 +88,7 @@ impl SolverRecord {
         }
     }
 
-    pub fn create_faulty_run(
+    pub fn create_not_parseable_run(
         solver_name: String,
         solver_status: &'static str,
         term_signal: Option<i32>,
@@ -93,6 +99,9 @@ impl SolverRecord {
             solver_status,
             term_signal,
             problem_solving_duration_ms,
+            found_optimum: None,
+            model_verified: None,
+            proof_verified: None,
             problem_parsing_duration_ms: None,
             solver_conflicts: None,
             proof_verification_time_ms: None,
@@ -163,6 +172,9 @@ pub struct IterationSolverRecord {
     iteration: u32,
     solver_name: String,
     solver_status: &'static str,
+    found_optimum: Option<i32>,
+    model_verified: Option<bool>,
+    proof_verified: Option<bool>,
     term_signal: Option<i32>,
     solver_conflicts: Option<u32>,
     problem_solving_duration_ms: Option<f32>,
