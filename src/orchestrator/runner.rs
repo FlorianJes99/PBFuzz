@@ -1,13 +1,12 @@
 use crate::fuzzer::app_info::MetaData;
+use crate::fuzzer::grammar::PBGrammar;
 use crate::fuzzer::helpers::OFFSET;
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{
     CsvRecordsSingleIteration, OrchestratorCsvWriters, WorkRecord,
 };
-use crate::orchestrator::evaluation::common::{
-    BugReason, StatusFlat, ValidationError, verify_solution,
-};
+use crate::orchestrator::evaluation::common::{BugReason, StatusFlat, verify_solution};
 use crate::orchestrator::evaluation::comparison::compare_status;
 use crate::orchestrator::evaluation::proof_checking::check_proof;
 use crate::orchestrator::issue_report::case_writer::{CaseWriter, IssueReport};
@@ -137,9 +136,18 @@ pub fn run_orchestrator(
 
     let index_file = run_root.join(DATA_FOLDER.name).join("cases.jsonl");
     let case_writer = CaseWriter::new(&run_root, index_file);
+    let option_fuzzing_perc = if (0.0..=1.0).contains(&args.option_fuzzing_perc) {
+        args.option_fuzzing_perc
+    } else {
+        return Err(format!(
+            "Invalid value for option fuzzing, expted value between 0 and 1 but was: {}",
+            args.option_fuzzing_perc
+        ))?;
+    };
     let harness_config = HarnessConfig {
         with_comparison: !args.no_comparison,
         save_all_files: args.save_all_files,
+        option_fuzzing_perc,
     };
     Orchestrator {
         fuzzer_output_dir: run_root,
@@ -170,6 +178,7 @@ impl SolverAndParser {
 
 struct HarnessConfig {
     with_comparison: bool,
+    option_fuzzing_perc: f64,
     save_all_files: bool,
 }
 
@@ -234,6 +243,7 @@ impl Orchestrator {
                                 &self.fuzzer_output_dir,
                                 self.config.generate_settings(),
                                 self.harness_config.with_comparison,
+                                self.harness_config.option_fuzzing_perc,
                                 &self.solvers,
                                 meta_data,
                                 i,
@@ -326,7 +336,7 @@ impl Orchestrator {
             iteration,
             seed,
             generation_method: work_result.meta.generation_method,
-            status: work_result.payload.get_status_as_string().to_string(),
+            status: work_result.payload.get_status_as_string(),
             with_option_fuzzing: work_result.meta.with_option_fuzzing,
             solver_infos: work_result.get_execution_records(),
         };
@@ -337,11 +347,11 @@ impl Orchestrator {
                 let rs = solver_verdict.records.get_records();
                 let min = rs
                     .iter()
-                    .map(|r| r.problem_solving_duration_ms)
+                    .filter_map(|r| r.problem_solving_duration_ms)
                     .fold(f32::INFINITY, f32::min);
                 let max = rs
                     .iter()
-                    .map(|r| r.problem_solving_duration_ms)
+                    .filter_map(|r| r.problem_solving_duration_ms)
                     .fold(f32::NEG_INFINITY, f32::max);
                 if (max - min).abs() >= 2000.0 {
                     warn!(
@@ -364,15 +374,7 @@ impl Orchestrator {
                 let should_process =
                     self.harness_config.save_all_files || iteration_result.should_process_data();
                 if !iteration_result.errors.is_empty() {
-                    info!(
-                        "Found bug with seed {})!\nBug: {}",
-                        seed,
-                        iteration_result
-                            .errors
-                            .iter()
-                            .map(|(name, e)| format!("Solver {name}: {e}"))
-                            .join(", ")
-                    );
+                    info!("Found bug(s) with seed {})!", seed,);
                 }
                 if should_process {
                     if let Err(e) =
@@ -451,13 +453,14 @@ fn work_iteration(
     fuzzer_output_dir: &Path,
     settings: PbSetting,
     with_comparison: bool,
+    option_fuzzing_perc: f64,
     sps: &[SolverAndParser],
     program_info: MetaData,
     thread_id: u8,
 ) -> WorkResult {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let with_option_fuzzing = rand::random_bool(0.2); // option fuzzing with 20% probability
+    let with_option_fuzzing = rand::random_bool(option_fuzzing_perc); // option fuzzing with 20% probability
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
@@ -515,7 +518,6 @@ fn work_iteration(
     let mut comparison_records = Vec::with_capacity(sps.len());
     let mut valid_runs = Vec::with_capacity(sps.len());
     let mut errors = vec![];
-    let mut bugs = vec![];
     let mut proof_files = vec![];
     for sp in sps {
         let SolverAndParser {
@@ -530,7 +532,14 @@ fn work_iteration(
                     solver_run: None,
                     kind: e.into(),
                 };
-                errors.push((s.get_name().to_string(), work_error));
+                errors.push((Some(s.get_name().to_string()), work_error));
+                let comparison_record = SolverRecord::create_not_parseable_run(
+                    s.get_name().to_string(),
+                    "run_error",
+                    None,
+                    None,
+                );
+                comparison_records.push(comparison_record);
                 continue;
             }
         };
@@ -549,55 +558,61 @@ fn work_iteration(
                     solver_run: Some(run_record),
                     kind: e.into(),
                 };
-                errors.push((s.get_name().to_string(), work_error));
+                errors.push((Some(s.get_name().to_string()), work_error));
+                let comparison_record = SolverRecord::create_not_parseable_run(
+                    s.get_name().to_string(),
+                    "parse_error",
+                    execution_record.signal,
+                    Some(time_bin.as_secs_f32() * 1000.0),
+                );
+                comparison_records.push(comparison_record);
                 continue;
             }
         };
         let time_parsing = start_time_parsing.elapsed();
         let conflicts = r.parsed_status.get_conflicts();
-        let status_as_str = r.parsed_status.get_status_str();
         let solver_name = r.record.name.clone();
-        let verification_time = match verify_solution(&r.parsed_status, &grammar) {
-            Ok(_)
-                if s.supports_proofs()
-                    // only proof check solvers, which produced something useful
-                    && matches!(
-                        r.parsed_status,
-                        ParsedStatus::Sat { .. }
-                            | ParsedStatus::Optimum { .. }
-                            | ParsedStatus::Unsat { .. }
-                    ) =>
-            {
-                let start_time = Instant::now();
-                match check_proof(&output_file, &proof_file) {
-                    Ok(_) => valid_runs.push(r),
-                    Err(e) => bugs.push(e.into()),
-                };
-                Some(start_time.elapsed())
-            }
-            Ok(_) => {
-                valid_runs.push(r);
-                None
-            }
-            Err(e) => {
-                let run_record = SolverRunRecord {
-                    execution: execution_record,
-                    parsed_status: Some(r.parsed_status),
-                };
-                let work_error = WorkError {
-                    solver_run: Some(run_record),
-                    kind: e.into(),
-                };
-                errors.push((r.record.name.clone(), work_error));
-                None
-            }
-        };
+        let term_signal = r.record.signal;
+        let minimum = r
+            .parsed_status
+            .get_min_objective()
+            .map(|min| *min.get_value());
+        let ValidationResult {
+            claimed_status,
+            verification_time,
+            model_verified,
+            proof_verified,
+            error_kind,
+        } = validate_parsed_status_of_solver(
+            &r.parsed_status,
+            &grammar,
+            s.supports_proofs(),
+            &output_file,
+            &proof_file,
+        );
+        if let Some(e) = error_kind {
+            let run_record = SolverRunRecord {
+                execution: execution_record.clone(),
+                parsed_status: Some(r.parsed_status.clone()),
+            };
+            let work_error = WorkError {
+                solver_run: Some(run_record),
+                kind: e.into(),
+            };
+            errors.push((Some(r.record.name.to_string()), work_error));
+        } else {
+            valid_runs.push(r);
+        }
         let comparison_record = SolverRecord {
             solver_name,
             solver_conflicts: conflicts,
-            solver_status: status_as_str,
-            problem_solving_duration_ms: time_bin.as_secs_f32() * 1000.0,
-            problem_parsing_duration_ms: time_parsing.as_secs_f32() * 1000.0,
+            solver_status: claimed_status,
+            found_optimum: minimum,
+            model_verified,
+            proof_verified,
+            term_signal,
+            problem_solving_duration_ms: Some(time_bin.as_secs_f32() * 1000.0),
+            problem_parsing_duration_ms: Some(time_parsing.as_secs_f32() * 1000.0),
             proof_verification_time_ms: verification_time.map(|t| t.as_secs_f32() * 1000.0),
         };
         comparison_records.push(comparison_record);
@@ -609,7 +624,11 @@ fn work_iteration(
         .collect();
     // compare all solvers if enabled
     if with_comparison && let Err(b) = compare_status(&runs_without_timeout) {
-        bugs.push(b);
+        let work_error = WorkError {
+            solver_run: None,
+            kind: b.into(),
+        };
+        errors.push((None, work_error));
     };
     let status = runs_without_timeout
         .first()
@@ -617,16 +636,18 @@ fn work_iteration(
         .or(valid_runs
             .first()
             .map(|r| StatusFlat::from_parsed_status(&r.parsed_status)));
+    let had_errors = !errors.is_empty();
     let iteration_result = IterationResult {
         errors,
         successfull_runs: valid_runs,
-        bugs,
         status,
     };
     let work_record = WorkRecord::new(
         seed,
         generation_method.to_string(),
         duration_write_to_file.as_secs_f32() * 1000.0,
+        with_option_fuzzing,
+        had_errors,
         iteration_result.get_status_as_string(),
     );
     let verdict = SolverVerdict {
@@ -641,10 +662,65 @@ fn work_iteration(
     WorkResult { meta, payload }
 }
 
+struct ValidationResult {
+    claimed_status: &'static str,
+    verification_time: Option<Duration>,
+    model_verified: Option<bool>,
+    proof_verified: Option<bool>,
+    error_kind: Option<BugReason>,
+}
+
+impl ValidationResult {
+    fn new(claimed_status: &'static str) -> Self {
+        Self {
+            claimed_status,
+            verification_time: None,
+            model_verified: None,
+            proof_verified: None,
+            error_kind: None,
+        }
+    }
+}
+
+fn validate_parsed_status_of_solver(
+    parsed_status: &ParsedStatus,
+    grammar: &PBGrammar,
+    supports_proof: bool,
+    output_file: &Path,
+    proof_file: &Path,
+) -> ValidationResult {
+    let parsed_status_as_str = parsed_status.get_status_str();
+    let has_model = parsed_status.has_model();
+    let mut res = ValidationResult::new(parsed_status_as_str);
+    if has_model {
+        match verify_solution(parsed_status, grammar) {
+            Ok(_) => {
+                res.model_verified = Some(true);
+            }
+            Err(e) => {
+                res.model_verified = Some(false);
+                res.error_kind = Some(e.into());
+                return res;
+            }
+        }
+    }
+
+    let needs_proof_check = has_model || matches!(parsed_status, ParsedStatus::Unsat { .. });
+    if supports_proof && needs_proof_check {
+        let start = Instant::now();
+        let r = check_proof(output_file, proof_file);
+        res.verification_time = Some(start.elapsed());
+        res.proof_verified = Some(r.is_ok());
+        if let Err(e) = r {
+            res.error_kind = Some(e.into());
+        }
+    }
+    res
+}
+
 struct IterationResult {
     successfull_runs: Vec<ParserRun>,
-    errors: Vec<(String, WorkError)>,
-    bugs: Vec<BugReason>,
+    errors: Vec<(Option<String>, WorkError)>,
     status: Option<StatusFlat>,
 }
 
@@ -656,24 +732,25 @@ impl IterationResult {
             .collect()
     }
 
-    fn get_status_as_string(&self) -> &'static str {
-        match (self.bugs.is_empty(), self.errors.is_empty()) {
-            (true, true) => self
-                .status
+    fn get_status_as_string(&self) -> String {
+        if self.errors.is_empty() {
+            self.status
                 .as_ref()
                 .map(|s| s.get_status_as_str())
-                .unwrap_or("UnexpectedFailure"),
-            (true, false) => "error",
-            (false, true) => "bug",
-            (false, false) => "BE",
+                .unwrap_or("unexpected_failure")
+                .to_string()
+        } else {
+            self.errors
+                .iter()
+                .map(|(_, e)| &e.kind)
+                .map(|kind| kind.classify_error())
+                .sorted()
+                .join(", ")
         }
     }
 
     fn should_process_data(&self) -> bool {
         if !self.errors.is_empty() {
-            return true;
-        }
-        if !self.bugs.is_empty() {
             return true;
         }
         match &self.status {
@@ -689,8 +766,8 @@ impl IterationResult {
     }
 
     fn get_simple_result(&self) -> SimpleResult {
-        match (self.bugs.is_empty(), self.errors.is_empty()) {
-            (true, true) => match self.status.as_ref() {
+        match self.errors.len() {
+            0 => match self.status.as_ref() {
                 Some(s) => match s {
                     StatusFlat::Sat => SimpleResult::Sat,
                     StatusFlat::Optimum => SimpleResult::Optimum,
@@ -700,9 +777,7 @@ impl IterationResult {
                 },
                 None => SimpleResult::Other,
             },
-            (true, false) => SimpleResult::Error,
-            (false, true) => SimpleResult::Bug,
-            (false, false) => SimpleResult::BugError,
+            n => SimpleResult::Errors(n as u32),
         }
     }
 }
@@ -740,28 +815,20 @@ impl IssueReport for WorkResult {
         writeln!(w, "Seed: {seed}")?;
         writeln!(w, "Generation Method: {generation_method}")?;
         writeln!(w, "Option fuzzing: {with_option_fuzzing}")?;
+        writeln!(w)?;
         match &self.payload {
             WorkPayload::Verdict(solver_verdict) => {
                 let IterationResult {
                     errors,
                     successfull_runs,
-                    bugs,
                     status,
                 } = &solver_verdict.outcome;
-                let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
-                    writeln!(w, "{:=^50}", "Solving")?;
-                    writeln!(w, "{}", data.record)?;
-                    writeln!(w)?;
-                    writeln!(w, "{:=^50}", "Parsing")?;
-                    writeln!(w, "{}", data.parsed_status)
-                };
-                for r in successfull_runs {
-                    write_run_data(r)?;
-                }
-                writeln!(w)?;
                 writeln!(w, "{:=^50}", "Errors")?;
                 for (solver_name, e) in errors {
-                    writeln!(w, "Solver {solver_name}: {}", e.kind)?;
+                    match solver_name {
+                        Some(name) => writeln!(w, "Solver {name}: {}", e.kind)?,
+                        None => writeln!(w, "Other error: {}", e.kind)?,
+                    }
                     if let Some(solver_run) = &e.solver_run {
                         let SolverRunRecord {
                             execution,
@@ -777,15 +844,20 @@ impl IssueReport for WorkResult {
                     }
                 }
                 writeln!(w)?;
-                writeln!(w, "{:=^50}", "Bugs")?;
-                for b in bugs {
-                    writeln!(w, "{b}")?;
+                let mut write_run_data = |data: &ParserRun| -> io::Result<()> {
+                    writeln!(w, "{:=^50}", "Solving")?;
+                    writeln!(w, "{}", data.record)?;
+                    writeln!(w)?;
+                    writeln!(w, "{:=^50}", "Parsing")?;
+                    writeln!(w, "{}", data.parsed_status)
+                };
+                for r in successfull_runs {
+                    write_run_data(r)?;
                 }
                 writeln!(w)?;
                 writeln!(w, "{:=^50}", "Outcome")?;
                 writeln!(w, "Successfull runs: {}", successfull_runs.len())?;
                 writeln!(w, "Errors: {}", errors.len())?;
-                writeln!(w, "Bugs: {}", bugs.len())?;
                 if let Some(s) = status {
                     writeln!(w, "Status {}", s.get_status_as_str())?;
                 }
@@ -811,10 +883,10 @@ enum WorkPayload {
     PbGenerationError(FuzzGenerationError),
 }
 impl WorkPayload {
-    fn get_status_as_string(&self) -> &str {
+    fn get_status_as_string(&self) -> String {
         match self {
             WorkPayload::Verdict(solver_verdict) => solver_verdict.outcome.get_status_as_string(),
-            WorkPayload::PbGenerationError(_) => "pb file generation error",
+            WorkPayload::PbGenerationError(_) => "pb file generation error".to_string(),
         }
     }
 }
@@ -859,16 +931,22 @@ enum FuzzGenerationErrorKind {
 
 #[derive(Debug, Error)]
 enum WorkErrorKind {
-    #[error("Error in fuzzer: {0}")]
-    Fuzzer(#[from] PbGenerationError),
-    #[error("IO failed: {0}")]
-    Io(#[from] std::io::Error),
     #[error("Solver failed: {0}")]
     Solver(#[from] SolverExecutionFailed),
     #[error("Parser failed: {0}")]
     Parser(#[from] OutputParsingError),
-    #[error("Validation failed: {0}")]
-    Validation(#[from] ValidationError),
+    #[error("Bug found: {0}")]
+    Bug(#[from] BugReason),
+}
+
+impl WorkErrorKind {
+    fn classify_error(&self) -> &'static str {
+        match self {
+            WorkErrorKind::Solver(_) => "solver_failed",
+            WorkErrorKind::Parser(_) => "parser_failed",
+            WorkErrorKind::Bug(bug_reason) => bug_reason.classify_bug(),
+        }
+    }
 }
 
 /// Cancel iterations of fuzzing runs

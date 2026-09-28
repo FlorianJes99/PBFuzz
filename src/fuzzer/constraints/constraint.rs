@@ -46,6 +46,7 @@ pub trait Constraint: Display + Send {
                 evaluated: eval,
                 expected: self.degree(),
                 comp: *self.comparison(),
+                constr_str: self.to_string(),
             })
         }
     }
@@ -67,6 +68,7 @@ pub trait Constraint: Display + Send {
                 evaluated: lhs,
                 expected: self.degree(),
                 comp: *self.comparison(),
+                constr_str: self.to_string(),
             })
         }
     }

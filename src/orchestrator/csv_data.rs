@@ -61,9 +61,13 @@ impl CsvRecordsSingleIteration {
 pub struct SolverRecord {
     pub solver_name: String,
     pub solver_status: &'static str,
+    pub found_optimum: Option<i32>,
+    pub model_verified: Option<bool>,
+    pub proof_verified: Option<bool>,
+    pub term_signal: Option<i32>,
     pub solver_conflicts: Option<u32>,
-    pub problem_solving_duration_ms: f32,
-    pub problem_parsing_duration_ms: f32,
+    pub problem_solving_duration_ms: Option<f32>,
+    pub problem_parsing_duration_ms: Option<f32>,
     pub proof_verification_time_ms: Option<f32>,
 }
 
@@ -73,10 +77,34 @@ impl SolverRecord {
             iteration,
             solver_name: self.solver_name.clone(),
             solver_status: self.solver_status,
+            found_optimum: self.found_optimum,
+            model_verified: self.model_verified,
+            proof_verified: self.proof_verified,
+            term_signal: self.term_signal,
             solver_conflicts: self.solver_conflicts,
             problem_solving_duration_ms: self.problem_solving_duration_ms,
             problem_parsing_duration_ms: self.problem_parsing_duration_ms,
             proof_verification_time_ms: self.proof_verification_time_ms,
+        }
+    }
+
+    pub fn create_not_parseable_run(
+        solver_name: String,
+        solver_status: &'static str,
+        term_signal: Option<i32>,
+        problem_solving_duration_ms: Option<f32>,
+    ) -> Self {
+        Self {
+            solver_name,
+            solver_status,
+            term_signal,
+            problem_solving_duration_ms,
+            found_optimum: None,
+            model_verified: None,
+            proof_verified: None,
+            problem_parsing_duration_ms: None,
+            solver_conflicts: None,
+            proof_verification_time_ms: None,
         }
     }
 }
@@ -84,8 +112,10 @@ impl SolverRecord {
 pub struct WorkRecord {
     pub seed: u64,
     pub generation_method: String,
+    pub with_option_fuzzing: bool,
+    pub had_errors: bool,
     pub problem_generation_ms: f32,
-    pub result: &'static str,
+    pub result: String,
 }
 
 impl WorkRecord {
@@ -93,12 +123,16 @@ impl WorkRecord {
         seed: u64,
         generation_method: String,
         problem_generation_ms: f32,
-        result: &'static str,
+        with_option_fuzzing: bool,
+        had_errors: bool,
+        result: String,
     ) -> Self {
         Self {
             seed,
             generation_method,
             problem_generation_ms,
+            with_option_fuzzing,
+            had_errors,
             result,
         }
     }
@@ -113,29 +147,37 @@ impl WorkRecord {
             seed: self.seed,
             generation_method: self.generation_method.clone(),
             problem_generation_ms: self.problem_generation_ms,
+            with_option_fuzzing: self.with_option_fuzzing,
+            had_errors: self.had_errors,
             duration_iteration_ms,
-            result: self.result,
+            result: self.result.clone(),
         }
     }
 }
 
 #[derive(Serialize)]
 pub struct IterationWorkRecord {
-    pub iteration: u32,
-    pub seed: u64,
-    pub generation_method: String,
-    pub problem_generation_ms: f32,
-    pub duration_iteration_ms: f32,
-    pub result: &'static str,
+    iteration: u32,
+    seed: u64,
+    generation_method: String,
+    with_option_fuzzing: bool,
+    had_errors: bool,
+    problem_generation_ms: f32,
+    duration_iteration_ms: f32,
+    result: String,
 }
 
 #[derive(Serialize)]
 pub struct IterationSolverRecord {
-    pub iteration: u32,
-    pub solver_name: String,
-    pub solver_status: &'static str,
-    pub solver_conflicts: Option<u32>,
-    pub problem_solving_duration_ms: f32,
-    pub problem_parsing_duration_ms: f32,
-    pub proof_verification_time_ms: Option<f32>,
+    iteration: u32,
+    solver_name: String,
+    solver_status: &'static str,
+    found_optimum: Option<i32>,
+    model_verified: Option<bool>,
+    proof_verified: Option<bool>,
+    term_signal: Option<i32>,
+    solver_conflicts: Option<u32>,
+    problem_solving_duration_ms: Option<f32>,
+    problem_parsing_duration_ms: Option<f32>,
+    proof_verification_time_ms: Option<f32>,
 }

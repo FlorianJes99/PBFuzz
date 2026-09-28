@@ -198,6 +198,17 @@ impl ParsedStatus {
         }
     }
 
+    pub fn get_min_objective(&self) -> Option<&MinObjectiveValue> {
+        match &self {
+            ParsedStatus::Optimum {
+                conflicts: _,
+                solution: _,
+                minimum,
+            } => Some(minimum),
+            _ => None,
+        }
+    }
+
     pub fn get_status_str(&self) -> &'static str {
         match self {
             ParsedStatus::Sat { .. } => "sat",
@@ -210,6 +221,13 @@ impl ParsedStatus {
 
     pub fn did_not_timeout(&self) -> bool {
         !matches!(self, ParsedStatus::TimeLimit)
+    }
+
+    pub fn has_model(&self) -> bool {
+        matches!(
+            self,
+            ParsedStatus::Sat { .. } | ParsedStatus::Optimum { .. },
+        )
     }
 }
 

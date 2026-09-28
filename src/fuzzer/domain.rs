@@ -20,6 +20,12 @@ pub struct LiteralIdent(u32);
 #[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Copy)]
 pub struct MinObjectiveValue(i32);
 
+impl MinObjectiveValue {
+    pub fn get_value(&self) -> &i32 {
+        &self.0
+    }
+}
+
 impl Display for MinObjectiveValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)

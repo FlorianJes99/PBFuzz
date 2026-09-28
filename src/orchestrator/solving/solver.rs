@@ -2,6 +2,7 @@ use std::{
     fmt::Display,
     io,
     ops::Not,
+    os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::mpsc,
@@ -114,9 +115,10 @@ impl SolverData {
         });
 
         let name = self.name.clone();
-        let (state, stderr) = match rx.recv_timeout(timeout) {
+        let (state, stderr, signal) = match rx.recv_timeout(timeout) {
             Ok((stdout, stderr)) => {
                 let status = child.wait()?;
+                let signal = status.signal();
                 (
                     SolverState::Terminated(Output {
                         status,
@@ -124,13 +126,14 @@ impl SolverData {
                         stderr: vec![],
                     }),
                     stderr,
+                    signal,
                 )
             }
             Err(e) => {
                 warn!("Terminating solver {}... - {}", self.get_name(), e);
                 child.kill()?;
                 let _ = child.wait(); // reap
-                (SolverState::Timeout, vec![])
+                (SolverState::Timeout, vec![], None)
             }
         };
         let record = SolverExecutionRecord {
@@ -138,6 +141,7 @@ impl SolverData {
             binary: cmd.get_program().display().to_string(),
             used_args: cmd.get_args().map(|a| a.display().to_string()).collect(),
             execution_time: start.elapsed(),
+            signal,
             stderr,
         };
         Ok(SolverRun { record, state })
@@ -199,6 +203,7 @@ pub struct SolverExecutionRecord {
     pub binary: String,
     pub used_args: Vec<String>,
     pub execution_time: Duration,
+    pub signal: Option<i32>,
     pub stderr: Vec<u8>,
 }
 
@@ -209,6 +214,7 @@ impl Display for SolverExecutionRecord {
             binary,
             used_args,
             execution_time,
+            signal,
             stderr,
         } = &self;
         writeln!(f, "Solver {}: {}", name, binary)?;
@@ -219,6 +225,9 @@ impl Display for SolverExecutionRecord {
             execution_time.as_secs(),
             execution_time.as_millis()
         )?;
+        if let Some(s) = signal {
+            writeln!(f, "Termination signal: {}", s)?;
+        }
         if !stderr.is_empty() {
             write!(f, "\nStderr:")?;
             for line in String::from_utf8_lossy(stderr).lines() {

@@ -3,11 +3,14 @@ use thiserror::Error;
 use crate::fuzzer::{constraints::constraint::ConstraintKind, domain::Comparison};
 
 #[derive(Debug, Error)]
-#[error("Constraint violated: evaluated {evaluated}, expected {comp} {expected}")]
+#[error(
+    "Constraint violated: evaluated {evaluated}, expected {comp} {expected}\nConstraint: {constr_str}"
+)]
 pub struct ConstraintViolation {
     pub evaluated: i64,
     pub expected: i64,
     pub comp: Comparison,
+    pub constr_str: String,
 }
 
 #[derive(Debug, Error)]

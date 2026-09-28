@@ -74,6 +74,12 @@ pub struct OrchestratorArgs {
     /// Default: One - Only the first proof supporting solver is used for proof generation (ground truth)
     #[arg(long, default_value_t, value_enum)]
     pub(crate) proofs: ProofMode,
+
+    /// Specify if and with what frequency option fuzzing is done.
+    ///
+    /// Possible values range from 0 to 1 inclusive.
+    #[arg(long, default_value_t = 0.1)]
+    pub(crate) option_fuzzing_perc: f64,
 }
 
 /// Different Modes for generation and validation of proofs
