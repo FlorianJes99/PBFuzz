@@ -158,15 +158,15 @@ impl Display for Literal {
     }
 }
 
-/// Wrapper type to represent the minimizing function
+/// Wrapper type to represent the minimizing objective
 ///
 /// This is just a vector of literals with distinct ids.
 /// It is used when creating Pseudo-Boolean Optimization problems.
-pub struct MinFunction(Vec<Literal>);
+pub struct Objective(Vec<Literal>);
 
-impl MinFunction {
+impl Objective {
     pub fn new(literals: Vec<Literal>) -> Self {
-        MinFunction(literals)
+        Objective(literals)
     }
 
     pub fn get_literals(&self) -> &[Literal] {
@@ -174,7 +174,7 @@ impl MinFunction {
     }
 }
 
-impl Display for MinFunction {
+impl Display for Objective {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("min: ")?;
         for (i, literal) in self.0.iter().enumerate() {
@@ -233,7 +233,7 @@ mod test {
 
     #[test]
     fn display_min_function() {
-        let min_function = MinFunction::new(vec![
+        let min_function = Objective::new(vec![
             Literal::new(1, 3),
             Literal::new(2, 8),
             Literal::new(5, -3),
