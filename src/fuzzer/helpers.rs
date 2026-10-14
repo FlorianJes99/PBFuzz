@@ -139,8 +139,8 @@ pub fn move_files(files: &[MoveFile]) -> io::Result<()> {
 /// Helper function to check two floats on equality
 ///
 /// ```rust
-/// # use fuzzer_pseudo_bool::fuzzer::helpers::float_equals;
-/// assert!(float_equals(3.333332, 3.333335, 0.0001))
+/// # use fuzzer_pseudo_bool::fuzzer::helpers::f32_equals;
+/// assert!(f32_equals(3.333332, 3.333335, 0.0001))
 /// ````
 pub fn f32_equals(a: f32, b: f32, epsilon: f32) -> bool {
     assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
@@ -150,8 +150,8 @@ pub fn f32_equals(a: f32, b: f32, epsilon: f32) -> bool {
 /// Helper function to check two floats on equality
 ///
 /// ```rust
-/// # use fuzzer_pseudo_bool::fuzzer::helpers::float_equals;
-/// assert!(float_equals(3.333332, 3.333335, 0.0001))
+/// # use fuzzer_pseudo_bool::fuzzer::helpers::f64_equals;
+/// assert!(f64_equals(3.333332, 3.333335, 0.0001))
 /// ````
 pub fn f64_equals(a: f64, b: f64, epsilon: f64) -> bool {
     assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
