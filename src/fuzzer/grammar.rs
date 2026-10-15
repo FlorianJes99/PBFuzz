@@ -196,14 +196,22 @@ impl PBGrammar {
         &self,
         true_vars: &HashSet<LiteralIdent>,
         objective: MinObjectiveValue,
-    ) -> Result<(), MinObjectiveInvalid> {
+    ) -> Result<(), MinimumValidation> {
         if let GenerationSource::FromSolution {
             model: _,
             objective: objective_from_solution,
         } = &self.generation_source
-            && let Some(obj) = objective_from_solution
+            && let Some(planted_minimum) = objective_from_solution
         {
-            info!("Generated objective value from solution: {obj}; found minimum:  {objective}")
+            info!(
+                "Generated objective value from planted solution: {planted_minimum}; minimum claimed by solver:  {objective}"
+            );
+            if *planted_minimum < objective {
+                return Err(MinimumValidation::WorseObjective {
+                    planted_objective: *planted_minimum,
+                    found_objective: objective,
+                });
+            }
         }
         match self.objective.as_ref() {
             Some(mf) => {
@@ -220,7 +228,8 @@ impl PBGrammar {
                     Err(MinObjectiveInvalid {
                         evaluated: eval_min,
                         expected: objective,
-                    })
+                    }
+                    .into())
                 }
             }
             None => {
@@ -228,6 +237,19 @@ impl PBGrammar {
             }
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum MinimumValidation {
+    #[error(transparent)]
+    ObjectiveInvalid(#[from] MinObjectiveInvalid),
+    #[error(
+        "The claimed minimum objective is worse than the minimum objective from the planted solution: claimed {found_objective}, planted {planted_objective}"
+    )]
+    WorseObjective {
+        planted_objective: MinObjectiveValue,
+        found_objective: MinObjectiveValue,
+    },
 }
 
 #[derive(Debug, Error)]

@@ -1,5 +1,8 @@
 use crate::{
-    fuzzer::{constraints::errors::ConstraintViolation, grammar::PBGrammar},
+    fuzzer::{
+        constraints::errors::ConstraintViolation,
+        grammar::{MinimumValidation, PBGrammar},
+    },
     orchestrator::parsing::parser::ParsedStatus,
 };
 
@@ -7,8 +10,7 @@ use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
-    fuzzer::{domain::MinObjectiveValue, grammar::MinObjectiveInvalid},
-    orchestrator::evaluation::proof_checking::ProofError,
+    fuzzer::domain::MinObjectiveValue, orchestrator::evaluation::proof_checking::ProofError,
 };
 
 pub fn wrap_objective(min_objective: MinObjectiveValue, solver_name: String) -> ObjectiveInfo {
@@ -23,7 +25,7 @@ pub enum ValidationError {
     #[error(transparent)]
     Constraint(#[from] ConstraintViolation),
     #[error(transparent)]
-    Objective(#[from] MinObjectiveInvalid),
+    Objective(#[from] MinimumValidation),
 }
 
 impl ValidationError {
