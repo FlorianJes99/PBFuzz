@@ -151,6 +151,7 @@ pub fn run_orchestrator(
     };
     Orchestrator {
         fuzzer_output_dir: run_root,
+        args,
         config,
         orchestrator_start: Instant::now(),
         solvers,
@@ -184,6 +185,7 @@ struct HarnessConfig {
 
 struct Orchestrator {
     fuzzer_output_dir: PathBuf,
+    args: OrchestratorArgs,
     config: PbConfigFile,
     harness_config: HarnessConfig,
     orchestrator_start: Instant,
@@ -320,6 +322,21 @@ impl Orchestrator {
             if let Err(e) = summary.save_to_file(&summary_file) {
                 error!("{e}");
             }
+
+            let used_args_file = self
+                .fuzzer_output_dir
+                .join(DATA_FOLDER.name)
+                .join("used_args.toml");
+            match toml::ser::to_string_pretty(&self.args) {
+                Ok(data) => {
+                    if let Err(e) =
+                        File::create(used_args_file).and_then(|mut f| f.write_all(data.as_bytes()))
+                    {
+                        error!("{e}")
+                    }
+                }
+                Err(e) => error!("{e}"),
+            }
         });
         Ok(())
     }
@@ -353,9 +370,9 @@ impl Orchestrator {
                     .iter()
                     .filter_map(|r| r.problem_solving_duration_ms)
                     .fold(f32::NEG_INFINITY, f32::max);
-                if (max - min).abs() >= 2000.0 {
+                if max * 0.01 > min {
                     warn!(
-                        "Solving time diverged more than 2 seconds!: {}ms - {}ms",
+                        "Large solving time discrepancy!: fastest {}ms, slowest {}ms",
                         min, max
                     );
                     large_solving_difference = true;
