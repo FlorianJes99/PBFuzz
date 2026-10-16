@@ -9,7 +9,7 @@ use crate::orchestrator::csv_data::{
 use crate::orchestrator::evaluation::common::{BugReason, StatusFlat, verify_solution};
 use crate::orchestrator::evaluation::comparison::compare_status;
 use crate::orchestrator::evaluation::proof_checking::check_proof;
-use crate::orchestrator::issue_report::case_writer::{CaseWriter, IssueReport};
+use crate::orchestrator::issue_report::case_writer::{Artifact, CaseWriter, IssueReport};
 use crate::orchestrator::issue_report::issue_record::{IssueRecord, SolverInfo};
 use crate::orchestrator::orchestrator_args::ProofMode;
 use crate::orchestrator::parsing::parser::{
@@ -18,7 +18,9 @@ use crate::orchestrator::parsing::parser::{
 use crate::orchestrator::run_statistics::{
     RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats,
 };
-use crate::orchestrator::solving::solver::{SolverExecutionFailed, SolverExecutionRecord};
+use crate::orchestrator::solving::solver::{
+    SolverExecutionFailed, SolverExecutionRecord, SolverOutput, SolverRun,
+};
 use crate::orchestrator::solving::solver_config::SolverConfig;
 use crate::{
     fuzzer::helpers::get_hms_parts,
@@ -29,6 +31,7 @@ use crate::{
         solving::solver::SolverData,
     },
 };
+use std::borrow::Cow;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
@@ -536,13 +539,18 @@ fn work_iteration(
     let mut valid_runs = Vec::with_capacity(sps.len());
     let mut errors = vec![];
     let mut proof_files = vec![];
+    let mut solver_outputs = vec![];
     for sp in sps {
         let SolverAndParser {
             solver: s,
             parser: p,
         } = sp;
         let proof_file = fuzzer_output_dir.join(format!("{}_{file_name}.pbp", s.get_name()));
-        let output_solver = match s.run(&output_file, &proof_file, with_option_fuzzing) {
+        let SolverRun {
+            record,
+            solver_output,
+            state,
+        } = match s.run(&output_file, &proof_file, with_option_fuzzing) {
             Ok(o) => o,
             Err(e) => {
                 let work_error = WorkError {
@@ -561,12 +569,13 @@ fn work_iteration(
             }
         };
         proof_files.push(proof_file.clone());
-        let time_bin = output_solver.record.execution_time;
+        let time_bin = record.execution_time;
         let start_time_parsing = Instant::now();
-        let execution_record = output_solver.record.clone();
-        let r = match p.parse(output_solver, pb_kind) {
+        let execution_record = record.clone();
+        let r = match p.parse(state, record, &solver_output.stdout, pb_kind) {
             Ok(r) => r,
             Err(e) => {
+                solver_outputs.push((s.get_name().to_string(), solver_output));
                 let run_record = SolverRunRecord {
                     execution: execution_record.clone(),
                     parsed_status: None,
@@ -586,6 +595,7 @@ fn work_iteration(
                 continue;
             }
         };
+        solver_outputs.push((s.get_name().to_string(), solver_output));
         let time_parsing = start_time_parsing.elapsed();
         let conflicts = r.parsed_status.get_conflicts();
         let solver_name = r.record.name.clone();
@@ -658,6 +668,7 @@ fn work_iteration(
         errors,
         successfull_runs: valid_runs,
         status,
+        solver_outputs,
     };
     let work_record = WorkRecord::new(
         seed,
@@ -739,6 +750,7 @@ struct IterationResult {
     successfull_runs: Vec<ParserRun>,
     errors: Vec<(Option<String>, WorkError)>,
     status: Option<StatusFlat>,
+    solver_outputs: Vec<(String, SolverOutput)>,
 }
 
 impl IterationResult {
@@ -839,6 +851,7 @@ impl IssueReport for WorkResult {
                     errors,
                     successfull_runs,
                     status,
+                    solver_outputs: _,
                 } = &solver_verdict.outcome;
                 writeln!(w, "{:=^50}", "Errors")?;
                 for (solver_name, e) in errors {
@@ -884,6 +897,21 @@ impl IssueReport for WorkResult {
             WorkPayload::PbGenerationError(error) => {
                 writeln!(w, "Error: {}", error.kind)
             }
+        }
+    }
+
+    fn artifacts(&self) -> Vec<Artifact<'_>> {
+        match &self.payload {
+            WorkPayload::Verdict(solver_verdict) => solver_verdict
+                .outcome
+                .solver_outputs
+                .iter()
+                .map(|(name, out)| Artifact {
+                    file_name: format!("output_{}.txt", name),
+                    contents: Cow::Owned(out.to_combined()),
+                })
+                .collect(),
+            WorkPayload::PbGenerationError(_) => vec![],
         }
     }
 }

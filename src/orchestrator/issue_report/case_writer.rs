@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::{
@@ -10,8 +11,27 @@ use log::error;
 
 use crate::orchestrator::issue_report::issue_record::IssueRecord;
 
+/// Can be used to provide additional data, which should be flushed to a file in the case directory.
+///
+/// filename: the name of the file, should include also the concrete textfile type (Example: test.txt)
+/// contents: raw bytes we want to flush, wrapped by a Clone-on-Write smart pointer
+pub struct Artifact<'a> {
+    /// filename: the name of the file, should include also the concrete textfile type (Example: test.txt)
+    pub file_name: String,
+    /// contents: raw bytes we want to flush, wrapped by a Clone-on-Write smart pointer
+    pub contents: Cow<'a, [u8]>,
+}
+
+/// Trait for handling file creation for an issue report.
 pub trait IssueReport {
+    /// Function to write a report into the provided writer.
+    ///
+    /// Implementations should provide, what data to write into the report.
+    /// writer: The content is written into it.
     fn create_report<W: Write>(&self, writer: &mut W) -> io::Result<()>;
+
+    // Provide additional artifacts in the form of files, which also should be written into an issue report.
+    fn artifacts(&self) -> Vec<Artifact<'_>>;
 }
 
 pub struct CaseWriter {
@@ -59,6 +79,12 @@ impl CaseWriter {
                 issue_record.iteration
             )
         }
+
+        for artifact in &report_writer.artifacts() {
+            if let Err(e) = self.write_artifact(&case_folder, artifact) {
+                error!("{e}");
+            }
+        }
         self.append_case(issue_record)
     }
 
@@ -69,6 +95,16 @@ impl CaseWriter {
     fn write_report(&self, report_file: &Path, report_writer: &impl IssueReport) -> io::Result<()> {
         let mut w = File::create(report_file).map(BufWriter::new)?;
         report_writer.create_report(&mut w)
+    }
+
+    fn write_artifact(&self, case_folder: &Path, artifact: &Artifact<'_>) -> io::Result<()> {
+        let file_name = Path::new(&artifact.file_name).file_name().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid name specified for report artifact",
+            )
+        })?;
+        fs::write(case_folder.join(file_name), artifact.contents.as_ref())
     }
 
     fn move_files(&self, case_folder: &Path, files_to_move: &[&Path]) -> io::Result<()> {
