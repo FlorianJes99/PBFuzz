@@ -4,8 +4,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
-        .map(|o| o.stdout)
-        .unwrap_or("unknown".into());
+        .map(|o| o.stdout)?;
     let git_hash = String::from_utf8(output)?;
     println!("cargo:rustc-env=GIT_HASH={}", git_hash);
 

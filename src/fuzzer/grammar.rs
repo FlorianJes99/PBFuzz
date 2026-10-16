@@ -122,7 +122,9 @@ impl PBGrammar {
             commit_hash,
         } = program_info;
         writeln!(writer, "* Program version: {program_version}")?;
-        writeln!(writer, "* Commit Hash: {commit_hash}")?;
+        if let Some(c) = commit_hash {
+            writeln!(writer, "* Commit Hash: {c}")?;
+        }
         writeln!(writer, "* Used seed: {}", seed)?;
         match generation_source {
             GenerationSource::Random {
@@ -359,7 +361,7 @@ mod test {
             .collect();
         let program_info = MetaData {
             program_version: "1.0.0".into(),
-            commit_hash: "unknown".into(),
+            commit_hash: Some("unknown".into()),
         };
         let grammar = PBGrammar::new(
             program_info,

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub const OFFSET: usize = 50;
 
 /// Wrap a printable Item in a block of equal-signs and a header
-pub fn print_block<T: Display>(heading: &str, item: T) {
+pub fn print_block(heading: &str, item: impl Display) {
     let amount_signs = 40;
     println!();
     println!("{:=^amount_signs$}", heading);

@@ -1,5 +1,5 @@
 use crate::fuzzer::helpers::OFFSET;
-use std::{fmt::Display, time::Duration};
+use std::{collections::HashMap, fmt::Display, time::Duration};
 
 use serde::Serialize;
 
@@ -16,6 +16,20 @@ pub struct RunStatistics {
     errors: u32,
     timeouts: u32,
     large_solving_difference: u32,
+    stats_per_solver: HashMap<String, SolverStats>,
+}
+
+#[derive(Serialize, Default)]
+pub struct SolverStats {
+    pub expected: u32,
+    pub timeouts: u32,
+    pub failures: u32,
+}
+
+pub enum SolverStateAfterIteration {
+    Failure,
+    Timeout,
+    Expected,
 }
 
 pub enum SingleRunStats {
@@ -38,6 +52,7 @@ pub struct SingleRunRecord {
     conflicts: Vec<u32>,
     iteration_duration: Duration,
     large_solving_time_difference: bool,
+    solver_states: Vec<(String, SolverStateAfterIteration)>,
 }
 
 impl SingleRunRecord {
@@ -46,12 +61,14 @@ impl SingleRunRecord {
         conflicts: Vec<u32>,
         iteration_duration: Duration,
         large_solving_time_difference: bool,
+        solver_states: Vec<(String, SolverStateAfterIteration)>,
     ) -> Self {
         Self {
             result,
             conflicts,
             iteration_duration,
             large_solving_time_difference,
+            solver_states,
         }
     }
 }
@@ -68,6 +85,7 @@ impl RunStatistics {
             errors: 0,
             timeouts: 0,
             large_solving_difference: 0,
+            stats_per_solver: HashMap::new(),
         }
     }
 
@@ -79,6 +97,7 @@ impl RunStatistics {
                     conflicts,
                     iteration_duration,
                     large_solving_time_difference,
+                    solver_states,
                 } = record;
                 match result {
                     SimpleResult::Sat => self.amount_sat += 1,
@@ -98,10 +117,22 @@ impl RunStatistics {
                 if large_solving_time_difference {
                     self.large_solving_difference += 1;
                 }
+                for (name, state) in solver_states {
+                    let solver_stat = self.stats_per_solver.entry(name).or_default();
+                    match state {
+                        SolverStateAfterIteration::Failure => solver_stat.failures += 1,
+                        SolverStateAfterIteration::Timeout => solver_stat.timeouts += 1,
+                        SolverStateAfterIteration::Expected => solver_stat.expected += 1,
+                    }
+                }
             }
             SingleRunStats::Error => self.errors += 1,
         };
         self.amount_runs += 1;
+    }
+
+    pub fn get_solver_stats(&self) -> impl Iterator<Item = (&String, &SolverStats)> {
+        self.stats_per_solver.iter()
     }
 
     fn percentage_sat(&self) -> f32 {
@@ -125,6 +156,7 @@ impl Display for RunStatistics {
             errors,
             timeouts,
             large_solving_difference,
+            stats_per_solver,
         } = &self;
         writeln!(
             f,
@@ -166,6 +198,14 @@ impl Display for RunStatistics {
             "Average Time per Instance",
             average_iteration_duration.get_average().as_secs_f32() * 1_000.0,
         )?;
+        writeln!(f, "Stats for each solver:")?;
+        for (name, stats) in stats_per_solver {
+            writeln!(
+                f,
+                "{:<OFFSET$}: {} failures, {} timeouts",
+                name, stats.failures, stats.timeouts
+            )?;
+        }
         write!(
             f,
             "{:<OFFSET$}: {}",

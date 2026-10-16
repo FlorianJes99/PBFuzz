@@ -14,9 +14,11 @@ use log::info;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let program_version = env!("CARGO_PKG_VERSION");
-    let git_hash = env!("GIT_HASH");
+    let git_hash = option_env!("GIT_HASH");
     println!("Program version: {program_version}");
-    println!("Program commit: {git_hash}");
+    if let Some(hash) = git_hash {
+        println!("Program commit: {hash}");
+    }
 
     // initialize the logger
     init_logger()?;
@@ -25,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let meta_data = MetaData {
         program_version: program_version.into(),
-        commit_hash: git_hash.into(),
+        commit_hash: git_hash.map(Into::into),
     };
     let config = PbConfigFile::load_from_file(&args.settings_file)?;
     if config.generation_method.is_none() {

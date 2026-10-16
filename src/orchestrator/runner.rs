@@ -1,11 +1,11 @@
 use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::grammar::PBGrammar;
-use crate::fuzzer::helpers::OFFSET;
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{
     CsvRecordsSingleIteration, OrchestratorCsvWriters, WorkRecord,
 };
+use crate::orchestrator::dashboard::{Dashboard, IterationInfo};
 use crate::orchestrator::evaluation::common::{BugReason, StatusFlat, verify_solution};
 use crate::orchestrator::evaluation::comparison::compare_status;
 use crate::orchestrator::evaluation::proof_checking::check_proof;
@@ -16,26 +16,24 @@ use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
 use crate::orchestrator::run_statistics::{
-    RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats,
+    RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats, SolverStateAfterIteration,
 };
 use crate::orchestrator::solving::solver::{
     SolverExecutionFailed, SolverExecutionRecord, SolverOutput, SolverRun,
 };
 use crate::orchestrator::solving::solver_config::SolverConfig;
-use crate::{
-    fuzzer::helpers::get_hms_parts,
-    orchestrator::{
-        csv_data::SolverRecord,
-        folders::{DATA_FOLDER, prepare_sub_folders},
-        orchestrator_args::OrchestratorArgs,
-        solving::solver::SolverData,
-    },
+use crate::orchestrator::{
+    csv_data::SolverRecord,
+    folders::{DATA_FOLDER, prepare_sub_folders},
+    orchestrator_args::OrchestratorArgs,
+    solving::solver::SolverData,
 };
 use std::borrow::Cow;
-use std::io;
+use std::io::{self};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::{
     error::Error,
     fmt::Display,
@@ -47,13 +45,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use indicatif::MultiProgress;
 use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rand::{self, RngExt};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::fuzzer::{helpers::print_block, pb_generator::PBGenerator};
+use crate::fuzzer::pb_generator::PBGenerator;
 
 /// Entry point for the orchestrator to run fuzzer and external programs until a stop condition is
 /// met.
@@ -88,6 +87,7 @@ pub fn run_orchestrator(
     meta_data: MetaData,
     args: OrchestratorArgs,
     run_root: PathBuf,
+    mp: MultiProgress,
 ) -> Result<(), Box<dyn Error>> {
     let thread_count = args.thread_count.unwrap_or(1);
     info!(
@@ -135,7 +135,6 @@ pub fn run_orchestrator(
     )?;
     info!("Workspace set to: {}", run_root.display());
     prepare_sub_folders(&run_root)?;
-    print_block("Configuration", config);
 
     let index_file = run_root.join(DATA_FOLDER.name).join("cases.jsonl");
     let case_writer = CaseWriter::new(&run_root, index_file);
@@ -152,11 +151,13 @@ pub fn run_orchestrator(
         save_all_files: args.save_all_files,
         option_fuzzing_perc,
     };
+    let solver_names: Vec<_> = solvers.iter().map(|s| s.solver.get_name()).collect();
     Orchestrator {
         fuzzer_output_dir: run_root,
         args,
         config,
         orchestrator_start: Instant::now(),
+        dashboard: Dashboard::new(mp, meta_data, &solver_names),
         solvers,
         thread_count,
         case_writer,
@@ -195,6 +196,7 @@ struct Orchestrator {
     solvers: Vec<SolverAndParser>,
     thread_count: u8,
     case_writer: CaseWriter,
+    dashboard: Dashboard,
 }
 
 #[derive(Serialize)]
@@ -223,90 +225,89 @@ impl Orchestrator {
         let cancelled = Arc::new(AtomicBool::new(false));
         let ctrc_flag = cancelled.clone();
         ctrlc::set_handler(move || {
-            println!("Registered user termination!");
-            println!("Shutting down gracefully...");
             ctrc_flag.store(true, Ordering::Relaxed);
         })?;
         let count_runs = Arc::new(AtomicU32::new(0));
         let (sender, receiver) = channel::<WorkResult>();
         let start = Instant::now();
         thread::scope(|s| {
-            for i in 1..=self.thread_count {
-                let sender = sender.clone();
-                let cancelled = Arc::clone(&cancelled);
-                let count_runs = Arc::clone(&count_runs);
-                let stop_condition = Arc::clone(&stop_condtion);
-                thread::Builder::new()
-                    .name(format!("thread-{i}"))
-                    .spawn_scoped(s, move || {
-                        while !cancelled.load(Ordering::Relaxed) {
-                            let iteration = count_runs.fetch_add(1, Ordering::Relaxed);
-                            if stop_condition.is_done(iteration, start) {
-                                break;
+            let handles: Vec<_> = (1..=self.thread_count)
+                .map(|thread_id| {
+                    let sender = sender.clone();
+                    let cancelled = Arc::clone(&cancelled);
+                    let count_runs = Arc::clone(&count_runs);
+                    let stop_condition = Arc::clone(&stop_condtion);
+                    thread::Builder::new()
+                        .name(format!("thread-{thread_id}"))
+                        .spawn_scoped(s, move || {
+                            while !cancelled.load(Ordering::Relaxed) {
+                                let iteration = count_runs.fetch_add(1, Ordering::Relaxed);
+                                if stop_condition.is_done(iteration, start) {
+                                    break;
+                                }
+                                let result = work_iteration(
+                                    &self.fuzzer_output_dir,
+                                    self.config.generate_settings(),
+                                    self.harness_config.with_comparison,
+                                    self.harness_config.option_fuzzing_perc,
+                                    &self.solvers,
+                                    meta_data,
+                                    thread_id,
+                                );
+                                if let Err(e) = sender.send(result) {
+                                    error!("{e}");
+                                }
                             }
-                            let result = work_iteration(
-                                &self.fuzzer_output_dir,
-                                self.config.generate_settings(),
-                                self.harness_config.with_comparison,
-                                self.harness_config.option_fuzzing_perc,
-                                &self.solvers,
-                                meta_data,
-                                i,
-                            );
-                            if let Err(e) = sender.send(result) {
-                                error!("{e}");
-                            }
-                        }
-                    })
-                    .expect("creating thread should not fail!");
-            }
+                        })
+                        .expect("creating thread should not fail!")
+                })
+                .collect();
             // immediately drop the initial sender reference, only the clones inside the worker threads are kept alive
             drop(sender);
             let (mut random_count, mut from_solution_count) = (0, 0);
             let mut stats = RunStatistics::new();
-            for (iteration, res) in receiver.iter().enumerate() {
-                let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
-                match &res.meta.generation_method {
-                    GenerationMethod::Random => random_count += 1,
-                    GenerationMethod::FromSolution => from_solution_count += 1,
+            let mut processed_results = 0u32;
+            loop {
+                match receiver.recv_timeout(Duration::from_millis(500)) {
+                    Ok(res) => {
+                        match &res.meta.generation_method {
+                            GenerationMethod::Random => random_count += 1,
+                            GenerationMethod::FromSolution => from_solution_count += 1,
+                        }
+                        let iteration = processed_results + 1;
+                        let stats_iteration = self.process_result(res, iteration, &mut csv_writers);
+
+                        stats.update(stats_iteration);
+
+                        processed_results += 1;
+                    }
+                    Err(RecvTimeoutError::Timeout) => {} // nothing to do, just update the dashboard
+                    Err(RecvTimeoutError::Disconnected) => break,
                 }
-                let stats_iteration = self.process_result(res, iteration, &mut csv_writers);
 
-                stats.update(stats_iteration);
-
-                let elapsed_since_start = self.orchestrator_start.elapsed();
-                let (h, m, s) = get_hms_parts(&elapsed_since_start);
-                let throughput = iteration as f64 / elapsed_since_start.as_secs_f64();
-                #[rustfmt::skip]
-                let body = [
-                    format!("Throughput: {:.3} Iterations/s ({} threads)", throughput, self.thread_count),
-                    format!("Time elapsed: {}h {}m {}s", h, m, s),
-                ].join("\n");
-                print_block(&format!("Iteration {iteration}"), body);
+                let solver_stats = stats.get_solver_stats();
+                let iteration_info = IterationInfo {
+                    total: processed_results,
+                    amount_random: random_count,
+                    amount_planted: from_solution_count,
+                };
+                let workers_active = handles.iter().filter(|h| !h.is_finished()).count();
+                let user_interrupted = cancelled.load(Ordering::Relaxed);
+                self.dashboard.update(
+                    &self.orchestrator_start.elapsed(),
+                    &iteration_info,
+                    workers_active as u8,
+                    user_interrupted,
+                    solver_stats,
+                );
             }
+            self.dashboard.finish(&self.orchestrator_start.elapsed());
             let result = &mut csv_writers.flush();
             if let Err(err) = result {
                 error!("Could not flush to file\n Error: {}", err);
             }
 
-            // print out settings
-            print_block("Settings", self.config);
-            // print out stats
-            print_block("Run Statistics", &stats);
-
-            // print out distribution generation mode
-            print_block(
-                "Distribution Generation",
-                format!(
-                    "{:<OFFSET$}: {}\n{:<OFFSET$}: {}",
-                    "FromSolution", from_solution_count, "Random", random_count
-                ),
-            );
-
-            println!();
             let duration_program = self.orchestrator_start.elapsed();
-            let (h, m, s) = get_hms_parts(&duration_program);
-            println!("Duration of run: {h}h, {m}m, {s}s",);
 
             // save important files
             if let Err(e) = self.save_settings() {
@@ -434,11 +435,34 @@ impl Orchestrator {
                     .iter()
                     .filter_map(|r| r.parsed_status.get_conflicts())
                     .collect();
+                let mut solver_states: Vec<(String, SolverStateAfterIteration)> = iteration_result
+                    .successfull_runs
+                    .iter()
+                    .map(|run| {
+                        if run.parsed_status.did_not_timeout() {
+                            (
+                                run.record.name.to_string(),
+                                SolverStateAfterIteration::Expected,
+                            )
+                        } else {
+                            (
+                                run.record.name.to_string(),
+                                SolverStateAfterIteration::Timeout,
+                            )
+                        }
+                    })
+                    .collect();
+                for (name_opt, _) in &iteration_result.errors {
+                    if let Some(name) = name_opt {
+                        solver_states.push((name.clone(), SolverStateAfterIteration::Failure));
+                    }
+                }
                 SingleRunStats::Successfull(SingleRunRecord::new(
                     simple_result,
                     conflicts,
                     duration_iteration_ms,
                     large_solving_difference,
+                    solver_states,
                 ))
             }
             WorkPayload::PbGenerationError(work_error) => {
