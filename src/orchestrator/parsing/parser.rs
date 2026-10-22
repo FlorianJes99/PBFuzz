@@ -231,6 +231,17 @@ impl ParsedStatus {
         !matches!(self, ParsedStatus::TimeLimit)
     }
 
+    pub fn is_sat(&self) -> bool {
+        matches!(
+            self,
+            ParsedStatus::Sat { .. } | ParsedStatus::Optimum { .. }
+        )
+    }
+
+    pub fn is_unsat(&self) -> bool {
+        matches!(self, ParsedStatus::Unsat { .. })
+    }
+
     pub fn has_model(&self) -> bool {
         matches!(
             self,

@@ -6,7 +6,6 @@ use crate::{
     orchestrator::parsing::parser::ParsedStatus,
 };
 
-use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
@@ -82,10 +81,22 @@ impl StatusFlat {
 
 #[derive(Debug, Error)]
 pub enum BugReason {
-    #[error("Different objectives in solver: {}", .0.iter().map(|o| o.to_string()).join(", "))]
-    DifferentObjectives(Vec<ObjectiveInfo>),
-    #[error("Output status differs: {}", .0.join(", "))]
-    OutputStatusDiffers(Vec<String>),
+    #[error(
+        "Different objectives: Claimed {}, but better objective found was: {} ",
+        claimed,
+        better
+    )]
+    DifferentObjectives {
+        claimed: ObjectiveInfo,
+        better: MinObjectiveValue,
+    },
+    #[error("Solver {} claimed UNSAT but SAT solution was found!", unsat_solver)]
+    WrongUnsat { unsat_solver: String },
+    #[error(
+        "Solver {} claimed UNKNOWN but other solvers found a solution",
+        unknown_solver
+    )]
+    UnknownWhileDecidable { unknown_solver: String },
     #[error(transparent)]
     ProofCheckerFailed(#[from] ProofError),
     #[error(transparent)]
@@ -95,8 +106,10 @@ pub enum BugReason {
 impl BugReason {
     pub fn classify_bug(&self) -> &'static str {
         match self {
-            BugReason::DifferentObjectives(_) => "different_objectives",
-            BugReason::OutputStatusDiffers(_) => "different_status",
+            BugReason::DifferentObjectives { .. } => "different_objectives",
+            BugReason::WrongUnsat { .. } | BugReason::UnknownWhileDecidable { .. } => {
+                "different_status"
+            }
             BugReason::ProofCheckerFailed(e) => e.short_str(),
             BugReason::InvalidModel(e) => e.short_str(),
         }

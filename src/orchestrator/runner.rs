@@ -224,8 +224,16 @@ impl Orchestrator {
         let stop_condtion = Arc::new(stop_condition);
         let cancelled = Arc::new(AtomicBool::new(false));
         let ctrc_flag = cancelled.clone();
+        let second_ctrlc_flag = Arc::new(AtomicBool::new(false));
+        let ctrlc_twice = second_ctrlc_flag.clone();
         ctrlc::set_handler(move || {
-            ctrc_flag.store(true, Ordering::Relaxed);
+            if !ctrc_flag.load(Ordering::Relaxed) {
+                info!("Ctrl+c pressed once!");
+                ctrc_flag.store(true, Ordering::Relaxed);
+            } else {
+                info!("Ctrl+c pressed twice!");
+                second_ctrlc_flag.store(true, Ordering::Relaxed);
+            }
         })?;
         let count_runs = Arc::new(AtomicU32::new(0));
         let (sender, receiver) = channel::<WorkResult>();
@@ -268,6 +276,10 @@ impl Orchestrator {
             let mut stats = RunStatistics::new();
             let mut processed_results = 0u32;
             loop {
+                if ctrlc_twice.load(Ordering::Relaxed) {
+                    warn!("Second ctrl+c invocation. Terminating result aggregation early.");
+                    break;
+                }
                 match receiver.recv_timeout(Duration::from_millis(500)) {
                     Ok(res) => {
                         match &res.meta.generation_method {
@@ -455,10 +467,8 @@ impl Orchestrator {
                         }
                     })
                     .collect();
-                for (name_opt, _) in &iteration_result.errors {
-                    if let Some(name) = name_opt {
-                        solver_states.push((name.clone(), SolverStateAfterIteration::Failure));
-                    }
+                for (name, _) in &iteration_result.errors {
+                    solver_states.push((name.clone(), SolverStateAfterIteration::Failure));
                 }
                 SingleRunStats::Successfull(SingleRunRecord::new(
                     simple_result,
@@ -584,7 +594,7 @@ fn work_iteration(
                     solver_run: None,
                     kind: e.into(),
                 };
-                errors.push((Some(s.get_name().to_string()), work_error));
+                errors.push((s.get_name().to_string(), work_error));
                 let comparison_record = SolverRecord::create_not_parseable_run(
                     s.get_name().to_string(),
                     "run_error",
@@ -611,7 +621,7 @@ fn work_iteration(
                     solver_run: Some(run_record),
                     kind: e.into(),
                 };
-                errors.push((Some(s.get_name().to_string()), work_error));
+                errors.push((s.get_name().to_string(), work_error));
                 let comparison_record = SolverRecord::create_not_parseable_run(
                     s.get_name().to_string(),
                     "parse_error",
@@ -653,7 +663,7 @@ fn work_iteration(
                 solver_run: Some(run_record),
                 kind: e.into(),
             };
-            errors.push((Some(r.record.name.to_string()), work_error));
+            errors.push((r.record.name.to_string(), work_error));
         } else {
             valid_runs.push(r);
         }
@@ -677,12 +687,23 @@ fn work_iteration(
         .filter(|r| r.parsed_status.did_not_timeout())
         .collect();
     // compare all solvers if enabled
-    if with_comparison && let Err(b) = compare_status(&runs_without_timeout) {
-        let work_error = WorkError {
-            solver_run: None,
-            kind: b.into(),
-        };
-        errors.push((None, work_error));
+    if with_comparison {
+        let failures = compare_status(&runs_without_timeout);
+        failures
+            .into_iter()
+            .map(|(r, b)| {
+                (
+                    r.record.name.to_string(),
+                    WorkError {
+                        solver_run: Some(SolverRunRecord {
+                            execution: r.record.clone(),
+                            parsed_status: Some(r.parsed_status.clone()),
+                        }),
+                        kind: b.into(),
+                    },
+                )
+            })
+            .for_each(|f| errors.push(f));
     };
     let status = runs_without_timeout
         .first()
@@ -775,7 +796,7 @@ fn validate_parsed_status_of_solver(
 
 struct IterationResult {
     successfull_runs: Vec<ParserRun>,
-    errors: Vec<(Option<String>, WorkError)>,
+    errors: Vec<(String, WorkError)>,
     status: Option<StatusFlat>,
     solver_outputs: Vec<(String, SolverOutput)>,
 }
@@ -882,10 +903,7 @@ impl IssueReport for WorkResult {
                 } = &solver_verdict.outcome;
                 writeln!(w, "{:=^50}", "Errors")?;
                 for (solver_name, e) in errors {
-                    match solver_name {
-                        Some(name) => writeln!(w, "Solver {name}: {}", e.kind)?,
-                        None => writeln!(w, "Other error: {}", e.kind)?,
-                    }
+                    writeln!(w, "Solver {solver_name}: {}", e.kind)?;
                     if let Some(solver_run) = &e.solver_run {
                         let SolverRunRecord {
                             execution,

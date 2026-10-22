@@ -3,31 +3,57 @@ use crate::orchestrator::{
     parsing::parser::{ParsedStatus, ParserRun},
 };
 
-pub fn compare_status(runs: &[&ParserRun]) -> Result<(), BugReason> {
+pub fn compare_status<'a>(runs: &[&'a ParserRun]) -> Vec<(&'a ParserRun, BugReason)> {
     if runs.len() <= 1 {
         // We need at least two finished solvers in order to compare them
-        return Ok(());
+        return vec![];
     }
-    let status = &runs[0].parsed_status;
-    let status_as_str = status.get_status_str();
-    let stati: Vec<_> = runs
+    let mut comparison_failures = vec![];
+
+    let any_sat = runs.iter().any(|r| r.parsed_status.is_sat());
+    let any_unsat = runs.iter().any(|r| r.parsed_status.is_unsat());
+    let any_decided = any_sat || any_unsat;
+    let best_objective = runs
         .iter()
-        .map(|r| r.parsed_status.get_status_str().to_string())
-        .collect();
-    if stati.iter().any(|s| s != status_as_str) {
-        return Err(BugReason::OutputStatusDiffers(stati));
-    };
-    let objs: Vec<_> = runs
-        .iter()
-        .filter_map(|r| extract_objective(&r.parsed_status, r.record.name.to_string()))
-        .collect();
-    if !objs.is_empty() {
-        let obj = objs[0].get_obj();
-        if !objs.iter().all(|o| o.get_obj() == obj) {
-            return Err(BugReason::DifferentObjectives(objs));
+        .filter_map(|r| {
+            extract_objective(&r.parsed_status, r.record.name.to_string()).map(|o| o.get_obj())
+        })
+        .min();
+    for run in runs {
+        // compare status
+        match run.parsed_status {
+            ParsedStatus::Unsat { .. } if any_sat => {
+                comparison_failures.push((
+                    *run,
+                    BugReason::WrongUnsat {
+                        unsat_solver: run.record.name.to_string(),
+                    },
+                ));
+            }
+            ParsedStatus::Unknown { .. } if any_decided => comparison_failures.push((
+                *run,
+                BugReason::UnknownWhileDecidable {
+                    unknown_solver: run.record.name.to_string(),
+                },
+            )),
+            _ => {}
+        }
+
+        // compare objectives
+        if let Some(best_obj) = best_objective
+            && let Some(r_obj) = extract_objective(&run.parsed_status, run.record.name.to_string())
+            && r_obj.get_obj() > best_obj
+        {
+            comparison_failures.push((
+                *run,
+                BugReason::DifferentObjectives {
+                    claimed: r_obj,
+                    better: best_obj,
+                },
+            ));
         }
     }
-    Ok(())
+    comparison_failures
 }
 
 fn extract_objective(status: &ParsedStatus, solver_name: String) -> Option<ObjectiveInfo> {
