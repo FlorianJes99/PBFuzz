@@ -120,7 +120,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && echo ${SAT4J_VERSION} > /out/sat4j.version
 
 ########################################
-# Fuzzing harness
+# Fuzzing orchestrator
 ########################################
 FROM rust:1-${DEBIAN_VERSION} AS build-fuzzer
 WORKDIR /fuzz_pb
