@@ -75,7 +75,11 @@ impl ParserImpl {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
-                StatusKind::Optimum | StatusKind::Sat => result
+                StatusKind::Sat => Ok(ParsedStatus::Sat {
+                    conflicts: result.conflicts,
+                    solution: result.solution.into(),
+                }),
+                StatusKind::Optimum => result
                     .objective
                     .ok_or(OutputParsingError::ObjectiveMissing)
                     .map(|obj| ParsedStatus::Optimum {

@@ -8,10 +8,10 @@ use crate::fuzzer::helpers::{RunningAverage, RunningAverageDuration};
 #[derive(Serialize)]
 pub struct RunStatistics {
     amount_runs: u32,
-    amount_sat: u32,
-    amount_unsat: u32,
+    pub amount_sat: u32,
+    pub amount_unsat: u32,
     amount_unknown: u32,
-    average_conflicts: RunningAverage,
+    pub average_conflicts: RunningAverage,
     average_iteration_duration: RunningAverageDuration,
     errors: u32,
     timeouts: u32,

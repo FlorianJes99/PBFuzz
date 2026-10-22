@@ -290,6 +290,9 @@ impl Orchestrator {
                     total: processed_results,
                     amount_random: random_count,
                     amount_planted: from_solution_count,
+                    amount_sat: stats.amount_sat,
+                    amount_unsat: stats.amount_unsat,
+                    average_conflicts: stats.average_conflicts.get_average(),
                 };
                 let workers_active = handles.iter().filter(|h| !h.is_finished()).count();
                 let user_interrupted = cancelled.load(Ordering::Relaxed);
@@ -798,7 +801,7 @@ impl IterationResult {
                 .map(|(_, e)| &e.kind)
                 .map(|kind| kind.classify_error())
                 .sorted()
-                .join(", ")
+                .join("|")
         }
     }
 
