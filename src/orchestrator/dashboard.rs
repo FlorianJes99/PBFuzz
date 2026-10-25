@@ -131,10 +131,12 @@ impl Dashboard {
                 timeouts,
                 failures,
             } = stats;
-            failures_total += failures;
+            failures_total += failures.total_failures();
             timeouts_total += timeouts;
             match solvers_pb.get(name) {
-                Some(pb) => pb.set_message(create_column(name, failures, timeouts)),
+                Some(pb) => {
+                    pb.set_message(create_column(name, failures.total_failures(), timeouts))
+                }
                 None => warn!("Tried to update non existing solver: {name}"),
             }
         }

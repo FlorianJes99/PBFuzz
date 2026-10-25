@@ -238,15 +238,12 @@ impl ParsedStatus {
         )
     }
 
-    pub fn is_unsat(&self) -> bool {
-        matches!(self, ParsedStatus::Unsat { .. })
+    pub fn is_optimum(&self) -> bool {
+        matches!(self, ParsedStatus::Optimum { .. })
     }
 
-    pub fn has_model(&self) -> bool {
-        matches!(
-            self,
-            ParsedStatus::Sat { .. } | ParsedStatus::Optimum { .. },
-        )
+    pub fn is_unsat(&self) -> bool {
+        matches!(self, ParsedStatus::Unsat { .. })
     }
 }
 

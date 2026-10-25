@@ -11,6 +11,7 @@ pub fn compare_status<'a>(runs: &[&'a ParserRun]) -> Vec<(&'a ParserRun, BugReas
     let mut comparison_failures = vec![];
 
     let any_sat = runs.iter().any(|r| r.parsed_status.is_sat());
+    let any_optimum = runs.iter().any(|r| r.parsed_status.is_optimum());
     let any_unsat = runs.iter().any(|r| r.parsed_status.is_unsat());
     let any_decided = any_sat || any_unsat;
     let best_objective = runs
@@ -26,14 +27,20 @@ pub fn compare_status<'a>(runs: &[&'a ParserRun]) -> Vec<(&'a ParserRun, BugReas
                 comparison_failures.push((
                     *run,
                     BugReason::WrongUnsat {
-                        unsat_solver: run.record.name.to_string(),
+                        solver_name: run.record.name.to_string(),
                     },
                 ));
             }
             ParsedStatus::Unknown { .. } if any_decided => comparison_failures.push((
                 *run,
                 BugReason::UnknownWhileDecidable {
-                    unknown_solver: run.record.name.to_string(),
+                    solver_name: run.record.name.to_string(),
+                },
+            )),
+            ParsedStatus::Sat { .. } if any_optimum => comparison_failures.push((
+                *run,
+                BugReason::SatButExpectedOptimum {
+                    solver_name: run.record.name.to_string(),
                 },
             )),
             _ => {}

@@ -90,13 +90,18 @@ pub enum BugReason {
         claimed: ObjectiveInfo,
         better: MinObjectiveValue,
     },
-    #[error("Solver {} claimed UNSAT but SAT solution was found!", unsat_solver)]
-    WrongUnsat { unsat_solver: String },
+    #[error("Solver {} claimed UNSAT but SAT solution was found!", solver_name)]
+    WrongUnsat { solver_name: String },
     #[error(
         "Solver {} claimed UNKNOWN but other solvers found a solution",
-        unknown_solver
+        solver_name
     )]
-    UnknownWhileDecidable { unknown_solver: String },
+    UnknownWhileDecidable { solver_name: String },
+    #[error(
+        "Solver {} returned SAT result but an OPTIMUM was expected",
+        solver_name
+    )]
+    SatButExpectedOptimum { solver_name: String },
     #[error(transparent)]
     ProofCheckerFailed(#[from] ProofError),
     #[error(transparent)]
@@ -107,9 +112,9 @@ impl BugReason {
     pub fn classify_bug(&self) -> &'static str {
         match self {
             BugReason::DifferentObjectives { .. } => "different_objectives",
-            BugReason::WrongUnsat { .. } | BugReason::UnknownWhileDecidable { .. } => {
-                "different_status"
-            }
+            BugReason::WrongUnsat { .. }
+            | BugReason::UnknownWhileDecidable { .. }
+            | BugReason::SatButExpectedOptimum { .. } => "different_status",
             BugReason::ProofCheckerFailed(e) => e.short_str(),
             BugReason::InvalidModel(e) => e.short_str(),
         }

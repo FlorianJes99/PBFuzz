@@ -16,7 +16,8 @@ use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
 use crate::orchestrator::run_statistics::{
-    RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats, SolverStateAfterIteration,
+    FailureKind, RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats,
+    SolverStateAfterIteration,
 };
 use crate::orchestrator::solving::solver::{
     SolverExecutionFailed, SolverExecutionRecord, SolverOutput, SolverRun,
@@ -467,8 +468,29 @@ impl Orchestrator {
                         }
                     })
                     .collect();
-                for (name, _) in &iteration_result.errors {
-                    solver_states.push((name.clone(), SolverStateAfterIteration::Failure));
+                for (name, err) in &iteration_result.errors {
+                    let exit_with_error_code = err
+                        .solver_run
+                        .as_ref()
+                        .and_then(|r| r.execution.signal)
+                        .is_some();
+                    let failure_kind = match &err.kind {
+                        _ if exit_with_error_code => FailureKind::Crash,
+                        WorkErrorKind::Solver(_) => FailureKind::Other,
+                        WorkErrorKind::Parser(_) => FailureKind::Other,
+                        WorkErrorKind::Bug(bug_reason) => match bug_reason {
+                            BugReason::DifferentObjectives { .. } => FailureKind::WrongOptimum,
+                            BugReason::WrongUnsat { .. } => FailureKind::WrongUnsat,
+                            BugReason::UnknownWhileDecidable { .. } => FailureKind::Unknown,
+                            BugReason::SatButExpectedOptimum { .. } => FailureKind::WrongSat,
+                            BugReason::ProofCheckerFailed(_) => FailureKind::InvalidProof,
+                            BugReason::InvalidModel(_) => FailureKind::InvalidModel,
+                        },
+                    };
+                    solver_states.push((
+                        name.clone(),
+                        SolverStateAfterIteration::Failure(failure_kind),
+                    ));
                 }
                 SingleRunStats::Successfull(SingleRunRecord::new(
                     simple_result,
@@ -517,7 +539,7 @@ fn work_iteration(
 ) -> WorkResult {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let with_option_fuzzing = rand::random_bool(option_fuzzing_perc); // option fuzzing with 20% probability
+    let with_option_fuzzing = rand::random_bool(option_fuzzing_perc);
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
@@ -766,7 +788,7 @@ fn validate_parsed_status_of_solver(
     proof_file: &Path,
 ) -> ValidationResult {
     let parsed_status_as_str = parsed_status.get_status_str();
-    let has_model = parsed_status.has_model();
+    let has_model = parsed_status.is_sat();
     let mut res = ValidationResult::new(parsed_status_as_str);
     if has_model {
         match verify_solution(parsed_status, grammar) {
