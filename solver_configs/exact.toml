@@ -1,4 +1,4 @@
-binary = "exact"
+binary = "software/Exact"
 args = ["--print-sol", "--print-uniform=0"] # "--timeout=6", exact outputs UNKNOWN when timeouting
 name = "exact"
 parser_kind = "Default"

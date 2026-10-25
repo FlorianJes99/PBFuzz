@@ -1,4 +1,4 @@
-binary = "sat4j"
+binary = "software/sat4j"
 args = []
 name = "sat4j"
 parser_kind = "Default"

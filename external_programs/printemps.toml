@@ -1,4 +1,0 @@
-binary = "printemps"
-args = ["-j", "1"]
-name = "printemps"
-parser_kind = "Default"

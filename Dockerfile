@@ -176,7 +176,7 @@ RUN printf '#!/bin/sh\nexec java -jar /opt/solvers/sat4j/sat4j.jar "$@"\n' \
 COPY ./configuration /app/configuration
 
 # Copy solver configs
-COPY ./external_programs /app/external_programs
+COPY ./solver_configs /app/solver_configs
 
 WORKDIR /work
 

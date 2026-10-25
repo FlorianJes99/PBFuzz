@@ -1,5 +1,5 @@
-binary = "hitpbo"
-args = ["--no-rc"] # "--proof-compatible"]
+binary = "software/hitpbo"
+args = ["--no-rc", "--proof-compatible"]
 name = "hitpbo"
 parser_kind = "Default"
 proof_arg = "--prooffile"
@@ -14,9 +14,16 @@ args = [
     { arg_name = "--upb-hardening" },
     { arg_name = "--no-solver-var-renaming" },
 
-    { arg_name = "--ce-oracle", arg_type = { Values = ["roundingsat", "exact", "satsolver"]} },
+    { arg_name = "--ce-oracle", arg_type = { Values = [
+        "roundingsat",
+        "exact",
+        "satsolver"
+    ]} },
     { arg_name = "--ce-strategy", arg_type = { Values = ["obo", "disjoint", "wce", "wce2", "hit-once"]} },
-    { arg_name = "--ce-shuffles", arg_type = { IntRange = [1, 50] } },
+    { arg_name = "--ce-shuffles", arg_type = { IntRange = [
+        1,
+        50
+    ] } },
     { arg_name = "--ce-nb-keep", arg_type = { IntRange = [1, 20] } },
     { arg_name = "--ce-small-core-lim", arg_type = { IntRange = [0, 10] } },
     { arg_name = "--min" },
