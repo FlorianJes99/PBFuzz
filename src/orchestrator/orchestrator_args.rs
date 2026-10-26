@@ -62,7 +62,7 @@ pub struct OrchestratorArgs {
     /// This is only ment to be used, if the solver itself does not provide any
     /// flags to stop computation after some amount of time
     #[arg(long, default_value_t = u64::MAX)]
-    pub(crate) timeout_external_program_secs: u64,
+    pub(crate) timeout_solver_secs: u64,
 
     /// Disable comparison of solver outputs, when more than one solver is provided.
     /// This assumes that provided solvers are capable of generating proofs.

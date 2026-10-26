@@ -95,7 +95,7 @@ pub fn run_orchestrator(
         "Using {} threads for computing fuzzing runs in parallel",
         thread_count
     );
-    let timelimit = Duration::from_secs(args.timeout_external_program_secs);
+    let timelimit = Duration::from_secs(args.timeout_solver_secs);
     let mut solvers = vec![];
     let mut one_solver_enabled = false;
     for config_file in &args.solver_configs {

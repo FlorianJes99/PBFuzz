@@ -2,6 +2,8 @@ target/
 out/
 plots/
 important_findings/
+benchmarks/
+results/
 configuration/*
 !configuration/default_settings.toml
 !configuration/scip.set
