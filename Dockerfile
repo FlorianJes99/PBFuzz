@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 #
-# Multi-solver PB test-harness image.
+# Multi-solver PB test run image.
 # Each solver is built (or fetched) in its own stage; the final runtime
 # image only carries the compiled binaries + minimal runtime libs.
 
@@ -89,23 +89,6 @@ RUN git clone --depth 1 --branch ${NAPS_TAG} \
     && echo ${NAPS_TAG} > /out/naps.version
 
 ########################################
-# PrinTeMPS — pinned commit, Rust toolchain
-########################################
-FROM rust:1-${DEBIAN_VERSION} AS build-printemps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates cmake build-essential libboost-all-dev \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-ARG PRINTEMPS_REF=567fc31c02591a1292e2015cb9c69627a7bfead0
-RUN git clone https://github.com/msakai/printemps-pb26.git . \
-    && git checkout ${PRINTEMPS_REF} \
-    && git submodule update --init \
-    && BUILD_SCIP_PRINTEMPS=OFF ./build.sh \
-    && mkdir -p /out \
-    && cp bin/pb_competition_2025_solver /out/printemps \
-    && echo ${PRINTEMPS_REF} > /out/printemps.version
-
-########################################
 # Sat4J — prebuilt jar
 ########################################
 FROM debian:${DEBIAN_VERSION}-slim AS fetch-sat4j
@@ -150,24 +133,21 @@ COPY --from=build-exact       /out/ /opt/solvers/exact/
 COPY --from=build-roundingsat /out/ /opt/solvers/roundingsat/
 COPY --from=build-hitpbo      /out/ /opt/solvers/hitpbo/
 COPY --from=build-naps        /out/ /opt/solvers/naps/
-COPY --from=build-printemps   /out/ /opt/solvers/printemps/
 COPY --from=fetch-sat4j       /out/ /opt/solvers/sat4j/
-COPY --from=build-fuzzer      /out/ /opt/harness/
+COPY --from=build-fuzzer      /out/ /opt/pbfuzz/
 
 RUN chmod +x /opt/solvers/exact/exact \
              /opt/solvers/roundingsat/roundingsat \
              /opt/solvers/hitpbo/hitpbo \
              /opt/solvers/naps/naps \
-             /opt/solvers/printemps/printemps \
-             /opt/harness/fuzzer \
-             /opt/harness/fuzzer_orchestrator \
+             /opt/pbfuzz/fuzzer \
+             /opt/pbfuzz/fuzzer_orchestrator \
      && ln -s /opt/solvers/exact/exact             /usr/local/bin/exact \
      && ln -s /opt/solvers/roundingsat/roundingsat /usr/local/bin/roundingsat \
      && ln -s /opt/solvers/hitpbo/hitpbo           /usr/local/bin/hitpbo \
      && ln -s /opt/solvers/naps/naps               /usr/local/bin/naps \
-     && ln -s /opt/solvers/printemps/printemps     /usr/local/bin/printemps \
-     && ln -s /opt/harness/fuzzer_orchestrator     /usr/local/bin/fuzzer_orchestrator \
-     && ln -s /opt/harness/fuzzer                  /usr/local/bin/fuzzer
+     && ln -s /opt/pbfuzz/fuzzer_orchestrator     /usr/local/bin/fuzzer_orchestrator \
+     && ln -s /opt/pbfuzz/fuzzer                  /usr/local/bin/fuzzer
 
 RUN printf '#!/bin/sh\nexec java -jar /opt/solvers/sat4j/sat4j.jar "$@"\n' \
         > /usr/local/bin/sat4j && chmod +x /usr/local/bin/sat4j

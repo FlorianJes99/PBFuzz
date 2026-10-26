@@ -51,7 +51,7 @@ pub struct OrchestratorArgs {
     #[arg(long, default_value_t = false)]
     pub(crate) save_all_files: bool,
 
-    /// Provide number of threads used to run parallel fuzzing runs
+    /// Provide number of worker threads used to run parallel fuzzing runs
     ///
     /// If nothing is provided, the program will use only 1 thread
     #[arg(long)]
