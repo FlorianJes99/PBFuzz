@@ -5,7 +5,20 @@ use serde::Serialize;
 #[derive(Clone, Copy, Serialize)]
 pub struct MetaData {
     pub program_version: ProgramVersion,
-    pub commit_hash: CommitHash,
+    pub commit_hash: Option<CommitHash>,
+}
+
+impl Display for MetaData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let MetaData {
+            program_version,
+            commit_hash,
+        } = self;
+        match commit_hash {
+            Some(c) => write!(f, "{program_version} (Commit {c})"),
+            None => write!(f, "{program_version}"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Serialize)]

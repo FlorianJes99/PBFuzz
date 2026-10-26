@@ -51,7 +51,7 @@ pub struct OrchestratorArgs {
     #[arg(long, default_value_t = false)]
     pub(crate) save_all_files: bool,
 
-    /// Provide number of threads used to run parallel fuzzing runs
+    /// Provide number of worker threads used to run parallel fuzzing runs
     ///
     /// If nothing is provided, the program will use only 1 thread
     #[arg(long)]
@@ -62,7 +62,7 @@ pub struct OrchestratorArgs {
     /// This is only ment to be used, if the solver itself does not provide any
     /// flags to stop computation after some amount of time
     #[arg(long, default_value_t = u64::MAX)]
-    pub(crate) timeout_external_program_secs: u64,
+    pub(crate) timeout_solver_secs: u64,
 
     /// Disable comparison of solver outputs, when more than one solver is provided.
     /// This assumes that provided solvers are capable of generating proofs.

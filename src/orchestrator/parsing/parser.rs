@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display, num::ParseIntError, process::Output};
+use std::{collections::HashSet, fmt::Display, num::ParseIntError};
 
 use log::debug;
 use thiserror::Error;
@@ -14,7 +14,7 @@ use crate::{
             scip_parser::{ScipParser, ScipParsingError},
         },
         solving::{
-            solver::{SolverExecutionRecord, SolverRun, SolverState},
+            solver::{SolverExecutionRecord, SolverState},
             solver_config::ParserKind,
         },
     },
@@ -33,13 +33,17 @@ impl ParserImpl {
         }
     }
 
-    pub fn parse(&self, run: SolverRun, pb_kind: &PBKind) -> Result<ParserRun, OutputParsingError> {
-        let SolverRun { record, state } = run;
-
+    pub fn parse(
+        &self,
+        state: SolverState,
+        record: SolverExecutionRecord,
+        stdout: &[u8],
+        pb_kind: &PBKind,
+    ) -> Result<ParserRun, OutputParsingError> {
         let parsed_status = match state {
-            SolverState::Terminated(output) => match pb_kind {
-                PBKind::PBS => self.parse_pbs(&output)?,
-                PBKind::PBO => self.parse_pbo(&output)?,
+            SolverState::Terminated => match pb_kind {
+                PBKind::PBS => self.parse_pbs(stdout)?,
+                PBKind::PBO => self.parse_pbo(stdout)?,
             },
             SolverState::Timeout => ParsedStatus::TimeLimit,
         };
@@ -49,7 +53,7 @@ impl ParserImpl {
             parsed_status,
         })
     }
-    fn parse_pbs(&self, output: &Output) -> Result<ParsedStatus, OutputParsingError> {
+    fn parse_pbs(&self, output: &[u8]) -> Result<ParsedStatus, OutputParsingError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
@@ -67,11 +71,15 @@ impl ParserImpl {
         }
     }
 
-    fn parse_pbo(&self, output: &Output) -> Result<ParsedStatus, OutputParsingError> {
+    fn parse_pbo(&self, output: &[u8]) -> Result<ParsedStatus, OutputParsingError> {
         let result = self.scan(output)?;
         match result.status {
             Some(s) => match s {
-                StatusKind::Optimum | StatusKind::Sat => result
+                StatusKind::Sat => Ok(ParsedStatus::Sat {
+                    conflicts: result.conflicts,
+                    solution: result.solution.into(),
+                }),
+                StatusKind::Optimum => result
                     .objective
                     .ok_or(OutputParsingError::ObjectiveMissing)
                     .map(|obj| ParsedStatus::Optimum {
@@ -89,8 +97,8 @@ impl ParserImpl {
         }
     }
 
-    fn scan(&self, output: &Output) -> Result<ScannedResult, OutputParsingError> {
-        let stdout = String::from_utf8_lossy(&output.stdout);
+    fn scan(&self, output: &[u8]) -> Result<ScannedResult, OutputParsingError> {
+        let stdout = String::from_utf8_lossy(output);
         debug!("Output of program:\n {stdout}");
         stdout
             .lines()
@@ -223,11 +231,19 @@ impl ParsedStatus {
         !matches!(self, ParsedStatus::TimeLimit)
     }
 
-    pub fn has_model(&self) -> bool {
+    pub fn is_sat(&self) -> bool {
         matches!(
             self,
-            ParsedStatus::Sat { .. } | ParsedStatus::Optimum { .. },
+            ParsedStatus::Sat { .. } | ParsedStatus::Optimum { .. }
         )
+    }
+
+    pub fn is_optimum(&self) -> bool {
+        matches!(self, ParsedStatus::Optimum { .. })
+    }
+
+    pub fn is_unsat(&self) -> bool {
+        matches!(self, ParsedStatus::Unsat { .. })
     }
 }
 

@@ -29,7 +29,6 @@ mod tests {
         let degree_ratio = DegreeRatio::new(0.25, 0.5);
         let coeffs = vec![-4, -2, 6, 8];
         let (start, end) = compute_degree_range(&coeffs, degree_ratio);
-        println!("{}..={}", start, end);
         assert!(!(start..=end).contains(&-2));
         assert!((start..=end).contains(&-1));
 

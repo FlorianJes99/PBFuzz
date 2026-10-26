@@ -1,4 +1,4 @@
-binary = "scip"
+binary = "software/scip"
 args = ["-s", "configuration/scip.set", "-f"] # scip expects -f flag for input file
 name = "scip"
 parser_kind = "Scip"

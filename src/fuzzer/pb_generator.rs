@@ -4,7 +4,7 @@ use crate::fuzzer::pb_settings::GenerationMethodWithSettings;
 use crate::fuzzer::{
     app_info::MetaData,
     constraints::constraint::Constraint,
-    domain::{LiteralIdent, MinFunction},
+    domain::{LiteralIdent, Objective},
     generation::{
         from_solution_generator::FromSolutionData, literal_sampler::LiteralSampler,
         random_constraints_generator::RandomConstraintGenerator,
@@ -181,7 +181,7 @@ impl PBGenerator {
         Ok((constraints, current_unsat))
     }
 
-    fn generate_min_function(&mut self, possible_vars: &[LiteralIdent]) -> MinFunction {
+    fn generate_min_function(&mut self, possible_vars: &[LiteralIdent]) -> Objective {
         let literals_min_objective = self
             .settings
             .get_generator_settings()
@@ -194,7 +194,7 @@ impl PBGenerator {
             .sorted()
             .map(|id| id.to_literal(self.literal_sampler.sample_without_zero_from_range(-3, 3)))
             .collect();
-        MinFunction::new(literals)
+        Objective::new(literals)
     }
 }
 

@@ -11,11 +11,11 @@ pub struct FuzzerArgs {
     /// Destination to write generated grammar into
     #[arg(long)]
     pub output_path: String,
+    /// Specify a file with settings for the fuzzer
+    #[arg(long)]
+    pub settings_file: PathBuf,
     // Optional arguments
     /// Option to print statistics about a single fuzzer run
     #[arg(long, default_value_t = false)]
     pub print_statistics: bool,
-    /// Specify a file with settings for the fuzzer
-    #[arg(long)]
-    pub settings_file: PathBuf,
 }

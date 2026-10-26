@@ -1,14 +1,15 @@
 use crate::{
-    fuzzer::{constraints::errors::ConstraintViolation, grammar::PBGrammar},
+    fuzzer::{
+        constraints::errors::ConstraintViolation,
+        grammar::{MinimumValidation, PBGrammar},
+    },
     orchestrator::parsing::parser::ParsedStatus,
 };
 
-use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
-    fuzzer::{domain::MinObjectiveValue, grammar::MinObjectiveInvalid},
-    orchestrator::evaluation::proof_checking::ProofError,
+    fuzzer::domain::MinObjectiveValue, orchestrator::evaluation::proof_checking::ProofError,
 };
 
 pub fn wrap_objective(min_objective: MinObjectiveValue, solver_name: String) -> ObjectiveInfo {
@@ -23,7 +24,7 @@ pub enum ValidationError {
     #[error(transparent)]
     Constraint(#[from] ConstraintViolation),
     #[error(transparent)]
-    Objective(#[from] MinObjectiveInvalid),
+    Objective(#[from] MinimumValidation),
 }
 
 impl ValidationError {
@@ -80,10 +81,27 @@ impl StatusFlat {
 
 #[derive(Debug, Error)]
 pub enum BugReason {
-    #[error("Different objectives in solver: {}", .0.iter().map(|o| o.to_string()).join(", "))]
-    DifferentObjectives(Vec<ObjectiveInfo>),
-    #[error("Output status differs: {}", .0.join(", "))]
-    OutputStatusDiffers(Vec<String>),
+    #[error(
+        "Different objectives: Claimed {}, but better objective found was: {} ",
+        claimed,
+        better
+    )]
+    DifferentObjectives {
+        claimed: ObjectiveInfo,
+        better: MinObjectiveValue,
+    },
+    #[error("Solver {} claimed UNSAT but SAT solution was found!", solver_name)]
+    WrongUnsat { solver_name: String },
+    #[error(
+        "Solver {} claimed UNKNOWN but other solvers found a solution",
+        solver_name
+    )]
+    UnknownWhileDecidable { solver_name: String },
+    #[error(
+        "Solver {} returned SAT result but an OPTIMUM was expected",
+        solver_name
+    )]
+    SatButExpectedOptimum { solver_name: String },
     #[error(transparent)]
     ProofCheckerFailed(#[from] ProofError),
     #[error(transparent)]
@@ -93,8 +111,10 @@ pub enum BugReason {
 impl BugReason {
     pub fn classify_bug(&self) -> &'static str {
         match self {
-            BugReason::DifferentObjectives(_) => "different_objectives",
-            BugReason::OutputStatusDiffers(_) => "different_status",
+            BugReason::DifferentObjectives { .. } => "different_objectives",
+            BugReason::WrongUnsat { .. }
+            | BugReason::UnknownWhileDecidable { .. }
+            | BugReason::SatButExpectedOptimum { .. } => "different_status",
             BugReason::ProofCheckerFailed(e) => e.short_str(),
             BugReason::InvalidModel(e) => e.short_str(),
         }

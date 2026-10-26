@@ -17,9 +17,10 @@ use crate::fuzzer::constraints::constraint::ConstraintKind;
 use crate::fuzzer::constraints::errors::ConstraintViolation;
 use crate::fuzzer::domain::Comparison;
 use crate::fuzzer::domain::LiteralIdent;
-use crate::fuzzer::domain::MinFunction;
 use crate::fuzzer::domain::MinObjectiveValue;
+use crate::fuzzer::domain::Objective;
 use crate::fuzzer::domain::SolutionModel;
+use crate::fuzzer::helpers::ms;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, clap::ValueEnum, Default)]
 pub enum PBKind {
@@ -58,7 +59,7 @@ pub struct PBGrammar {
     amount_vars: u32,
     amount_constraints: u32,
     constraints: Vec<Box<dyn Constraint>>,
-    min_constraint: Option<MinFunction>,
+    objective: Option<Objective>,
     generation_time: Duration,
     generation_source: GenerationSource,
 }
@@ -69,7 +70,7 @@ impl PBGrammar {
         seed: u64,
         amount_distinct_vars: u32,
         constraints: Vec<Box<dyn Constraint>>,
-        min_constraint: Option<MinFunction>,
+        objective: Option<Objective>,
         generation_time: Duration,
         generation_source: GenerationSource,
     ) -> Self {
@@ -83,7 +84,7 @@ impl PBGrammar {
             amount_vars: amount_distinct_vars,
             amount_constraints,
             constraints,
-            min_constraint,
+            objective,
             generation_time,
             generation_source,
         }
@@ -98,8 +99,8 @@ impl PBGrammar {
             amount_vars,
             amount_constraints,
             constraints,
-            min_constraint,
-            generation_time,
+            objective: min_constraint,
+            generation_time: _, // we print this in the statistics later
             generation_source,
         } = self;
         let start = Instant::now();
@@ -121,13 +122,10 @@ impl PBGrammar {
             commit_hash,
         } = program_info;
         writeln!(writer, "* Program version: {program_version}")?;
-        writeln!(writer, "* Commit Hash: {commit_hash}")?;
+        if let Some(c) = commit_hash {
+            writeln!(writer, "* Commit Hash: {c}")?;
+        }
         writeln!(writer, "* Used seed: {}", seed)?;
-        writeln!(
-            writer,
-            "* Generation time: {}ms",
-            generation_time.as_millis()
-        )?;
         match generation_source {
             GenerationSource::Random {
                 amount_unsat_assignments,
@@ -200,16 +198,24 @@ impl PBGrammar {
         &self,
         true_vars: &HashSet<LiteralIdent>,
         objective: MinObjectiveValue,
-    ) -> Result<(), MinObjectiveInvalid> {
+    ) -> Result<(), MinimumValidation> {
         if let GenerationSource::FromSolution {
             model: _,
             objective: objective_from_solution,
         } = &self.generation_source
-            && let Some(obj) = objective_from_solution
+            && let Some(planted_minimum) = objective_from_solution
         {
-            info!("Generated objective value from solution: {obj}; found minimum:  {objective}")
+            info!(
+                "Generated objective value from planted solution: {planted_minimum}; minimum claimed by solver:  {objective}"
+            );
+            if *planted_minimum < objective {
+                return Err(MinimumValidation::WorseObjective {
+                    planted_objective: *planted_minimum,
+                    found_objective: objective,
+                });
+            }
         }
-        match self.min_constraint.as_ref() {
+        match self.objective.as_ref() {
             Some(mf) => {
                 let eval_min = mf
                     .get_literals()
@@ -224,7 +230,8 @@ impl PBGrammar {
                     Err(MinObjectiveInvalid {
                         evaluated: eval_min,
                         expected: objective,
-                    })
+                    }
+                    .into())
                 }
             }
             None => {
@@ -232,6 +239,19 @@ impl PBGrammar {
             }
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum MinimumValidation {
+    #[error(transparent)]
+    ObjectiveInvalid(#[from] MinObjectiveInvalid),
+    #[error(
+        "The claimed minimum objective is worse than the minimum objective from the planted solution: claimed {found_objective}, planted {planted_objective}"
+    )]
+    WorseObjective {
+        planted_objective: MinObjectiveValue,
+        found_objective: MinObjectiveValue,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -290,11 +310,7 @@ impl Display for GrammarStatistics {
         writeln!(f, "* Max occurence of a var: {}", max_occurence)?;
         writeln!(f, "* Min occurence of a var: {}", min_occurence)?;
         writeln!(f, "* Average occurences of vars: {}", average_occurence)?;
-        write!(
-            f,
-            "* Generation time: {:.3}ms",
-            generation_time.as_nanos() as f64 / 1_000_000.0
-        )
+        write!(f, "* Generation time: {:.3}ms", ms(generation_time))
     }
 }
 
@@ -345,7 +361,7 @@ mod test {
             .collect();
         let program_info = MetaData {
             program_version: "1.0.0".into(),
-            commit_hash: "unknown".into(),
+            commit_hash: Some("unknown".into()),
         };
         let grammar = PBGrammar::new(
             program_info,

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub const OFFSET: usize = 50;
 
 /// Wrap a printable Item in a block of equal-signs and a header
-pub fn print_block<T: Display>(heading: &str, item: T) {
+pub fn print_block(heading: &str, item: impl Display) {
     let amount_signs = 40;
     println!();
     println!("{:=^amount_signs$}", heading);
@@ -139,12 +139,28 @@ pub fn move_files(files: &[MoveFile]) -> io::Result<()> {
 /// Helper function to check two floats on equality
 ///
 /// ```rust
-/// # use fuzzer_pseudo_bool::fuzzer::helpers::float_equals;
-/// assert!(float_equals(3.333332, 3.333335, 0.0001))
+/// # use fuzzer_pseudo_bool::fuzzer::helpers::f32_equals;
+/// assert!(f32_equals(3.333332, 3.333335, 0.0001))
 /// ````
-pub fn float_equals(a: f32, b: f32, epsilon: f32) -> bool {
+pub fn f32_equals(a: f32, b: f32, epsilon: f32) -> bool {
     assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
     (a - b).abs() <= epsilon
+}
+
+/// Helper function to check two floats on equality
+///
+/// ```rust
+/// # use fuzzer_pseudo_bool::fuzzer::helpers::f64_equals;
+/// assert!(f64_equals(3.333332, 3.333335, 0.0001))
+/// ````
+pub fn f64_equals(a: f64, b: f64, epsilon: f64) -> bool {
+    assert!(epsilon >= 0.0, "Epsilon needs to be a value >= 0");
+    (a - b).abs() <= epsilon
+}
+
+/// Convert a duration into milliseconds
+pub fn ms(duration: &Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
 
 #[cfg(test)]
@@ -162,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_equals_float() {
-        assert!(float_equals(3.333332, 3.333335, 0.0001))
+        assert!(f32_equals(3.333332, 3.333335, 0.0001))
     }
 
     #[test]
@@ -173,7 +189,7 @@ mod tests {
         let new_average = compute_running_average(current_average, sample, total_runs);
         let expected_average = (2 + 3 + sample) as f32 / 3.0;
         assert!(
-            float_equals(expected_average, new_average, 0.00001),
+            f32_equals(expected_average, new_average, 0.00001),
             "Expected: {}\nActual: {}",
             expected_average,
             new_average
@@ -186,7 +202,7 @@ mod tests {
         ra.update(3);
         ra.update(5);
         assert!(
-            float_equals(expected_average, ra.get_average(), 0.00001),
+            f32_equals(expected_average, ra.get_average(), 0.00001),
             "Expected: {}\nActual: {}",
             expected_average,
             ra.get_average()
@@ -205,10 +221,17 @@ mod tests {
         ra.update(&Duration::from_secs(3));
         ra.update(&Duration::from_secs(5));
         assert!(
-            float_equals(expected_average, ra.average.as_secs_f32(), 0.00001),
+            f32_equals(expected_average, ra.average.as_secs_f32(), 0.00001),
             "Expected: {}\nActual: {}",
             expected_average,
             ra.get_average().as_secs_f32()
         );
+    }
+
+    #[test]
+    fn test_ms() {
+        let dur = Duration::from_millis(33424);
+        let dur_ms = ms(&dur);
+        assert!(f64_equals(33424.0, dur_ms, 0.00001))
     }
 }

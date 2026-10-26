@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+use crate::fuzzer::domain::LiteralIdent;
 use crate::orchestrator::parsing::parser::OutputParsingError;
 use crate::orchestrator::parsing::parser::StatusKind;
 use crate::orchestrator::parsing::parser::StatusLine;
@@ -22,6 +23,8 @@ pub enum ScipParsingError {
     },
     #[error("Expected objective as last word in line, but got: {0}")]
     NoObjectiveFound(String),
+    #[error("Could not parse a solution literal from: {0}")]
+    ParseSolutionValue(String),
 }
 
 impl ScipParser {
@@ -47,17 +50,39 @@ impl ScipParser {
             return StatusLine::Objective(result.map_err(Into::into));
         }
 
-        if line.starts_with("x")
-            && let Some(ident) = line.split_whitespace().next()
-        {
-            return StatusLine::Solution(ident.parse().map(|v| HashSet::from([v])).map_err(
-                |err| OutputParsingError::ParseSolution {
-                    line: line.into(),
-                    source: err,
+        if line.starts_with("x") {
+            return match parse_solution_value(line) {
+                Ok(ok) => match ok {
+                    Some(v) => StatusLine::Solution(Ok(HashSet::from([v]))),
+                    None => StatusLine::Ignored,
                 },
-            ));
+                Err(e) => StatusLine::Solution(Err(e)),
+            };
         }
         StatusLine::Ignored
+    }
+}
+
+fn parse_solution_value(line: &str) -> Result<Option<LiteralIdent>, OutputParsingError> {
+    let mut parts = line.split_whitespace();
+    if let Some(ident) = parts.next()
+        && let Some(value_str) = parts.next()
+    {
+        let value = parse_as_i32(value_str)?;
+        // scip sometimes prints variables in the solution which are close to zero. Those have to be filtered out.
+        if value == 0 {
+            Ok(None)
+        } else {
+            ident
+                .parse()
+                .map(Some)
+                .map_err(|err| OutputParsingError::ParseSolution {
+                    line: line.into(),
+                    source: err,
+                })
+        }
+    } else {
+        Err(ScipParsingError::ParseSolutionValue(line.into()).into())
     }
 }
 
@@ -77,5 +102,20 @@ fn parse_as_i32(s: &str) -> Result<i32, ScipParsingError> {
             expected: rounded as i32,
             epsilon,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_solution_value;
+
+    #[test]
+    fn test_parse_solution() {
+        let line = "x15                                 0.999999590181784   (obj:0)";
+        let res = parse_solution_value(line).unwrap().unwrap();
+        assert_eq!(15, res.literal_id());
+        let line = "x63                              4.09818216140501e-07   (obj:0)";
+        let res = parse_solution_value(line).unwrap();
+        assert!(res.is_none())
     }
 }

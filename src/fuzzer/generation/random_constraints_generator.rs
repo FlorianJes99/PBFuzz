@@ -100,6 +100,7 @@ impl RandomConstraintGenerator {
                 let settings = self.settings.three_literal;
                 let mut c = generate_three_literal(settings, literal_sampler)?;
                 // Assert we always return a constraint which fulfills max unsat assignments requirement
+                // TODO: is this still needed?
                 while c.amount_unsat_assignments() > 3 {
                     debug!("Looping for valid three literal constraint");
                     c = generate_three_literal(settings, literal_sampler)?;

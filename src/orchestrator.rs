@@ -1,4 +1,5 @@
 mod csv_data;
+mod dashboard;
 mod evaluation;
 mod folders;
 mod issue_report;

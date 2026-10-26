@@ -15,6 +15,8 @@ pub fn check_proof(formula: &Path, derivation: &Path) -> Result<(), ProofError> 
     let args = Args {
         formula,
         derivation,
+        print_verification_result: false,
+        show_warnings: false,
         ..Default::default()
     };
     run_checker(args).map_err(|e| ProofError::VeriPB(e.into_boxed_dyn_error()))

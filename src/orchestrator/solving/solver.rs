@@ -4,7 +4,7 @@ use std::{
     ops::Not,
     os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Command, Stdio},
     sync::mpsc,
     thread::{self},
     time::{Duration, Instant},
@@ -115,25 +115,17 @@ impl SolverData {
         });
 
         let name = self.name.clone();
-        let (state, stderr, signal) = match rx.recv_timeout(timeout) {
+        let (state, stdout, stderr, signal) = match rx.recv_timeout(timeout) {
             Ok((stdout, stderr)) => {
                 let status = child.wait()?;
                 let signal = status.signal();
-                (
-                    SolverState::Terminated(Output {
-                        status,
-                        stdout,
-                        stderr: vec![],
-                    }),
-                    stderr,
-                    signal,
-                )
+                (SolverState::Terminated, stdout, stderr, signal)
             }
             Err(e) => {
                 warn!("Terminating solver {}... - {}", self.get_name(), e);
                 child.kill()?;
                 let _ = child.wait(); // reap
-                (SolverState::Timeout, vec![], None)
+                (SolverState::Timeout, vec![], vec![], None)
             }
         };
         let record = SolverExecutionRecord {
@@ -142,9 +134,13 @@ impl SolverData {
             used_args: cmd.get_args().map(|a| a.display().to_string()).collect(),
             execution_time: start.elapsed(),
             signal,
-            stderr,
         };
-        Ok(SolverRun { record, state })
+        let solver_output = SolverOutput { stdout, stderr };
+        Ok(SolverRun {
+            record,
+            solver_output,
+            state,
+        })
     }
 }
 
@@ -204,7 +200,29 @@ pub struct SolverExecutionRecord {
     pub used_args: Vec<String>,
     pub execution_time: Duration,
     pub signal: Option<i32>,
+}
+
+#[derive(Debug)]
+pub struct SolverOutput {
+    pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+}
+
+impl SolverOutput {
+    pub fn to_combined(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(self.stdout.len() + self.stderr.len() + 32);
+        buf.extend_from_slice(b"stdout:\n");
+        buf.extend_from_slice(&self.stdout);
+        if !self.stdout.ends_with(b"\n") {
+            buf.push(b'\n');
+        }
+        buf.extend_from_slice(b"\nstderr:\n");
+        buf.extend_from_slice(&self.stderr);
+        if !self.stderr.ends_with(b"\n") {
+            buf.push(b'\n');
+        }
+        buf
+    }
 }
 
 impl Display for SolverExecutionRecord {
@@ -215,7 +233,6 @@ impl Display for SolverExecutionRecord {
             used_args,
             execution_time,
             signal,
-            stderr,
         } = &self;
         writeln!(f, "Solver {}: {}", name, binary)?;
         writeln!(f, "Arguments: {}", used_args.join(" "))?;
@@ -228,12 +245,6 @@ impl Display for SolverExecutionRecord {
         if let Some(s) = signal {
             writeln!(f, "Termination signal: {}", s)?;
         }
-        if !stderr.is_empty() {
-            write!(f, "\nStderr:")?;
-            for line in String::from_utf8_lossy(stderr).lines() {
-                write!(f, "\n {line}")?;
-            }
-        }
         Ok(())
     }
 }
@@ -241,12 +252,13 @@ impl Display for SolverExecutionRecord {
 #[derive(Debug)]
 pub struct SolverRun {
     pub record: SolverExecutionRecord,
+    pub solver_output: SolverOutput,
     pub state: SolverState,
 }
 
 #[derive(Debug)]
 pub enum SolverState {
-    Terminated(Output),
+    Terminated,
     Timeout,
 }
 

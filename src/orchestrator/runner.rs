@@ -1,38 +1,40 @@
 use crate::fuzzer::app_info::MetaData;
 use crate::fuzzer::grammar::PBGrammar;
-use crate::fuzzer::helpers::OFFSET;
 use crate::fuzzer::pb_generator::PbGenerationError;
 use crate::fuzzer::pb_settings::{GenerationMethod, PbConfigFile, PbSetting};
 use crate::orchestrator::csv_data::{
     CsvRecordsSingleIteration, OrchestratorCsvWriters, WorkRecord,
 };
+use crate::orchestrator::dashboard::{Dashboard, IterationInfo};
 use crate::orchestrator::evaluation::common::{BugReason, StatusFlat, verify_solution};
 use crate::orchestrator::evaluation::comparison::compare_status;
 use crate::orchestrator::evaluation::proof_checking::check_proof;
-use crate::orchestrator::issue_report::case_writer::{CaseWriter, IssueReport};
+use crate::orchestrator::issue_report::case_writer::{Artifact, CaseWriter, IssueReport};
 use crate::orchestrator::issue_report::issue_record::{IssueRecord, SolverInfo};
 use crate::orchestrator::orchestrator_args::ProofMode;
 use crate::orchestrator::parsing::parser::{
     OutputParsingError, ParsedStatus, ParserImpl, ParserRun,
 };
 use crate::orchestrator::run_statistics::{
-    RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats,
+    FailureKind, RunStatistics, SimpleResult, SingleRunRecord, SingleRunStats,
+    SolverStateAfterIteration,
 };
-use crate::orchestrator::solving::solver::{SolverExecutionFailed, SolverExecutionRecord};
+use crate::orchestrator::solving::solver::{
+    SolverExecutionFailed, SolverExecutionRecord, SolverOutput, SolverRun,
+};
 use crate::orchestrator::solving::solver_config::SolverConfig;
-use crate::{
-    fuzzer::helpers::get_hms_parts,
-    orchestrator::{
-        csv_data::SolverRecord,
-        folders::{DATA_FOLDER, prepare_sub_folders},
-        orchestrator_args::OrchestratorArgs,
-        solving::solver::SolverData,
-    },
+use crate::orchestrator::{
+    csv_data::SolverRecord,
+    folders::{DATA_FOLDER, prepare_sub_folders},
+    orchestrator_args::OrchestratorArgs,
+    solving::solver::SolverData,
 };
-use std::io;
+use std::borrow::Cow;
+use std::io::{self};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::{
     error::Error,
     fmt::Display,
@@ -44,13 +46,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use indicatif::MultiProgress;
 use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rand::{self, RngExt};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::fuzzer::{helpers::print_block, pb_generator::PBGenerator};
+use crate::fuzzer::pb_generator::PBGenerator;
 
 /// Entry point for the orchestrator to run fuzzer and external programs until a stop condition is
 /// met.
@@ -85,13 +88,14 @@ pub fn run_orchestrator(
     meta_data: MetaData,
     args: OrchestratorArgs,
     run_root: PathBuf,
+    mp: MultiProgress,
 ) -> Result<(), Box<dyn Error>> {
     let thread_count = args.thread_count.unwrap_or(1);
     info!(
         "Using {} threads for computing fuzzing runs in parallel",
         thread_count
     );
-    let timelimit = Duration::from_secs(args.timeout_external_program_secs);
+    let timelimit = Duration::from_secs(args.timeout_solver_secs);
     let mut solvers = vec![];
     let mut one_solver_enabled = false;
     for config_file in &args.solver_configs {
@@ -132,7 +136,6 @@ pub fn run_orchestrator(
     )?;
     info!("Workspace set to: {}", run_root.display());
     prepare_sub_folders(&run_root)?;
-    print_block("Configuration", config);
 
     let index_file = run_root.join(DATA_FOLDER.name).join("cases.jsonl");
     let case_writer = CaseWriter::new(&run_root, index_file);
@@ -149,10 +152,13 @@ pub fn run_orchestrator(
         save_all_files: args.save_all_files,
         option_fuzzing_perc,
     };
+    let solver_names: Vec<_> = solvers.iter().map(|s| s.solver.get_name()).collect();
     Orchestrator {
         fuzzer_output_dir: run_root,
+        args,
         config,
         orchestrator_start: Instant::now(),
+        dashboard: Dashboard::new(mp, meta_data, &solver_names),
         solvers,
         thread_count,
         case_writer,
@@ -184,12 +190,14 @@ struct HarnessConfig {
 
 struct Orchestrator {
     fuzzer_output_dir: PathBuf,
+    args: OrchestratorArgs,
     config: PbConfigFile,
     harness_config: HarnessConfig,
     orchestrator_start: Instant,
     solvers: Vec<SolverAndParser>,
     thread_count: u8,
     case_writer: CaseWriter,
+    dashboard: Dashboard,
 }
 
 #[derive(Serialize)]
@@ -217,91 +225,105 @@ impl Orchestrator {
         let stop_condtion = Arc::new(stop_condition);
         let cancelled = Arc::new(AtomicBool::new(false));
         let ctrc_flag = cancelled.clone();
+        let second_ctrlc_flag = Arc::new(AtomicBool::new(false));
+        let ctrlc_twice = second_ctrlc_flag.clone();
         ctrlc::set_handler(move || {
-            println!("Registered user termination!");
-            println!("Shutting down gracefully...");
-            ctrc_flag.store(true, Ordering::Relaxed);
+            if !ctrc_flag.load(Ordering::Relaxed) {
+                info!("Ctrl+c pressed once!");
+                ctrc_flag.store(true, Ordering::Relaxed);
+            } else {
+                info!("Ctrl+c pressed twice!");
+                second_ctrlc_flag.store(true, Ordering::Relaxed);
+            }
         })?;
         let count_runs = Arc::new(AtomicU32::new(0));
         let (sender, receiver) = channel::<WorkResult>();
         let start = Instant::now();
         thread::scope(|s| {
-            for i in 1..=self.thread_count {
-                let sender = sender.clone();
-                let cancelled = Arc::clone(&cancelled);
-                let count_runs = Arc::clone(&count_runs);
-                let stop_condition = Arc::clone(&stop_condtion);
-                thread::Builder::new()
-                    .name(format!("thread-{i}"))
-                    .spawn_scoped(s, move || {
-                        while !cancelled.load(Ordering::Relaxed) {
-                            let iteration = count_runs.fetch_add(1, Ordering::Relaxed);
-                            if stop_condition.is_done(iteration, start) {
-                                break;
+            let handles: Vec<_> = (1..=self.thread_count)
+                .map(|thread_id| {
+                    let sender = sender.clone();
+                    let cancelled = Arc::clone(&cancelled);
+                    let count_runs = Arc::clone(&count_runs);
+                    let stop_condition = Arc::clone(&stop_condtion);
+                    thread::Builder::new()
+                        .name(format!("thread-{thread_id}"))
+                        .spawn_scoped(s, move || {
+                            while !cancelled.load(Ordering::Relaxed) {
+                                let iteration = count_runs.fetch_add(1, Ordering::Relaxed);
+                                if stop_condition.is_done(iteration, start) {
+                                    break;
+                                }
+                                let result = work_iteration(
+                                    &self.fuzzer_output_dir,
+                                    self.config.generate_settings(),
+                                    self.harness_config.with_comparison,
+                                    self.harness_config.option_fuzzing_perc,
+                                    &self.solvers,
+                                    meta_data,
+                                    thread_id,
+                                );
+                                if let Err(e) = sender.send(result) {
+                                    error!("{e}");
+                                }
                             }
-                            let result = work_iteration(
-                                &self.fuzzer_output_dir,
-                                self.config.generate_settings(),
-                                self.harness_config.with_comparison,
-                                self.harness_config.option_fuzzing_perc,
-                                &self.solvers,
-                                meta_data,
-                                i,
-                            );
-                            if let Err(e) = sender.send(result) {
-                                error!("{e}");
-                            }
-                        }
-                    })
-                    .expect("creating thread should not fail!");
-            }
+                        })
+                        .expect("creating thread should not fail!")
+                })
+                .collect();
             // immediately drop the initial sender reference, only the clones inside the worker threads are kept alive
             drop(sender);
             let (mut random_count, mut from_solution_count) = (0, 0);
             let mut stats = RunStatistics::new();
-            for (iteration, res) in receiver.iter().enumerate() {
-                let iteration = iteration as u32 + 1; // we want to start counting from 1.. upwards
-                match &res.meta.generation_method {
-                    GenerationMethod::Random => random_count += 1,
-                    GenerationMethod::FromSolution => from_solution_count += 1,
+            let mut processed_results = 0u32;
+            loop {
+                if ctrlc_twice.load(Ordering::Relaxed) {
+                    warn!("Second ctrl+c invocation. Terminating result aggregation early.");
+                    break;
                 }
-                let stats_iteration = self.process_result(res, iteration, &mut csv_writers);
+                match receiver.recv_timeout(Duration::from_millis(500)) {
+                    Ok(res) => {
+                        match &res.meta.generation_method {
+                            GenerationMethod::Random => random_count += 1,
+                            GenerationMethod::FromSolution => from_solution_count += 1,
+                        }
+                        let iteration = processed_results + 1;
+                        let stats_iteration = self.process_result(res, iteration, &mut csv_writers);
 
-                stats.update(stats_iteration);
+                        stats.update(stats_iteration);
 
-                let elapsed_since_start = self.orchestrator_start.elapsed();
-                let (h, m, s) = get_hms_parts(&elapsed_since_start);
-                let throughput = iteration as f64 / elapsed_since_start.as_secs_f64();
-                #[rustfmt::skip]
-                let body = [
-                    format!("Throughput: {:.3} Iterations/s ({} threads)", throughput, self.thread_count),
-                    format!("Time elapsed: {}h {}m {}s", h, m, s),
-                ].join("\n");
-                print_block(&format!("Iteration {iteration}"), body);
+                        processed_results += 1;
+                    }
+                    Err(RecvTimeoutError::Timeout) => {} // nothing to do, just update the dashboard
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+
+                let solver_stats = stats.get_solver_stats();
+                let iteration_info = IterationInfo {
+                    total: processed_results,
+                    amount_random: random_count,
+                    amount_planted: from_solution_count,
+                    amount_sat: stats.amount_sat,
+                    amount_unsat: stats.amount_unsat,
+                    average_conflicts: stats.average_conflicts.get_average(),
+                };
+                let workers_active = handles.iter().filter(|h| !h.is_finished()).count();
+                let user_interrupted = cancelled.load(Ordering::Relaxed);
+                self.dashboard.update(
+                    &self.orchestrator_start.elapsed(),
+                    &iteration_info,
+                    workers_active as u8,
+                    user_interrupted,
+                    solver_stats,
+                );
             }
+            self.dashboard.finish(&self.orchestrator_start.elapsed());
             let result = &mut csv_writers.flush();
             if let Err(err) = result {
                 error!("Could not flush to file\n Error: {}", err);
             }
 
-            // print out settings
-            print_block("Settings", self.config);
-            // print out stats
-            print_block("Run Statistics", &stats);
-
-            // print out distribution generation mode
-            print_block(
-                "Distribution Generation",
-                format!(
-                    "{:<OFFSET$}: {}\n{:<OFFSET$}: {}",
-                    "FromSolution", from_solution_count, "Random", random_count
-                ),
-            );
-
-            println!();
             let duration_program = self.orchestrator_start.elapsed();
-            let (h, m, s) = get_hms_parts(&duration_program);
-            println!("Duration of run: {h}h, {m}m, {s}s",);
 
             // save important files
             if let Err(e) = self.save_settings() {
@@ -319,6 +341,21 @@ impl Orchestrator {
                 .join("summary.toml");
             if let Err(e) = summary.save_to_file(&summary_file) {
                 error!("{e}");
+            }
+
+            let used_args_file = self
+                .fuzzer_output_dir
+                .join(DATA_FOLDER.name)
+                .join("used_args.toml");
+            match toml::ser::to_string_pretty(&self.args) {
+                Ok(data) => {
+                    if let Err(e) =
+                        File::create(used_args_file).and_then(|mut f| f.write_all(data.as_bytes()))
+                    {
+                        error!("{e}")
+                    }
+                }
+                Err(e) => error!("{e}"),
             }
         });
         Ok(())
@@ -353,9 +390,9 @@ impl Orchestrator {
                     .iter()
                     .filter_map(|r| r.problem_solving_duration_ms)
                     .fold(f32::NEG_INFINITY, f32::max);
-                if (max - min).abs() >= 2000.0 {
+                if max * 0.01 > min {
                     warn!(
-                        "Solving time diverged more than 2 seconds!: {}ms - {}ms",
+                        "Large solving time discrepancy!: fastest {}ms, slowest {}ms",
                         min, max
                     );
                     large_solving_difference = true;
@@ -414,11 +451,53 @@ impl Orchestrator {
                     .iter()
                     .filter_map(|r| r.parsed_status.get_conflicts())
                     .collect();
+                let mut solver_states: Vec<(String, SolverStateAfterIteration)> = iteration_result
+                    .successfull_runs
+                    .iter()
+                    .map(|run| {
+                        if run.parsed_status.did_not_timeout() {
+                            (
+                                run.record.name.to_string(),
+                                SolverStateAfterIteration::Expected,
+                            )
+                        } else {
+                            (
+                                run.record.name.to_string(),
+                                SolverStateAfterIteration::Timeout,
+                            )
+                        }
+                    })
+                    .collect();
+                for (name, err) in &iteration_result.errors {
+                    let exit_with_error_code = err
+                        .solver_run
+                        .as_ref()
+                        .and_then(|r| r.execution.signal)
+                        .is_some();
+                    let failure_kind = match &err.kind {
+                        _ if exit_with_error_code => FailureKind::Crash,
+                        WorkErrorKind::Solver(_) => FailureKind::Other,
+                        WorkErrorKind::Parser(_) => FailureKind::Other,
+                        WorkErrorKind::Bug(bug_reason) => match bug_reason {
+                            BugReason::DifferentObjectives { .. } => FailureKind::WrongOptimum,
+                            BugReason::WrongUnsat { .. } => FailureKind::WrongUnsat,
+                            BugReason::UnknownWhileDecidable { .. } => FailureKind::Unknown,
+                            BugReason::SatButExpectedOptimum { .. } => FailureKind::WrongSat,
+                            BugReason::ProofCheckerFailed(_) => FailureKind::InvalidProof,
+                            BugReason::InvalidModel(_) => FailureKind::InvalidModel,
+                        },
+                    };
+                    solver_states.push((
+                        name.clone(),
+                        SolverStateAfterIteration::Failure(failure_kind),
+                    ));
+                }
                 SingleRunStats::Successfull(SingleRunRecord::new(
                     simple_result,
                     conflicts,
                     duration_iteration_ms,
                     large_solving_difference,
+                    solver_states,
                 ))
             }
             WorkPayload::PbGenerationError(work_error) => {
@@ -460,7 +539,7 @@ fn work_iteration(
 ) -> WorkResult {
     let start_worker = Instant::now();
     let seed = get_seed();
-    let with_option_fuzzing = rand::random_bool(option_fuzzing_perc); // option fuzzing with 20% probability
+    let with_option_fuzzing = rand::random_bool(option_fuzzing_perc);
     if with_option_fuzzing {
         info!("Using option fuzzing in this run...")
     }
@@ -519,20 +598,25 @@ fn work_iteration(
     let mut valid_runs = Vec::with_capacity(sps.len());
     let mut errors = vec![];
     let mut proof_files = vec![];
+    let mut solver_outputs = vec![];
     for sp in sps {
         let SolverAndParser {
             solver: s,
             parser: p,
         } = sp;
         let proof_file = fuzzer_output_dir.join(format!("{}_{file_name}.pbp", s.get_name()));
-        let output_solver = match s.run(&output_file, &proof_file, with_option_fuzzing) {
+        let SolverRun {
+            record,
+            solver_output,
+            state,
+        } = match s.run(&output_file, &proof_file, with_option_fuzzing) {
             Ok(o) => o,
             Err(e) => {
                 let work_error = WorkError {
                     solver_run: None,
                     kind: e.into(),
                 };
-                errors.push((Some(s.get_name().to_string()), work_error));
+                errors.push((s.get_name().to_string(), work_error));
                 let comparison_record = SolverRecord::create_not_parseable_run(
                     s.get_name().to_string(),
                     "run_error",
@@ -544,12 +628,13 @@ fn work_iteration(
             }
         };
         proof_files.push(proof_file.clone());
-        let time_bin = output_solver.record.execution_time;
+        let time_bin = record.execution_time;
         let start_time_parsing = Instant::now();
-        let execution_record = output_solver.record.clone();
-        let r = match p.parse(output_solver, pb_kind) {
+        let execution_record = record.clone();
+        let r = match p.parse(state, record, &solver_output.stdout, pb_kind) {
             Ok(r) => r,
             Err(e) => {
+                solver_outputs.push((s.get_name().to_string(), solver_output));
                 let run_record = SolverRunRecord {
                     execution: execution_record.clone(),
                     parsed_status: None,
@@ -558,7 +643,7 @@ fn work_iteration(
                     solver_run: Some(run_record),
                     kind: e.into(),
                 };
-                errors.push((Some(s.get_name().to_string()), work_error));
+                errors.push((s.get_name().to_string(), work_error));
                 let comparison_record = SolverRecord::create_not_parseable_run(
                     s.get_name().to_string(),
                     "parse_error",
@@ -569,6 +654,7 @@ fn work_iteration(
                 continue;
             }
         };
+        solver_outputs.push((s.get_name().to_string(), solver_output));
         let time_parsing = start_time_parsing.elapsed();
         let conflicts = r.parsed_status.get_conflicts();
         let solver_name = r.record.name.clone();
@@ -599,7 +685,7 @@ fn work_iteration(
                 solver_run: Some(run_record),
                 kind: e.into(),
             };
-            errors.push((Some(r.record.name.to_string()), work_error));
+            errors.push((r.record.name.to_string(), work_error));
         } else {
             valid_runs.push(r);
         }
@@ -623,12 +709,23 @@ fn work_iteration(
         .filter(|r| r.parsed_status.did_not_timeout())
         .collect();
     // compare all solvers if enabled
-    if with_comparison && let Err(b) = compare_status(&runs_without_timeout) {
-        let work_error = WorkError {
-            solver_run: None,
-            kind: b.into(),
-        };
-        errors.push((None, work_error));
+    if with_comparison {
+        let failures = compare_status(&runs_without_timeout);
+        failures
+            .into_iter()
+            .map(|(r, b)| {
+                (
+                    r.record.name.to_string(),
+                    WorkError {
+                        solver_run: Some(SolverRunRecord {
+                            execution: r.record.clone(),
+                            parsed_status: Some(r.parsed_status.clone()),
+                        }),
+                        kind: b.into(),
+                    },
+                )
+            })
+            .for_each(|f| errors.push(f));
     };
     let status = runs_without_timeout
         .first()
@@ -641,6 +738,7 @@ fn work_iteration(
         errors,
         successfull_runs: valid_runs,
         status,
+        solver_outputs,
     };
     let work_record = WorkRecord::new(
         seed,
@@ -690,7 +788,7 @@ fn validate_parsed_status_of_solver(
     proof_file: &Path,
 ) -> ValidationResult {
     let parsed_status_as_str = parsed_status.get_status_str();
-    let has_model = parsed_status.has_model();
+    let has_model = parsed_status.is_sat();
     let mut res = ValidationResult::new(parsed_status_as_str);
     if has_model {
         match verify_solution(parsed_status, grammar) {
@@ -720,8 +818,9 @@ fn validate_parsed_status_of_solver(
 
 struct IterationResult {
     successfull_runs: Vec<ParserRun>,
-    errors: Vec<(Option<String>, WorkError)>,
+    errors: Vec<(String, WorkError)>,
     status: Option<StatusFlat>,
+    solver_outputs: Vec<(String, SolverOutput)>,
 }
 
 impl IterationResult {
@@ -745,7 +844,7 @@ impl IterationResult {
                 .map(|(_, e)| &e.kind)
                 .map(|kind| kind.classify_error())
                 .sorted()
-                .join(", ")
+                .join("|")
         }
     }
 
@@ -822,13 +921,11 @@ impl IssueReport for WorkResult {
                     errors,
                     successfull_runs,
                     status,
+                    solver_outputs: _,
                 } = &solver_verdict.outcome;
                 writeln!(w, "{:=^50}", "Errors")?;
                 for (solver_name, e) in errors {
-                    match solver_name {
-                        Some(name) => writeln!(w, "Solver {name}: {}", e.kind)?,
-                        None => writeln!(w, "Other error: {}", e.kind)?,
-                    }
+                    writeln!(w, "Solver {solver_name}: {}", e.kind)?;
                     if let Some(solver_run) = &e.solver_run {
                         let SolverRunRecord {
                             execution,
@@ -867,6 +964,21 @@ impl IssueReport for WorkResult {
             WorkPayload::PbGenerationError(error) => {
                 writeln!(w, "Error: {}", error.kind)
             }
+        }
+    }
+
+    fn artifacts(&self) -> Vec<Artifact<'_>> {
+        match &self.payload {
+            WorkPayload::Verdict(solver_verdict) => solver_verdict
+                .outcome
+                .solver_outputs
+                .iter()
+                .map(|(name, out)| Artifact {
+                    file_name: format!("output_{}.txt", name),
+                    contents: Cow::Owned(out.to_combined()),
+                })
+                .collect(),
+            WorkPayload::PbGenerationError(_) => vec![],
         }
     }
 }
