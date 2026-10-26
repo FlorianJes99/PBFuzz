@@ -4,13 +4,13 @@
 #   -t <time in minutes> \
 #   --thread-count <amount threads> \
 #   --log warn \
-#   --timeout-external-program-secs 30 \
+#   --timeout-solver-secs 30 \
 #   --proofs none \
 #   --settings-file /app/configuration/difficult_settings_30_sec.toml \
-#   --solver-configs /app/external_programs/exact.toml /app/external_programs/hitpbo.toml  /app/external_programs/roundingsat.toml /app/external_programs/sat4j.toml /app/external_programs/naps.toml /app/external_programs/scip.toml
+#   --solver-configs /app/solver_configs/exact.toml /app/solver_configs/hitpbo.toml  /app/solver_configs/roundingsat.toml /app/solver_configs/sat4j.toml /app/solver_configs/naps.toml /app/solver_configs/scip.toml
 #
 # 
-# GeneratorSettings — configuration for random grammar generation
+# GeneratorSettings - configuration for random grammar generation
 
 # Type of grammar to generate: "PBS" (pseudo boolean solving) or "PBO" (pseudo boolean optimization)
 # Default is "PBO"
@@ -28,8 +28,8 @@ max_vars = 130
 amount_lits_min_term = 55
 
 # --- Cancel Condition ---
-#   "CountUnsat"       — stop after a total number of unsatisfying assignments
-#   "CountConstraints" — stop after a fixed number of constraints
+#   "CountUnsat"       - stop after a total number of unsatisfying assignments
+#   "CountConstraints" - stop after a fixed number of constraints
 [random.cancel_condition]
 CountConstraints = { max_constraints = 141 }
 

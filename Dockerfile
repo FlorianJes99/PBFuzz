@@ -152,6 +152,9 @@ RUN chmod +x /opt/solvers/exact/exact \
 RUN printf '#!/bin/sh\nexec java -jar /opt/solvers/sat4j/sat4j.jar "$@"\n' \
         > /usr/local/bin/sat4j && chmod +x /usr/local/bin/sat4j
 
+COPY ./run_scripts /app/run_scripts/
+RUN chmod -R +x /app/run_scripts
+
 # Copy config files needed for the solvers
 COPY ./configuration /app/configuration
 

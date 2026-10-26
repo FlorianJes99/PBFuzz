@@ -1,0 +1,5 @@
+binary = "hitpbo"
+args = ["--no-rc", "--proof-compatible"]
+name = "hitpbo"
+parser_kind = "Default"
+proof_arg = "--prooffile"
