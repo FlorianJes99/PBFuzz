@@ -1,5 +1,5 @@
 fuzzer_orchestrator \
-  -t 720 \
+  -t 240 \
   --thread-count 8 \
   --output-dir /work/out \
   --log warn \

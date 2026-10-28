@@ -1,0 +1,9 @@
+fuzzer_orchestrator \
+  -t 720 \
+  --thread-count 64 \
+  --output-dir /work/out \
+  --log warn \
+  --proofs all \
+  --timeout-solver-secs 5 \
+  --settings-file /app/configuration/default_settings.toml \
+  --solver-configs /app/solver_configs/exact.toml /app/solver_configs/hitpbo_no_optional_args.toml /app/solver_configs/roundingsat.toml /app/solver_configs/sat4j.toml /app/solver_configs/naps.toml /app/solver_configs/scip.toml
