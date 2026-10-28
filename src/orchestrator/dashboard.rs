@@ -87,7 +87,7 @@ impl Dashboard {
         } = self;
         let state = if user_interrupted {
             format!(
-                "User interrupted! Terminating gracefully... ({workers_active} Workers stil active)"
+                "User interrupted! Terminating gracefully... ({workers_active} Workers still active)"
             )
         } else if workers_active > 0 {
             format!("Fuzzing ({workers_active} workers)")
