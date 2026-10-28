@@ -237,7 +237,7 @@ impl Orchestrator {
             }
         })?;
         let count_runs = Arc::new(AtomicU32::new(0));
-        let (sender, receiver) = channel::<WorkResult>();
+        let (sender, receiver) = channel::<WorkerIteration>();
         let start = Instant::now();
         thread::scope(|s| {
             let handles: Vec<_> = (1..=self.thread_count)
@@ -263,7 +263,13 @@ impl Orchestrator {
                                     meta_data,
                                     thread_id,
                                 );
-                                if let Err(e) = sender.send(result) {
+                                let worker_iteration = if cancelled.load(Ordering::Relaxed) {
+                                    let files_to_delete = result.get_generated_files();
+                                    WorkerIteration::Cancelled { files_to_delete }
+                                } else {
+                                    WorkerIteration::Done(result)
+                                };
+                                if let Err(e) = sender.send(worker_iteration) {
                                     error!("{e}");
                                 }
                             }
@@ -282,18 +288,32 @@ impl Orchestrator {
                     break;
                 }
                 match receiver.recv_timeout(Duration::from_millis(500)) {
-                    Ok(res) => {
-                        match &res.meta.generation_method {
-                            GenerationMethod::Random => random_count += 1,
-                            GenerationMethod::FromSolution => from_solution_count += 1,
+                    Ok(worker_iteration) => match worker_iteration {
+                        WorkerIteration::Done(res) => {
+                            match &res.meta.generation_method {
+                                GenerationMethod::Random => random_count += 1,
+                                GenerationMethod::FromSolution => from_solution_count += 1,
+                            }
+                            let iteration = processed_results + 1;
+                            let stats_iteration =
+                                self.process_result(res, iteration, &mut csv_writers);
+
+                            stats.update(stats_iteration);
+
+                            processed_results += 1;
                         }
-                        let iteration = processed_results + 1;
-                        let stats_iteration = self.process_result(res, iteration, &mut csv_writers);
-
-                        stats.update(stats_iteration);
-
-                        processed_results += 1;
-                    }
+                        WorkerIteration::Cancelled { files_to_delete } => {
+                            for file in &files_to_delete {
+                                if let Err(e) = std::fs::remove_file(file) {
+                                    if let Some(name) = file.file_name() {
+                                        error!("Coud not delete file {}: {e}", name.display())
+                                    } else {
+                                        error!("{e}")
+                                    }
+                                }
+                            }
+                        }
+                    },
                     Err(RecvTimeoutError::Timeout) => {} // nothing to do, just update the dashboard
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
@@ -627,7 +647,9 @@ fn work_iteration(
                 continue;
             }
         };
-        proof_files.push(proof_file.clone());
+        if proof_file.exists() {
+            proof_files.push(proof_file.clone());
+        }
         let time_bin = record.execution_time;
         let start_time_parsing = Instant::now();
         let execution_record = record.clone();
@@ -889,6 +911,11 @@ fn convert_to_solver_info(parser_run: &ParserRun) -> SolverInfo {
     }
 }
 
+enum WorkerIteration {
+    Done(WorkResult),
+    Cancelled { files_to_delete: Vec<PathBuf> },
+}
+
 struct WorkResult {
     meta: WorkMetaData,
     payload: WorkPayload,
@@ -899,6 +926,19 @@ impl WorkResult {
         match &self.payload {
             WorkPayload::Verdict(solver_verdict) => solver_verdict.outcome.get_solver_infos(),
             WorkPayload::PbGenerationError(_) => vec![],
+        }
+    }
+
+    fn get_generated_files(self) -> Vec<PathBuf> {
+        match self.payload {
+            WorkPayload::Verdict(solver_verdict) => {
+                let mut files = vec![solver_verdict.pb_file];
+                files.extend(solver_verdict.proof_files);
+                files
+            }
+            WorkPayload::PbGenerationError(fuzz_generation_error) => {
+                vec![fuzz_generation_error.pb_file]
+            }
         }
     }
 }
